@@ -4,6 +4,61 @@ import subprocess
 import time
 import re
 
+# Optional Module Exclusion Lists for Size Reduction (~35MB reduction)
+DEFAULT_OPTIMIZED_EXCLUDES = [
+    # Heavyweight Qt subsystems not used by M59 Dashboard
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebEngineWidgets",
+    "PySide6.QtWebEngineQuick",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtQuickWidgets",
+    "PySide6.QtQuick3D",
+    "PySide6.Qt3DCore",
+    "PySide6.Qt3DRender",
+    "PySide6.QtPdf",
+    "PySide6.QtPdfWidgets",
+    "PySide6.QtVirtualKeyboard",
+    "PySide6.QtSpatialAudio",
+    "PySide6.QtMultimedia",
+    "PySide6.QtMultimediaWidgets",
+    "PySide6.QtBluetooth",
+    "PySide6.QtNfc",
+    "PySide6.QtPositioning",
+    "PySide6.QtSensors",
+    "PySide6.QtSerialPort",
+    "PySide6.QtRemoteObjects",
+    "PySide6.QtScxml",
+    "PySide6.QtStateMachine",
+    "PySide6.QtDesigner",
+    "PySide6.QtHelp",
+    "PySide6.QtTest",
+    # Unused standard submodules
+    "tkinter",
+    "unittest",
+    "pydoc",
+    "doctest",
+    "test"
+]
+
+def prompt_build_optimization():
+    """
+    Prompts the user during the build flow if they want to apply
+    executable size optimization (module exclusions + UPX) or keep a full build.
+    """
+    print("\nBINARY PACKAGING & OPTIMIZATION:")
+    print(" [1] ⚡ Slim / Optimized (~20-25 MB) - Strips unused Qt WebEngine/QML/3D modules")
+    print(" [2] 📦 Full Build (~55-65 MB)      - Includes all default PySide6 modules without exclusions")
+    
+    choice = input("Select packaging mode [1]: ").strip()
+    if choice == "2":
+        print("-> Selected FULL build (no modules excluded).")
+        return ""
+    else:
+        print("-> Selected SLIM / OPTIMIZED build (excluding unused Qt subsystems).")
+        exclude_args = " ".join([f'--exclude-module {mod}' for mod in DEFAULT_OPTIMIZED_EXCLUDES])
+        return " " + exclude_args
+
 def run_command(cmd, description, capture=False):
     if description:
         print(f"\n>>> {description}...")
@@ -397,14 +452,15 @@ def run_promotion():
     sync_choice = input("Select mode [1]: ").strip()
     do_full_sync = (sync_choice == "2")
 
-    # 3. Compilation
+    # 3. Compilation & Packaging Optimization
+    opt_flags = prompt_build_optimization()
     print("\n-> Compiling Master Stable Dashboard (M59Companion.exe)...")
     dynamic_assets = get_git_tracked_assets()
     asset_str = " ".join(dynamic_assets)
     
     generate_version_info(version, is_beta=False)
     
-    compile_cmd = f'python -m PyInstaller --clean --onefile --noconsole --icon="imgs/m59comp.ico" --version-file version_info.txt {asset_str} --name M59Companion m59_dashboard.py'
+    compile_cmd = f'python -m PyInstaller --clean --onefile --noconsole --icon="imgs/m59comp.ico" --version-file version_info.txt{opt_flags} {asset_str} --name M59Companion m59_dashboard.py'
     
     if not run_command(compile_cmd, "Building Standalone Binary"):
         print("!! COMPILATION FAILED. Pipeline aborted.")
@@ -447,14 +503,15 @@ def run_beta_promotion():
 
     beta_notes = input("Enter Beta release notes (or press enter to skip): ").strip()
 
-    # 1. Compilation for Beta target (_beta.exe)
+    # 1. Compilation for Beta target (_beta.exe) & Packaging Optimization
+    opt_flags = prompt_build_optimization()
     print("\n-> Compiling Beta Dashboard (M59Companion_beta.exe)...")
     dynamic_assets = get_git_tracked_assets()
     asset_str = " ".join(dynamic_assets)
     
     generate_version_info(beta_version, is_beta=True)
     
-    compile_cmd = f'python -m PyInstaller --clean --onefile --noconsole --icon="imgs/m59comp.ico" --version-file version_info.txt {asset_str} --name M59Companion_beta m59_dashboard.py'
+    compile_cmd = f'python -m PyInstaller --clean --onefile --noconsole --icon="imgs/m59comp.ico" --version-file version_info.txt{opt_flags} {asset_str} --name M59Companion_beta m59_dashboard.py'
     
     if not run_command(compile_cmd, "Building Standalone Beta Binary"):
         print("!! BETA COMPILATION FAILED. Pipeline aborted.")

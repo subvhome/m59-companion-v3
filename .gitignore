@@ -51,3 +51,4 @@ vite.config.ts
 tsconfig.json
 node_modules/
 dist/
+release_promoter.py
