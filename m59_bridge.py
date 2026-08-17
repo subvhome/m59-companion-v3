@@ -102,34 +102,44 @@ def get_unclaimed_instances(target_name="Meridian.exe"):
     
     # Dictionary to collect the "best" window handle for each unique PID
     instances_by_pid = {}
+    target_lower = target_name.lower().replace(".exe", "")
     
     def callback(hwnd, extra):
         if win32gui.IsWindowVisible(hwnd):
             text = win32gui.GetWindowText(hwnd)
-            if "Meridian 59" in text:
+            if "meridian" in text.lower():
                 try:
                     _, pid = win32process.GetWindowThreadProcessId(hwnd)
                     import psutil
-                    if psutil.Process(pid).name().lower() == target_name.lower():
+                    proc_name = psutil.Process(pid).name().lower()
+                    print(f"[M59-BRIDGE-SCAN] Found window HWND={hwnd}, Title='{text}', PID={pid}, ProcName='{proc_name}'", flush=True)
+                    
+                    if target_lower in proc_name or "meridian" in proc_name or proc_name.startswith("m59"):
                         # PRIORITY LOGIC:
                         # 1. If we haven't seen this PID, add it.
                         # 2. If we HAVE seen it, prefer a window that has " --- " (active character).
                         is_logged_in = " --- " in text
                         if pid not in instances_by_pid or (is_logged_in and " --- " not in instances_by_pid[pid]["title"]):
                             instances_by_pid[pid] = {"pid": pid, "title": text, "hwnd": hwnd}
-                except:
-                    pass
+                            print(f"[M59-BRIDGE-SCAN] >>> Matched Game Process PID={pid} ('{proc_name}') with window '{text}'", flush=True)
+                except Exception as e:
+                    print(f"[M59-BRIDGE-SCAN] Error inspecting window HWND={hwnd}: {e}", flush=True)
     
-    win32gui.EnumWindows(callback, None)
+    try:
+        win32gui.EnumWindows(callback, None)
+    except Exception as e:
+        print(f"[M59-BRIDGE-SCAN] EnumWindows error: {e}", flush=True)
     
     # Filter only unclaimed ones and try to peek at character names
     unclaimed = []
     
     for pid, info in instances_by_pid.items():
         if not is_pid_locked(pid):
-            # We no longer peek at character names here to avoid blocking the loop
             info["char_name"] = "Unscanned"
             unclaimed.append(info)
+            print(f"[M59-BRIDGE-SCAN] PID {pid} is UNCLAIMED and ready for attachment.", flush=True)
+        else:
+            print(f"[M59-BRIDGE-SCAN] PID {pid} is already LOCKED by another companion.", flush=True)
             
     return unclaimed
 

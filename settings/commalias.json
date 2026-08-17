@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "name": "Test",
+    "hotkey": "",
+    "command1": "say test ~~ test",
+    "enabled": true,
+    "send_enter": true,
+    "show_float": true,
+    "x_offset": 237,
+    "y_offset": 98
+  }
+]

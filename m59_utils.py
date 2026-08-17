@@ -63,7 +63,7 @@ def find_game_hwnd(pid):
     def cb(hwnd, extra):
         if win32gui.IsWindowVisible(hwnd):
             text = win32gui.GetWindowText(hwnd)
-            if "Meridian 59" in text:
+            if "meridian" in text.lower():
                 try:
                     _, p = win32process.GetWindowThreadProcessId(hwnd)
                     if p == pid:
@@ -83,11 +83,11 @@ def find_game_hwnd(pid):
 import json
 import os
 
-GAME_EXE = "Meridian.exe"
+GAME_EXE = "meridian.exe"
 try:
     with open("settings/config.json", "r") as f:
         c = json.load(f)
-        GAME_EXE = c.get("process", {}).get("target_name", "Meridian.exe")
+        GAME_EXE = c.get("process", {}).get("target_name", "meridian.exe")
 except:
     pass
 GAME_TITLE_BASE = "Meridian 59"

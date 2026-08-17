@@ -2,13 +2,31 @@ import struct
 import zlib
 import os
 import urllib.request
-from PIL import Image, ImageTk
+try:
+    from PIL import Image, ImageTk
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+    Image = None
+    ImageTk = None
 
 class BGFManager:
     def __init__(self, resource_dir=None):
         self.resource_dir = resource_dir
         self.palette = self._load_palette()
-        self._cache = {}  # filepath -> ImageTk.PhotoImage
+        self._cache = {}  # filepath -> ImageTk.PhotoImage / composite list
+        self._headers = {}  # filepath -> header dict
+
+    def get_bgf_header(self, filepath):
+        """Returns header metadata for a given BGF path if cached or loaded."""
+        if not filepath:
+            return None
+        first_path = filepath.split("|")[0]
+        if first_path in self._headers:
+            return self._headers[first_path]
+        # Try loading raw frames to populate header
+        self._load_raw_frames(first_path)
+        return self._headers.get(first_path)
 
     def _load_palette(self):
         palette = []
@@ -40,6 +58,7 @@ class BGFManager:
         return palette
 
     def _load_raw_frames(self, filepath):
+        if not HAS_PIL: return None
         if not os.path.exists(filepath): return None
         try:
             frames = []
@@ -53,6 +72,15 @@ class BGFManager:
                 num_groups = struct.unpack("<I", f.read(4))[0]
                 max_indices = struct.unpack("<I", f.read(4))[0]
                 shrink = struct.unpack("<I", f.read(4))[0]
+                
+                self._headers[filepath] = {
+                    "version": version,
+                    "name": name,
+                    "num_bitmaps": num_bitmaps,
+                    "num_groups": num_groups,
+                    "max_indices": max_indices,
+                    "shrink": shrink
+                }
                 
                 if num_bitmaps == 0: return None
 
@@ -358,6 +386,7 @@ class BGFManager:
             search_dirs.append(self.resource_dir)
             try:
                 search_dirs.append(os.path.join(self.resource_dir, "graphics"))
+                search_dirs.append(os.path.join(self.resource_dir, "rooms"))
             except:
                 pass
             try:
@@ -365,9 +394,28 @@ class BGFManager:
                 if parent:
                     search_dirs.append(parent)
                     search_dirs.append(os.path.join(parent, "graphics"))
+                    search_dirs.append(os.path.join(parent, "resource"))
+                    search_dirs.append(os.path.join(parent, "resource", "graphics"))
             except:
                 pass
                 
+        # Common installation paths for Steam and Webclient/Non-Steam
+        import getpass
+        try:
+            local_app_data = os.environ.get('LOCALAPPDATA', f"C:\\Users\\{getpass.getuser()}\\AppData\\Local")
+            search_dirs.extend([
+                os.path.join(local_app_data, "Meridian 59", "resource"),
+                os.path.join(local_app_data, "Meridian 59", "resource", "graphics"),
+                os.path.join(local_app_data, "Meridian 59", "resource", "rooms"),
+                os.path.join(local_app_data, "Meridian 59"),
+                "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Meridian 59\\resource",
+                "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Meridian 59\\resource\\graphics",
+                "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Meridian 59\\resource\\rooms",
+                "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Meridian 59"
+            ])
+        except:
+            pass
+
         # Always add standard fallback paths relative to working directory
         local_base = os.getcwd()
         search_dirs.extend([
@@ -375,6 +423,7 @@ class BGFManager:
             os.path.join(local_base, "m59_codebase", "resource"),
             os.path.join(local_base, "resource", "graphics"),
             os.path.join(local_base, "resource"),
+            os.path.join(local_base, "graphics"),
             local_base
         ])
         
@@ -441,3 +490,59 @@ class BGFManager:
                 print(f"BGF ERROR: Could not read moblist: {e}")
         self.mob_mapping = mapping
         return mapping
+
+
+def resolve_bgf_frame_index(pose: int, angle: int, num_frames: int, num_groups: int = 1) -> int:
+    """
+    Deterministically computes the exact BGF frame index given pose and angle.
+    Handles:
+      1. Direction-Major / Group-Major (e.g. Baby Spider, Spider, Centipede):
+         num_groups == 6 or (num_frames % 6 == 0 and num_frames in (12, 18, 24) and num_groups > 1)
+         Frame index = (angle * poses_per_angle) + pose
+      2. Angle-Major (e.g. Avar, Orc, Skeleton, Humanoid, Zombie):
+         num_frames >= 6
+         Frame index = (pose * 6) + angle
+      3. Non-directional / Props / Single-angle (<6 frames):
+         Frame index = angle or pose
+    """
+    if num_frames <= 0:
+        return 0
+    if num_frames < 6:
+        return min(max(0, max(pose, angle)), num_frames - 1)
+
+    # Direction-Major (6 directional groups)
+    if num_groups == 6 or (num_frames in (12, 18, 24) and num_groups > 1):
+        poses_per_angle = max(1, num_frames // 6)
+        clamped_pose = max(0, min(pose, poses_per_angle - 1))
+        clamped_angle = max(0, min(angle, 5))
+        idx = (clamped_angle * poses_per_angle) + clamped_pose
+        return min(idx, num_frames - 1)
+
+    # Standard Angle-Major (6 angles per pose)
+    max_pose = max(0, (num_frames // 6) - 1)
+    clamped_pose = max(0, min(pose, max_pose))
+    clamped_angle = max(0, min(angle, 5))
+    idx = (clamped_pose * 6) + clamped_angle
+    return min(idx, num_frames - 1)
+
+
+def frame_index_to_pose_angle(index: int, num_frames: int, num_groups: int = 1):
+    """
+    Converts a flat frame index into (pose, angle) based on BGF layout scheme.
+    """
+    if num_frames <= 0:
+        return 0, 0
+    if num_frames < 6:
+        return 0, min(max(0, index), num_frames - 1)
+
+    clamped_idx = max(0, min(index, num_frames - 1))
+    if num_groups == 6 or (num_frames in (12, 18, 24) and num_groups > 1):
+        poses_per_angle = max(1, num_frames // 6)
+        angle = clamped_idx // poses_per_angle
+        pose = clamped_idx % poses_per_angle
+        return pose, angle
+    else:
+        pose = clamped_idx // 6
+        angle = clamped_idx % 6
+        return pose, angle
+

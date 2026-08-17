@@ -1,0 +1,45 @@
+{
+  "dashboard_grid": [
+    {
+      "title": "CHARACTER IDENTITY & OVERVIEW",
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "GPS NAVIGATION",
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "SCHOOL PROGRESSION",
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "VAULT MANAGEMENT",
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "SESSION KILLS (COMBAT)",
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "SESSION IMPROVES (SKILLS & SPELLS)",
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "CARRIED ITEMS LEDGER",
+      "width": null,
+      "height": null
+    }
+  ],
+  "dock_grid": [],
+  "dock_sub_grid": [
+    "GPS NAVIGATOR",
+    "BAG SPACE & LOAD",
+    "BANK BALANCES"
+  ]
+}

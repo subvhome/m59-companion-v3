@@ -226,9 +226,10 @@ class CommaliasManager:
             
         def _run():
             cmd1 = alias.get('command1')
+            send_enter = alias.get('send_enter', True)
             try:
                 if cmd1:
-                    send_chat_command(hwnd, cmd1)
+                    send_chat_command(hwnd, cmd1, send_enter=send_enter)
 
             except Exception as e:
                 print(f"Failed alias execution: {e}")

@@ -7,6 +7,7 @@ import win32gui
 import win32process
 import array
 import logging
+from datetime import datetime
 from m59_logging import get_logger
 from m59_utils import get_safe_name, find_game_hwnd
 
@@ -57,18 +58,95 @@ def find_nested_control(parent_hwnd, target_id):
         logger.debug(f"EnumChildWindows failed for parent {parent_hwnd}: {e}")
     return found_hwnd[0]
 
-def send_chat_command(main_hwnd, text):
+def focus_game_and_edit(main_hwnd, edit_hwnd):
+    """Brings game window to foreground and sets active input focus to the chat edit control."""
+    if not main_hwnd or not win32gui.IsWindow(main_hwnd):
+        return
+    
+    # Get thread IDs
+    fg_window = win32gui.GetForegroundWindow()
+    fg_thread_id, _ = win32process.GetWindowThreadProcessId(fg_window) if fg_window else (0, 0)
+    target_thread_id, _ = win32process.GetWindowThreadProcessId(main_hwnd)
+    current_thread_id = win32api.GetCurrentThreadId()
+
+    # Allow SetForegroundWindow
+    try:
+        win32process.AllowSetForegroundWindow(win32process.ASFW_ANY)
+    except Exception:
+        pass
+
+    # Simulate ALT key to bypass Windows focus restrictions
+    try:
+        win32api.keybd_event(win32con.VK_MENU, 0, 0, 0)
+        win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+    except Exception:
+        pass
+
+    # Attach thread inputs so SetFocus and SetForegroundWindow work across process boundaries
+    attached = []
+    for tid in (fg_thread_id, current_thread_id):
+        if tid and tid != target_thread_id:
+            try:
+                win32process.AttachThreadInput(tid, target_thread_id, True)
+                attached.append(tid)
+            except Exception:
+                pass
+
+    try:
+        win32gui.ShowWindow(main_hwnd, win32con.SW_SHOW)
+        win32gui.SetForegroundWindow(main_hwnd)
+        if edit_hwnd and win32gui.IsWindow(edit_hwnd):
+            win32gui.SetFocus(edit_hwnd)
+            win32gui.SendMessage(edit_hwnd, win32con.WM_SETFOCUS, 0, 0)
+    except Exception as ex:
+        logger.debug(f"Focus game error: {ex}")
+    finally:
+        for tid in attached:
+            try:
+                win32process.AttachThreadInput(tid, target_thread_id, False)
+            except Exception:
+                pass
+
+def send_chat_command(main_hwnd, text, send_enter=True):
     """Sends a raw text command to the game's chat input."""
     edit_hwnd = find_nested_control(main_hwnd, CHAT_CONTROL_ID)
     if not edit_hwnd: return False
     
-    win32gui.SendMessage(edit_hwnd, win32con.WM_SETTEXT, 0, "")
-    for char in text:
-        win32gui.SendMessage(edit_hwnd, win32con.WM_CHAR, ord(char), 0)
+    # Check for cursor placement placeholder "~~"
+    has_tilde = "~~" in text
+    if has_tilde:
+        cursor_pos = text.find("~~")
+        clean_text = text.replace("~~", "")
+    else:
+        cursor_pos = len(text)
+        clean_text = text
+
+    # Set text directly in the chat edit control
+    win32gui.SendMessage(edit_hwnd, win32con.WM_SETTEXT, 0, clean_text)
     
-    win32gui.SendMessage(edit_hwnd, win32con.VK_RETURN, 0, 0) # Use simpler enter trigger if needed
-    win32gui.SendMessage(edit_hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
-    win32gui.SendMessage(edit_hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
+    # Bring game window and chat input to focus for immediate typing
+    focus_game_and_edit(main_hwnd, edit_hwnd)
+
+    # Position cursor at placeholder location or end of line (EM_SETSEL after focus)
+    win32gui.SendMessage(edit_hwnd, win32con.EM_SETSEL, cursor_pos, cursor_pos)
+
+    # Send return key press if send_enter is enabled and no cursor placeholder was provided
+    if send_enter and not has_tilde:
+        win32gui.SendMessage(edit_hwnd, win32con.VK_RETURN, 0, 0)
+        win32gui.SendMessage(edit_hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
+        win32gui.SendMessage(edit_hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
+    else:
+        # Re-set selection and post EN_SETFOCUS notification to ensure cursor is active
+        win32gui.SendMessage(edit_hwnd, win32con.EM_SETSEL, cursor_pos, cursor_pos)
+        try:
+            parent_hwnd = win32gui.GetParent(edit_hwnd)
+            if parent_hwnd:
+                ctrl_id = win32gui.GetDlgCtrlID(edit_hwnd)
+                wparam = (0x0100 << 16) | (ctrl_id & 0xFFFF)
+                win32gui.PostMessage(parent_hwnd, win32con.WM_COMMAND, wparam, edit_hwnd)
+        except Exception:
+            pass
+
     return True
 
 def get_listbox_row(lb_hwnd, index):
@@ -149,10 +227,20 @@ def perform_vault_scan(main_hwnd, char_name, vault_type="barloque", progress_cb=
 
     # Save Persistence
     safe_name = get_safe_name(char_name)
-    save_path = f"logs/{safe_name}_vault_{vault_type}.json"
-    if not os.path.exists("logs"): os.makedirs("logs")
-    with open(save_path, "w") as f:
-        json.dump({"timestamp": time.time(), "items": inventory}, f, indent=4)
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    save_data = {
+        "timestamp": time.time(),
+        "last_scan": now_str,
+        "items": inventory
+    }
+    for folder in ["logs", "settings"]:
+        os.makedirs(folder, exist_ok=True)
+        save_path = os.path.join(folder, f"{safe_name}_vault_{vault_type}.json")
+        try:
+            with open(save_path, "w") as f:
+                json.dump(save_data, f, indent=4)
+        except Exception as ex:
+            logger.error(f"Failed to save vault data to {save_path}: {ex}")
 
     win32gui.PostMessage(dialog_hwnd, win32con.WM_CLOSE, 0, 0)
     return inventory

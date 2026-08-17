@@ -1,1792 +1,7531 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext, filedialog, simpledialog
-import threading
-import time
-import os
-import psutil
-import win32gui
-import win32process
-import win32con
-import win32api
-import pywintypes
-import logging
 import sys
+import os
+import time
+import math
 import json
-import winsound
 import re
+import threading
 import ctypes
-from ctypes import wintypes
-import webbrowser
+from collections import deque
 from datetime import datetime
 
-# --- Windows AppBar API Definitions ---
-class RECT(ctypes.Structure):
-    _fields_ = [
-        ('left', wintypes.LONG),
-        ('top', wintypes.LONG),
-        ('right', wintypes.LONG),
-        ('bottom', wintypes.LONG)
-    ]
+if sys.platform == 'win32':
+    try:
+        from ctypes import wintypes
+    except ImportError:
+        wintypes = None
+else:
+    wintypes = None
 
-class APPBARDATA(ctypes.Structure):
-    _fields_ = [
-        ('cbSize', wintypes.DWORD),
-        ('hWnd', wintypes.HWND),
-        ('uCallbackMessage', wintypes.UINT),
-        ('uEdge', wintypes.UINT),
-        ('rc', RECT),
-        ('lParam', wintypes.LPARAM)
-    ]
+try:
+    import win32gui
+    import win32con
+    import win32process
+except Exception:
+    win32gui = None
+    win32con = None
+    win32process = None
+
+# ----------------------------------------------------------------------
+# Windows Application Desktop Toolbar (AppBar) API Registration
+# ----------------------------------------------------------------------
+if sys.platform == 'win32' and wintypes:
+    class APPBARDATA(ctypes.Structure):
+        _fields_ = [
+            ('cbSize', wintypes.DWORD),
+            ('hWnd', wintypes.HWND),
+            ('uCallbackMessage', wintypes.UINT),
+            ('uEdge', wintypes.UINT),
+            ('rc', wintypes.RECT),
+            ('lParam', wintypes.LPARAM),
+        ]
+
+    class MSG(ctypes.Structure):
+        _fields_ = [
+            ('hwnd', wintypes.HWND),
+            ('message', wintypes.UINT),
+            ('wParam', wintypes.WPARAM),
+            ('lParam', wintypes.LPARAM),
+            ('time', wintypes.DWORD),
+            ('pt', wintypes.POINT),
+        ]
+
+    try:
+        shell32 = ctypes.windll.shell32
+        user32 = ctypes.windll.user32
+
+        shell32.SHAppBarMessage.argtypes = [wintypes.DWORD, ctypes.POINTER(APPBARDATA)]
+        shell32.SHAppBarMessage.restype = ctypes.c_size_t
+
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND, wintypes.HWND,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            wintypes.UINT
+        ]
+        user32.SetWindowPos.restype = wintypes.BOOL
+
+        user32.SystemParametersInfoW.argtypes = [
+            wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT
+        ]
+        user32.SystemParametersInfoW.restype = wintypes.BOOL
+    except Exception as e:
+        print(f"[APPBAR-INIT] Error setting win32 function prototypes: {e}", flush=True)
 
 ABM_NEW = 0x00000000
 ABM_REMOVE = 0x00000001
 ABM_QUERYPOS = 0x00000002
 ABM_SETPOS = 0x00000003
-ABM_GETSTATE = 0x00000004
-ABM_GETTASKBARPOS = 0x00000005
-ABM_ACTIVATE = 0x00000006
-ABM_GETAUTOHIDEBAR = 0x00000007
-ABM_SETAUTOHIDEBAR = 0x00000008
-ABM_WINDOWPOSCHANGED = 0x00000009
-ABM_SETSTATE = 0x0000000a
-
-ABE_LEFT = 0
-ABE_TOP = 1
 ABE_RIGHT = 2
-ABE_BOTTOM = 3
+APPBAR_CALLBACK = 0x0400 + 101
 
-Shell32 = ctypes.windll.shell32
-# --------------------------------------
+def register_window_appbar(hwnd_int, width=290):
+    """Registers HWND as a native Windows AppBar on the right screen edge.
+    Adjusts Windows desktop work area so all maximized windows resize around it."""
+    if sys.platform != 'win32' or not wintypes:
+        return False
+    try:
+        shell32 = ctypes.windll.shell32
+        user32 = ctypes.windll.user32
 
-# Import centralized logging
-from m59_logging import setup_logging, get_logger
-logger = get_logger("dashboard")
+        # 0. Ensure clean state by removing any existing AppBar registration for this HWND
+        abd_rm = APPBARDATA()
+        abd_rm.cbSize = ctypes.sizeof(APPBARDATA)
+        abd_rm.hWnd = wintypes.HWND(hwnd_int)
+        shell32.SHAppBarMessage(ABM_REMOVE, ctypes.byref(abd_rm))
 
-# Import modules
-from m59_utils import (
-    resource_path, get_safe_name, find_game_hwnd, 
-    GAME_EXE, GAME_TITLE_BASE, LOGIN_MARKER,
-    RE_SPEECH, RE_BANK_TOTAL, RE_BANK_WITHDRAW
-)
-from m59_bridge import establish_bridge, release_pid, find_available_instance, claim_pid, get_unclaimed_instances
-from m59_scraper import capture_identity, get_blakgraph_stats, cycle_tabs_and_scrape, get_text_from_hwnd, MemoryReader
+        abd = APPBARDATA()
+        abd.cbSize = ctypes.sizeof(APPBARDATA)
+        abd.hWnd = wintypes.HWND(hwnd_int)
+        abd.uCallbackMessage = APPBAR_CALLBACK
+
+        # 1. Register AppBar with Windows Shell
+        res = shell32.SHAppBarMessage(ABM_NEW, ctypes.byref(abd))
+
+        # 2. Get physical screen resolution (NOT work area!)
+        screen_w = user32.GetSystemMetrics(0) # SM_CXSCREEN = 0
+        screen_h = user32.GetSystemMetrics(1) # SM_CYSCREEN = 1
+
+        abd.uEdge = ABE_RIGHT
+        abd.rc.left = screen_w - width
+        abd.rc.top = 0
+        abd.rc.right = screen_w
+        abd.rc.bottom = screen_h
+
+        # 3. Request & Set Position (Notifies Windows Shell to reserve work area)
+        shell32.SHAppBarMessage(ABM_QUERYPOS, ctypes.byref(abd))
+        abd.rc.left = abd.rc.right - width
+        shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
+
+        # 4. Position Window accurately via SetWindowPos
+        SWP_NOACTIVATE = 0x0010
+        SWP_SHOWWINDOW = 0x0040
+        SWP_FRAMECHANGED = 0x0020
+        user32.SetWindowPos(
+            wintypes.HWND(hwnd_int),
+            wintypes.HWND(-1), # HWND_TOPMOST
+            abd.rc.left,
+            abd.rc.top,
+            abd.rc.right - abd.rc.left,
+            abd.rc.bottom - abd.rc.top,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
+        )
+        print(f"[APPBAR] Successfully registered HWND {hwnd_int} as right-edge AppBar (rc={abd.rc.left},{abd.rc.top},{abd.rc.right},{abd.rc.bottom}).", flush=True)
+        return True
+    except Exception as e:
+        print(f"[APPBAR-ERR] Failed to register AppBar: {e}", flush=True)
+        return False
+
+def update_window_appbar_pos(hwnd_int, width=290):
+    """Updates position of an ALREADY REGISTERED AppBar when resized without calling ABM_NEW."""
+    if sys.platform != 'win32' or not wintypes:
+        return False
+    try:
+        shell32 = ctypes.windll.shell32
+        user32 = ctypes.windll.user32
+
+        screen_w = user32.GetSystemMetrics(0)
+        screen_h = user32.GetSystemMetrics(1)
+
+        abd = APPBARDATA()
+        abd.cbSize = ctypes.sizeof(APPBARDATA)
+        abd.hWnd = wintypes.HWND(hwnd_int)
+        abd.uEdge = ABE_RIGHT
+        abd.rc.left = screen_w - width
+        abd.rc.top = 0
+        abd.rc.right = screen_w
+        abd.rc.bottom = screen_h
+
+        shell32.SHAppBarMessage(ABM_QUERYPOS, ctypes.byref(abd))
+        abd.rc.left = abd.rc.right - width
+        shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
+
+        SWP_NOACTIVATE = 0x0010
+        SWP_SHOWWINDOW = 0x0040
+        SWP_FRAMECHANGED = 0x0020
+        user32.SetWindowPos(
+            wintypes.HWND(hwnd_int),
+            wintypes.HWND(-1),
+            abd.rc.left,
+            abd.rc.top,
+            abd.rc.right - abd.rc.left,
+            abd.rc.bottom - abd.rc.top,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
+        )
+        return True
+    except Exception as e:
+        print(f"[APPBAR-ERR] Failed to update AppBar pos: {e}", flush=True)
+        return False
+
+def unregister_window_appbar(hwnd_int):
+    """Unregisters HWND from Windows AppBar system, restoring desktop work area for all windows."""
+    if sys.platform != 'win32' or not wintypes:
+        return False
+    try:
+        shell32 = ctypes.windll.shell32
+        user32 = ctypes.windll.user32
+        abd = APPBARDATA()
+        abd.cbSize = ctypes.sizeof(APPBARDATA)
+        abd.hWnd = wintypes.HWND(hwnd_int)
+        shell32.SHAppBarMessage(ABM_REMOVE, ctypes.byref(abd))
+
+        # Refresh desktop work area
+        user32.SystemParametersInfoW(0x0014, 0, None, 0x0001 | 0x0002)
+        print(f"[APPBAR] Unregistered HWND {hwnd_int} as AppBar.", flush=True)
+        return True
+    except Exception as e:
+        print(f"[APPBAR-ERR] Failed to unregister AppBar: {e}", flush=True)
+        return False
+
+# ----------------------------------------------------------------------
+# Audio & Sound Alert Helpers
+# ----------------------------------------------------------------------
+def ensure_default_sounds():
+    """Generates default alert WAV files if missing."""
+    import wave, math, struct
+    os.makedirs("sound", exist_ok=True)
+    
+    pk_path = os.path.join("sound", "alert.wav")
+    if not os.path.exists(pk_path):
+        try:
+            sample_rate = 22050
+            duration = 0.4
+            n_samples = int(sample_rate * duration)
+            with wave.open(pk_path, 'wb') as f:
+                f.setnchannels(1)
+                f.setsampwidth(2)
+                f.setframerate(sample_rate)
+                for i in range(n_samples):
+                    freq = 880 if (i / sample_rate) < 0.2 else 440
+                    t = i / sample_rate
+                    val = int(16000 * math.sin(2 * math.pi * freq * t))
+                    f.writeframesraw(struct.pack('<h', val))
+        except Exception as e:
+            print(f"[M59-SOUND] Could not generate alert.wav: {e}", flush=True)
+
+    tell_path = os.path.join("sound", "dm_chime.wav")
+    if not os.path.exists(tell_path) and not os.path.exists(os.path.join("sound", "dm_chime.mp3")):
+        try:
+            sample_rate = 22050
+            duration = 0.35
+            n_samples = int(sample_rate * duration)
+            with wave.open(tell_path, 'wb') as f:
+                f.setnchannels(1)
+                f.setsampwidth(2)
+                f.setframerate(sample_rate)
+                for i in range(n_samples):
+                    t = i / sample_rate
+                    if t < 0.1: freq = 523.25
+                    elif t < 0.2: freq = 659.25
+                    else: freq = 783.99
+                    val = int(15000 * math.sin(2 * math.pi * freq * t) * (1.0 - t/duration))
+                    f.writeframesraw(struct.pack('<h', val))
+        except Exception as e:
+            print(f"[M59-SOUND] Could not generate dm_chime.wav: {e}", flush=True)
+
+def play_audio_file(filepath):
+    """Plays audio file or Windows system sound alias asynchronously."""
+    try:
+        if not filepath:
+            return
+        if filepath.startswith("System"):
+            if sys.platform == 'win32':
+                try:
+                    import winsound
+                    winsound.PlaySound(filepath, winsound.SND_ALIAS | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                    return
+                except Exception:
+                    pass
+        
+        target = filepath
+        if not os.path.isabs(target):
+            cwd_p = os.path.join(os.getcwd(), target)
+            if os.path.exists(cwd_p):
+                target = cwd_p
+            else:
+                alt_p = os.path.join("sound", os.path.basename(target))
+                if os.path.exists(alt_p):
+                    target = alt_p
+
+        if sys.platform == 'win32':
+            import ctypes
+            try:
+                ctypes.windll.winmm.mciSendStringW('close m59_audio', None, 0, None)
+                res = ctypes.windll.winmm.mciSendStringW(f'open "{target}" alias m59_audio', None, 0, None)
+                if res != 0:
+                    import winsound
+                    winsound.PlaySound(target, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                else:
+                    ctypes.windll.winmm.mciSendStringW('play m59_audio', None, 0, None)
+                return
+            except Exception:
+                pass
+
+            try:
+                import winsound
+                winsound.PlaySound(target, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+            except Exception:
+                pass
+    except Exception as ex:
+        print(f"[M59-SOUND] Audio playback error: {ex}", flush=True)
+
+from m59_utils import GAME_EXE, get_safe_name, find_game_hwnd, resource_path
+from m59_time import get_game_time, format_game_time
 from m59_tracker import SessionTracker
 from m59_combat import CombatMonitor
-from m59_calculator import SchoolCalculator
-from m59_vault import perform_vault_scan, find_nested_control
-from m59_updater import check_for_updates
-from m59_gps import GPSManager
 from m59_bank import BankManager
 from m59_lifecycle import InstanceManager
-from m59_inventory import InventoryScraper
+from m59_scraper import capture_identity, cycle_tabs_and_scrape, MemoryReader, get_blakgraph_stats, get_text_from_hwnd
 from m59_wholist import WhoListMonitor
-from m59_time import get_game_time, format_game_time
-import m59_inventory as inventory
-import m59_bgf
-import m59_map
-import m59_commalias
+from m59_inventory import InventoryScraper, process_inventory
+from m59_vault import perform_vault_scan, send_chat_command
+from m59_commalias import parse_config_ini
+from m59_gps import GPSManager
+from m59_calculator import SchoolCalculator
+import keyboard
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QPushButton, QLineEdit, QListWidget, QListWidgetItem,
+    QTableWidget, QTableWidgetItem, QFrame, QSplitter, QStackedWidget, QTabWidget, QTabBar,
+    QHeaderView, QProgressBar, QTextEdit, QFileDialog, QSlider, QSpinBox, QScrollArea, QGroupBox,
+    QSplashScreen, QSizePolicy, QComboBox, QDialog, QCheckBox, QFormLayout, QMessageBox, QAbstractItemView,
+    QCompleter, QTreeWidget, QTreeWidgetItem, QSizeGrip
+)
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QMimeData, QPoint
+from PySide6.QtGui import QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QDrag, QPainter, QPen, QBrush
 
-SETTINGS_FILE = "settings/gui_settings.json"
-
-class DraggableNotebook(ttk.Notebook):
-    """A ttk.Notebook with drag-and-drop tab reordering."""
-    def __init__(self, master=None, **kw):
-        super().__init__(master, **kw)
-        self.bind("<Button-1>", self.on_start_drag, add=True)
-        self.bind("<B1-Motion>", self.on_drag_motion, add=True)
-
-    def on_start_drag(self, event):
-        try:
-            index = self.index(f"@{event.x},{event.y}")
-            self._drag_index = index
-        except:
-            self._drag_index = None
-
-    def on_drag_motion(self, event):
-        if self._drag_index is None: return
-        try:
-            index = self.index(f"@{event.x},{event.y}")
-            if index != self._drag_index:
-                dragged_widget = self.nametowidget(self.tabs()[self._drag_index])
-                self.insert(index, dragged_widget)
-                self._drag_index = index
-        except: pass
-
-class PKFrame(tk.Toplevel):
-    def __init__(self, parent, target_hwnd):
-        super().__init__(parent)
+# ----------------------------------------------------------------------
+# PK / PvP Alert Red Box Overlay Window around Game Client
+# ----------------------------------------------------------------------
+class PKFrame(QWidget):
+    """Overlay window that flashes a high-visibility red border box around the Meridian 59 game client window or active screen."""
+    def __init__(self, target_hwnd=None, dashboard=None):
+        super().__init__(None, Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowTransparentForInput)
         self.target_hwnd = target_hwnd
-        self.withdraw()
-        self.overrideredirect(True)
-        self.attributes("-topmost", True)
-        self.bars = []
-        for _ in range(4):
-            b = tk.Toplevel(self)
-            b.overrideredirect(True)
-            b.attributes("-topmost", True)
-            b.config(bg="red")
-            b.withdraw()
-            self.bars.append(b)
+        self.dashboard = dashboard
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setStyleSheet("background: transparent;")
+
+        self.hide_timer = QTimer(self)
+        self.hide_timer.setSingleShot(True)
+        self.hide_timer.timeout.connect(self.hide_bars)
+
+        self.dock_timer = QTimer(self)
+        self.dock_timer.setInterval(50)
+        self.dock_timer.timeout.connect(self.update_docking)
+
+    def set_target_hwnd(self, hwnd):
+        self.target_hwnd = hwnd
+
+    def get_target_hwnd(self):
+        if self.target_hwnd and win32gui and win32gui.IsWindow(self.target_hwnd):
+            return self.target_hwnd
+        if self.dashboard and getattr(self.dashboard, 'main_hwnd', None):
+            dh = self.dashboard.main_hwnd
+            if win32gui and win32gui.IsWindow(dh):
+                return dh
+        if sys.platform == 'win32':
+            pid = getattr(self.dashboard, 'target_pid', None) if self.dashboard else None
+            if pid:
+                hwnd = find_game_hwnd(pid)
+                if hwnd and win32gui and win32gui.IsWindow(hwnd):
+                    return hwnd
+            try:
+                def _find_m59_win(h, extra):
+                    if win32gui.IsWindowVisible(h):
+                        t = win32gui.GetWindowText(h)
+                        if "meridian" in t.lower():
+                            extra.append(h)
+                            return False
+                    return True
+                res = []
+                win32gui.EnumWindows(_find_m59_win, res)
+                if res:
+                    return res[0]
+            except Exception:
+                pass
+        return None
+
+    def get_game_viewport_rect(self, hwnd):
+        """Returns (x, y, w, h) of the exact game client rendering area in physical screen coordinates."""
+        if not hwnd or sys.platform != 'win32' or not win32gui or not win32gui.IsWindow(hwnd):
+            return None
+        try:
+            # 1. Primary: Use ClientToScreen + GetClientRect for exact in-game viewport area
+            tl = win32gui.ClientToScreen(hwnd, (0, 0))
+            cr = win32gui.GetClientRect(hwnd)
+            cw = cr[2] - cr[0]
+            ch = cr[3] - cr[1]
+            if cw > 50 and ch > 50:
+                return (tl[0], tl[1], cw, ch)
+        except Exception:
+            pass
+
+        # 2. Secondary: DWM Extended Frame Bounds (removes invisible Windows 10/11 drop shadows)
+        try:
+            import ctypes
+            from ctypes import wintypes
+            class RECT(ctypes.Structure):
+                _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
+                            ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
+            r = RECT()
+            res = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                wintypes.HWND(hwnd), wintypes.DWORD(9), ctypes.byref(r), ctypes.sizeof(r)
+            )
+            if res == 0:
+                dw = r.right - r.left
+                dh = r.bottom - r.top
+                if dw > 50 and dh > 50:
+                    return (r.left, r.top, dw, dh)
+        except Exception:
+            pass
+
+        # 3. Fallback: GetWindowRect
+        try:
+            rect = win32gui.GetWindowRect(hwnd)
+            return (rect[0], rect[1], max(0, rect[2] - rect[0]), max(0, rect[3] - rect[1]))
+        except Exception:
+            return None
+
+    def update_docking(self):
+        hwnd = self.get_target_hwnd()
+        if not hwnd or not self.isVisible():
+            return
+        if win32gui and win32gui.IsIconic(hwnd):
+            self.hide()
+            return
+        rect = self.get_game_viewport_rect(hwnd)
+        if rect:
+            x, y, w, h = rect
+            try:
+                my_hwnd = int(self.winId())
+                if win32con:
+                    win32gui.SetWindowPos(
+                        my_hwnd, 0, x, y, w, h,
+                        win32con.SWP_NOSIZE if (w == self.width() and h == self.height()) else 0 |
+                        win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER
+                    )
+            except Exception:
+                pass
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        pen_width = 8
+        pen = QPen(QColor(239, 68, 68, 240))  # Vivid red #ef4444
+        pen.setWidth(pen_width)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        half = pen_width // 2
+        painter.drawRect(half, half, self.width() - pen_width, self.height() - pen_width)
 
     def flash(self, duration=5):
         try:
-            rect = win32gui.GetWindowRect(self.target_hwnd)
-            x, y, x2, y2 = rect
-            w, h = x2 - x, y2 - y
-            t = 10
-            self.bars[0].geometry(f"{w}x{t}+{x}+{y}") # Top
-            self.bars[1].geometry(f"{w}x{t}+{x}+{y2-t}") # Bottom
-            self.bars[2].geometry(f"{t}x{h}+{x}+{y}") # Left
-            self.bars[3].geometry(f"{t}x{h}+{x2-t}+{y}") # Right
-            for b in self.bars:
-                b.deiconify()
-            self.after(duration * 1000, self.hide_bars)
-        except:
-            pass
+            hwnd = self.get_target_hwnd()
+            x, y, w, h = 0, 0, 0, 0
+
+            if hwnd and sys.platform == 'win32' and win32gui and win32gui.IsWindow(hwnd):
+                self.target_hwnd = hwnd
+                rect_tuple = self.get_game_viewport_rect(hwnd)
+                if rect_tuple:
+                    x, y, w, h = rect_tuple
+
+            # Fallback if no game HWND or non-Windows / test preview mode
+            if w <= 0 or h <= 0:
+                screen = QApplication.primaryScreen()
+                if screen:
+                    geom = screen.geometry()
+                    w = min(1024, int(geom.width() * 0.8))
+                    h = min(768, int(geom.height() * 0.8))
+                    x = geom.x() + (geom.width() - w) // 2
+                    y = geom.y() + (geom.height() - h) // 2
+                else:
+                    w, h = 800, 600
+                    x, y = 100, 100
+
+            if w > 0 and h > 0:
+                self.show()
+                my_hwnd = int(self.winId())
+                if hwnd and sys.platform == 'win32' and win32gui and win32gui.IsWindow(hwnd):
+                    try:
+                        if win32con:
+                            # Attach ownership to game window so it lives at same Z-level as game/buttons/chat
+                            win32gui.SetWindowLong(my_hwnd, win32con.GWL_HWNDPARENT, hwnd)
+                            win32gui.SetWindowPos(
+                                my_hwnd, 0, x, y, w, h,
+                                win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER | win32con.SWP_SHOWWINDOW
+                            )
+                    except Exception as err:
+                        print(f"[PKFrame] SetWindowPos error: {err}", flush=True)
+                        self.setGeometry(x, y, w, h)
+                else:
+                    self.setGeometry(x, y, w, h)
+
+                self.raise_()
+                self.update()
+                print(f"[PKFrame] Flashing red box overlay over game client at ({x}, {y}, {w}x{h}) for {duration}s", flush=True)
+                self.dock_timer.start()
+                self.hide_timer.start(int(duration * 1000))
+        except Exception as e:
+            print(f"[PKFrame] Error flashing red box overlay: {e}", flush=True)
 
     def hide_bars(self):
-        for b in self.bars:
-            b.withdraw()
+        self.dock_timer.stop()
+        self.hide()
 
-def ensure_default_sounds():
-    """Generates default sound files if they don't exist."""
-    import wave
-    import struct
-    import math
-    import os
-    
-    filename = os.path.join(os.getcwd(), "sound", "alert.wav")
-    if os.path.exists(filename):
-        return
-        
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    
-    sample_rate = 44100
-    duration = 0.5 # seconds
-    freq1 = 880.0 # A5
-    freq2 = 1108.73 # C#6
-    
+def pil_image_to_qpixmap(pil_img):
+    """Converts a PIL RGBA Image to a PySide6 QPixmap."""
+    if pil_img is None:
+        return None
     try:
-        with wave.open(filename, 'w') as f:
-            f.setnchannels(1)
-            f.setsampwidth(2)
-            f.setframerate(sample_rate)
-            
-            for i in range(int(sample_rate * duration)):
-                t = i / sample_rate
-                # Envelope: fast attack, exponential decay
-                envelope = math.exp(-6 * t)
-                
-                # Two frequencies
-                val = math.sin(2 * math.pi * freq1 * t) + math.sin(2 * math.pi * freq2 * t)
-                val = val * 0.5 * envelope
-                
-                data = struct.pack('<h', int(val * 32767))
-                f.writeframesraw(data)
+        if hasattr(pil_img, 'mode') and pil_img.mode != "RGBA":
+            pil_img = pil_img.convert("RGBA")
+        data = pil_img.tobytes("raw", "RGBA")
+        qimg = QImage(data, pil_img.width, pil_img.height, QImage.Format_RGBA8888)
+        return QPixmap.fromImage(qimg)
     except Exception as e:
-        logger.error(f"Failed to generate default sound: {e}")
+        print(f"[BGF-ERR] Error converting PIL image to QPixmap: {e}", flush=True)
+        return None
 
-class M59Dashboard(tk.Tk):
-    def __init__(self):
-        ensure_default_sounds()
-        super().__init__()
-        
-        try:
-            self.withdraw()
-            self.attributes("-alpha", 0.0)
-        except: pass
-        
-        # --- UI Scaling & DPI Setup ---
-        # Calculate scaling factor based on system DPI
-        # Standard DPI is 96. winfo_fpixels('1i') returns the number of pixels in one inch.
-        try:
-            dpi = self.winfo_fpixels('1i')
-            self.scaling_factor = dpi / 96.0
-            # Apply Tkinter internal scaling
-            self.tk.call('tk', 'scaling', dpi / 72.0)
-        except:
-            self.scaling_factor = 1.0
-            
-        logger.info(f"UI: Initializing with scaling factor {self.scaling_factor:.2f}")
+# ----------------------------------------------------------------------
+# Floating Action Button Widget (Sticks & Docks to Game UI)
+# ----------------------------------------------------------------------
+class QtFloatingHotkeyButton(QWidget):
+    def __init__(self, alias_name, command1, send_enter=True, alias_dict=None, parent=None, target_hwnd=None, dashboard=None, x_offset=30, y_offset=60):
+        super().__init__(parent, Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.dashboard = dashboard
+        self.target_hwnd = target_hwnd
+        self.alias_name = alias_name
+        self.command1 = command1
+        self.send_enter = send_enter
+        self.alias_dict = alias_dict
+        self.setWindowTitle(f"Macro: {alias_name}")
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
 
-        self.version = "0.00"
-        try:
-            v_p = resource_path("VERSION")
-            if os.path.exists(v_p):
-                with open(v_p, "r") as f:
-                    self.version = f.read().strip().split("\n")[0]
-        except:
-            pass
-        
-        self.title(f"M59 Companion v{self.version}")
-        
-        # Load and set application icon
-        try:
-            icon_path = resource_path(os.path.join("imgs", "m59comp.jpg"))
-            if os.path.exists(icon_path):
-                from PIL import Image, ImageTk
-                img = Image.open(icon_path)
-                self.app_icon = ImageTk.PhotoImage(img) # Keep a reference
-                self.iconphoto(True, self.app_icon)
-            else:
-                logger.debug(f"App icon not found at {icon_path}")
-        except Exception as e:
-            logger.error(f"Failed to load application icon: {e}")
-        
-        # Scale initial window geometry
-        base_w, base_h = 1100, 850
-        self.geometry(f"{int(base_w * self.scaling_factor)}x{int(base_h * self.scaling_factor)}")
-        
-        # Initialize styles
-        self.style = ttk.Style()
-        self.load_pvp_icons()
-        self.apply_ui_scaling()
+        self.offset_x = x_offset
+        self.offset_y = y_offset
+        self.drag_position = QPoint()
+        self.is_dragging = False
 
-        # --- Settings ---
-        self.pk_alert_enabled = tk.BooleanVar(value=True)
-        self.pk_sound_enabled = tk.BooleanVar(value=True)
-        self.pk_frame_enabled = tk.BooleanVar(value=True)
-        self.pk_sound_path = tk.StringVar(value="sound/alert.wav")
-        self.tell_sound_enabled = tk.BooleanVar(value=True)
-        self.tell_sound_path = tk.StringVar(value="sound/dm_chime.mp3")
-        self.elusion_phrase = tk.StringVar(value='say "I wish to travel to {loc}."')
-        self.elusion_geometry = tk.StringVar(value="320x35+100+100")
-        self.guildhall_name = tk.StringVar(value="")
-        self.custom_elusion_phrases = []
-        self.debug_enabled = tk.BooleanVar(value=False)
-        self.debug_enabled.trace_add("write", lambda *a: setup_logging(self.debug_enabled.get()))
-        
-        
-        # --- Who List State ---
-        
-        self.who_list_docked = tk.BooleanVar(value=False)
-        self.who_list_side = tk.StringVar(value="Right")
-        self.who_list_width = tk.IntVar(value=250)
-        self.who_list_players = {} # Dict of {name: status}
-        self.who_dock_window = None
-        self.who_list_monitor = None
-        self.game_time_mode_24h = tk.BooleanVar(value=True)
-        
-        # --- Chat Filtering State ---
-        self.filters_enabled = tk.BooleanVar(value=True)
-        self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", lambda *a: self.refresh_comms_view())
-        self.filter_data = {}    # {Category: [keywords]}
-        self.filter_vars = {}    # {Category: BooleanVar}
-        self.pill_buttons = {}   # {Category: Button}
-        self.load_filters()
+        self.setObjectName("FloatContainer")
 
-        self.load_settings()
-        
-        # Initialize centralized logging with user preference
-        setup_logging(self.debug_enabled.get())
-        
-        # --- State ---
-        self.target_pid = None
-        self.pm_obj = None
-        self.char_name = "Unknown"
-        self.main_hwnd = None
-        self.is_running = True
-        self.pk_frame = None
-        self.alert_active = False
-        self.comms_mode = "live" # 'live' or 'history'
-        # Initialize GPS with fallback logic
-        dataset_p = resource_path("settings/meridian_rooms_dataset.json")
-        self.gps_manager = GPSManager(dataset_path=dataset_p)
-        self.waiting_overlay = None
-        
-        # --- Lifecycle State ---
-        self.initial_sync_done = False
-        
-        # --- Lifecycle Manager ---
-        self.lifecycle = InstanceManager(
-            on_connect_cb=self.on_game_connect,
-            on_disconnect_cb=self.on_game_disconnect,
-            on_multiple_found=self.show_instance_selection_ui
-        )
-        
-        # Patterns & Subtraction List
-        self.re_speech = RE_SPEECH
-        self.re_bank_total = RE_BANK_TOTAL
-        self.re_bank_withdraw = RE_BANK_WITHDRAW
-        self.combat_verbs = {
-            "wounds", "damages", "slays", "burns", "sears", "disfigures", "dissolves",
-            "incinerates", "scorches", "chars", "singes", "electrocutes", "fries",
-            "shocks", "jolts", "freezes", "frosts", "chills", "cools", "purifies",
-            "mortifies", "cleanses", "infuses", "corrupts", "appalls", "pollutes",
-            "maligns", "flattens", "slams", "buffets", "shakes", "devours", "gnaws",
-            "bites", "nips", "shreds", "rends", "rakes", "claws", "impales", "pricks",
-            "stings", "irritates", "thrashes", "mangles", "pummels", "slaps", "cleaves",
-            "maims", "slashes", "cuts", "brutalizes", "smashes", "crushes", "bashes",
-            "runs through", "stabs", "pokes", "fells", "lacerates", "pierces", "grazes",
-            "blocks", "dodges", "parries", "avoids", "nicks", "fails to damage", 
-            "killed", "attacks", "misses"
+        self.setStyleSheet("""
+            QWidget#FloatContainer {
+                background-color: #0f172a;
+                color: #f8fafc;
+                border: 1px solid #64748b;
+                border-radius: 6px;
+            }
+            QLabel#Grip {
+                color: #94a3b8;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 0 2px;
+            }
+            QPushButton#ActionBtn {
+                background-color: #475569;
+                color: #ffffff;
+                font-weight: 800;
+                border: none;
+                border-radius: 4px;
+                padding: 3px 8px;
+                font-size: 11px;
+            }
+            QPushButton#ActionBtn:hover {
+                background-color: #94a3b8;
+                color: #0f172a;
+            }
+            QPushButton#CloseBtn {
+                background-color: #7f1d1d;
+                color: #ffffff;
+                font-weight: 800;
+                border: none;
+                border-radius: 4px;
+                padding: 2px 5px;
+                font-size: 10px;
+            }
+            QPushButton#CloseBtn:hover {
+                background-color: #dc2626;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 3, 5, 3)
+        layout.setSpacing(5)
+
+        # Grip
+        self.grip = QLabel("::")
+        self.grip.setObjectName("Grip")
+        self.grip.setCursor(Qt.SizeAllCursor)
+        layout.addWidget(self.grip)
+
+        # Action Button
+        self.act_btn = QPushButton(alias_name)
+        self.act_btn.setObjectName("ActionBtn")
+        self.act_btn.clicked.connect(self.execute_macro)
+        layout.addWidget(self.act_btn)
+
+        # Close Button
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("CloseBtn")
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+
+        self.adjustSize()
+        self.init_docking()
+
+        self.dock_timer = QTimer(self)
+        self.dock_timer.setInterval(50)
+        self.dock_timer.timeout.connect(self.check_docking)
+        self.dock_timer.start()
+
+    def get_target_hwnd(self):
+        if self.target_hwnd and win32gui and win32gui.IsWindow(self.target_hwnd):
+            return self.target_hwnd
+        if self.dashboard and getattr(self.dashboard, 'main_hwnd', None):
+            dh = self.dashboard.main_hwnd
+            if win32gui and win32gui.IsWindow(dh):
+                return dh
+        return None
+
+    def init_docking(self):
+        target = self.get_target_hwnd()
+        if target and win32gui and win32gui.IsWindow(target):
+            try:
+                rect = win32gui.GetWindowRect(target)
+                target_x = rect[0] + self.offset_x
+                target_y = rect[1] + self.offset_y
+                hwnd = int(self.winId())
+                if win32gui and win32con:
+                    win32gui.SetWindowPos(hwnd, 0, target_x, target_y, 0, 0,
+                                         win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER)
+                    win32gui.SetWindowLong(hwnd, win32con.GWL_HWNDPARENT, target)
+            except Exception as ex:
+                print(f"Hotkey button docking init error: {ex}")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = True
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self.drag_position
+            self.move(new_pos)
+            target = self.get_target_hwnd()
+            if target and win32gui and win32gui.IsWindow(target):
+                try:
+                    my_hwnd = int(self.winId())
+                    my_rect = win32gui.GetWindowRect(my_hwnd)
+                    target_rect = win32gui.GetWindowRect(target)
+                    self.offset_x = my_rect[0] - target_rect[0]
+                    self.offset_y = my_rect[1] - target_rect[1]
+                except Exception:
+                    pass
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = False
+            if self.dashboard:
+                aliases = self.dashboard.load_commaliases()
+                updated = False
+                for alias in aliases:
+                    if alias.get('name') == self.alias_name:
+                        alias['x_offset'] = self.offset_x
+                        alias['y_offset'] = self.offset_y
+                        updated = True
+                        break
+                if updated:
+                    self.dashboard.save_commaliases(aliases, rebuild_buttons=False)
+            event.accept()
+
+    def check_docking(self):
+        target = self.get_target_hwnd()
+        if not target or not win32gui or not win32gui.IsWindow(target):
+            if self.isVisible():
+                self.hide()
+            return
+
+        if win32gui.IsIconic(target):
+            if self.isVisible():
+                self.hide()
+            return
+
+        fg = win32gui.GetForegroundWindow()
+        dash_hwnd = None
+        if self.dashboard and hasattr(self.dashboard, 'winId'):
+            try:
+                dash_hwnd = int(self.dashboard.winId())
+            except Exception:
+                pass
+        my_hwnd = int(self.winId())
+
+        is_game_active = False
+        if self.isActiveWindow() or self.underMouse() or getattr(self, 'is_dragging', False):
+            is_game_active = True
+        elif self.dashboard and hasattr(self.dashboard, 'isActiveWindow') and self.dashboard.isActiveWindow():
+            is_game_active = True
+        elif fg in (target, dash_hwnd, my_hwnd):
+            is_game_active = True
+        elif fg:
+            try:
+                if win32process:
+                    _, fg_pid = win32process.GetWindowThreadProcessId(fg)
+                    if fg_pid == os.getpid():
+                        is_game_active = True
+                    else:
+                        _, target_pid = win32process.GetWindowThreadProcessId(target)
+                        if fg_pid == target_pid:
+                            is_game_active = True
+
+                if not is_game_active:
+                    cur = fg
+                    for _ in range(6):
+                        if not cur or cur == 0:
+                            break
+                        if cur in (target, dash_hwnd, my_hwnd):
+                            is_game_active = True
+                            break
+                        cur = win32gui.GetParent(cur)
+            except Exception:
+                pass
+
+        if not is_game_active:
+            if self.isVisible():
+                self.hide()
+            return
+
+        if not self.isVisible():
+            self.show()
+
+        if not getattr(self, 'is_dragging', False):
+            try:
+                rect = win32gui.GetWindowRect(target)
+                target_x = rect[0] + self.offset_x
+                target_y = rect[1] + self.offset_y
+                my_rect = win32gui.GetWindowRect(my_hwnd)
+                if my_rect[0] != target_x or my_rect[1] != target_y:
+                    win32gui.SetWindowPos(my_hwnd, 0, target_x, target_y, 0, 0,
+                                         win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER)
+            except Exception:
+                pass
+
+    def execute_macro(self):
+        target = self.get_target_hwnd()
+        if not self.command1:
+            return
+        def _run():
+            try:
+                if target:
+                    send_chat_command(target, self.command1, send_enter=self.send_enter)
+            except Exception as ex:
+                print(f"Hotkey execution failed: {ex}")
+        threading.Thread(target=_run, daemon=True).start()
+
+
+# ----------------------------------------------------------------------
+# Floating Elude Teleport Bar Widget (Sticks & Docks to Game UI)
+# ----------------------------------------------------------------------
+class QtFloatingEludeBar(QWidget):
+    def __init__(self, parent=None, target_hwnd=None, dashboard=None):
+        super().__init__(parent, Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.dashboard = dashboard
+        self.target_hwnd = target_hwnd
+        self.setWindowTitle("M59 Elude")
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+
+        self.offset_x = 20
+        self.offset_y = 50
+        if self.dashboard:
+            try:
+                s = self.dashboard.load_gui_settings()
+                if 'elusion_x_offset' in s and 'elusion_y_offset' in s:
+                    self.offset_x = s['elusion_x_offset']
+                    self.offset_y = s['elusion_y_offset']
+            except Exception:
+                pass
+
+        self.drag_position = QPoint()
+        self.is_dragging = False
+
+        self.setObjectName("EludeFloatContainer")
+
+        self.setStyleSheet("""
+            QWidget#EludeFloatContainer {
+                background-color: #0f172a;
+                color: #f8fafc;
+                border: 1px solid #94a3b8;
+                border-radius: 6px;
+            }
+            QLabel#Grip {
+                color: #c084fc;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 0 3px;
+            }
+            QComboBox {
+                background-color: #1e293b;
+                border: 1px solid #94a3b8;
+                color: #f8fafc;
+                border-radius: 4px;
+                padding: 3px 8px;
+                font-size: 11px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #0f172a;
+                color: #f8fafc;
+                selection-background-color: #9333ea;
+                selection-color: #ffffff;
+                border: 1px solid #94a3b8;
+                padding: 4px;
+                outline: none;
+            }
+            QComboBox QAbstractItemView::item {
+                color: #f8fafc;
+                min-height: 22px;
+                padding: 4px 6px;
+            }
+            QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected {
+                background-color: #9333ea;
+                color: #ffffff;
+            }
+            QPushButton#CastBtn {
+                background-color: #9333ea;
+                color: #ffffff;
+                font-weight: 800;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+            }
+            QPushButton#CastBtn:hover {
+                background-color: #94a3b8;
+            }
+            QPushButton#CloseBtn {
+                background-color: #7f1d1d;
+                color: #ffffff;
+                font-weight: 800;
+                border: none;
+                border-radius: 4px;
+                padding: 2px 5px;
+                font-size: 10px;
+            }
+            QPushButton#CloseBtn:hover {
+                background-color: #dc2626;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(6)
+
+        # Drag grip
+        self.grip = QLabel("::")
+        self.grip.setObjectName("Grip")
+        self.grip.setCursor(Qt.SizeAllCursor)
+        layout.addWidget(self.grip)
+
+        # Location combo box
+        self.combo = QComboBox()
+        self.refresh_locations()
+        layout.addWidget(self.combo)
+
+        # Cast button
+        cast_btn = QPushButton("Cast")
+        cast_btn.setObjectName("CastBtn")
+        cast_btn.clicked.connect(self.do_elude)
+        layout.addWidget(cast_btn)
+
+        # Close button
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("CloseBtn")
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+
+        self.adjustSize()
+        self.init_docking()
+
+        self.dock_timer = QTimer(self)
+        self.dock_timer.setInterval(50)
+        self.dock_timer.timeout.connect(self.check_docking)
+        self.dock_timer.start()
+
+    def get_target_hwnd(self):
+        if self.target_hwnd and win32gui and win32gui.IsWindow(self.target_hwnd):
+            return self.target_hwnd
+        if self.dashboard and getattr(self.dashboard, 'main_hwnd', None):
+            dh = self.dashboard.main_hwnd
+            if win32gui and win32gui.IsWindow(dh):
+                return dh
+        return None
+
+    def refresh_locations(self):
+        locations = [
+            "The Streets of Tos",
+            "Marion",
+            "South Barloque",
+            "Cor Noth",
+            "East Jasper",
+            "The Aerie Guest House",
+            "Guild Hall"
+        ]
+        if self.dashboard and hasattr(self.dashboard, 'guildhall_name_val'):
+            gh = getattr(self.dashboard, 'guildhall_name_val', '').strip()
+            if gh and gh not in locations:
+                locations.append(gh)
+        self.combo.clear()
+        self.combo.addItems(locations)
+
+    def init_docking(self):
+        target = self.get_target_hwnd()
+        if target and win32gui and win32gui.IsWindow(target):
+            try:
+                rect = win32gui.GetWindowRect(target)
+                target_x = rect[0] + self.offset_x
+                target_y = rect[1] + self.offset_y
+                hwnd = int(self.winId())
+                if win32gui and win32con:
+                    win32gui.SetWindowPos(hwnd, 0, target_x, target_y, 0, 0,
+                                         win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER)
+                    win32gui.SetWindowLong(hwnd, win32con.GWL_HWNDPARENT, target)
+            except Exception as ex:
+                print(f"Elude bar docking init error: {ex}")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = True
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self.drag_position
+            self.move(new_pos)
+            target = self.get_target_hwnd()
+            if target and win32gui and win32gui.IsWindow(target):
+                try:
+                    my_hwnd = int(self.winId())
+                    my_rect = win32gui.GetWindowRect(my_hwnd)
+                    target_rect = win32gui.GetWindowRect(target)
+                    self.offset_x = my_rect[0] - target_rect[0]
+                    self.offset_y = my_rect[1] - target_rect[1]
+                except Exception:
+                    pass
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = False
+            if self.dashboard:
+                s = self.dashboard.load_gui_settings()
+                s['elusion_x_offset'] = self.offset_x
+                s['elusion_y_offset'] = self.offset_y
+                s['elusion_geometry'] = f"{self.width()}x{self.height()}+{self.offset_x}+{self.offset_y}"
+                self.dashboard.save_gui_settings(s)
+            event.accept()
+
+    def check_docking(self):
+        target = self.get_target_hwnd()
+        if not target or not win32gui or not win32gui.IsWindow(target):
+            if self.isVisible():
+                self.hide()
+            return
+
+        if win32gui.IsIconic(target):
+            if self.isVisible():
+                self.hide()
+            return
+
+        fg = win32gui.GetForegroundWindow()
+        dash_hwnd = None
+        if self.dashboard and hasattr(self.dashboard, 'winId'):
+            try:
+                dash_hwnd = int(self.dashboard.winId())
+            except Exception:
+                pass
+        my_hwnd = int(self.winId())
+
+        is_game_active = False
+        if self.isActiveWindow() or self.underMouse() or getattr(self, 'is_dragging', False):
+            is_game_active = True
+        elif self.dashboard and hasattr(self.dashboard, 'isActiveWindow') and self.dashboard.isActiveWindow():
+            is_game_active = True
+        elif fg in (target, dash_hwnd, my_hwnd):
+            is_game_active = True
+        elif fg:
+            try:
+                if win32process:
+                    _, fg_pid = win32process.GetWindowThreadProcessId(fg)
+                    if fg_pid == os.getpid():
+                        is_game_active = True
+                    else:
+                        _, target_pid = win32process.GetWindowThreadProcessId(target)
+                        if fg_pid == target_pid:
+                            is_game_active = True
+
+                if not is_game_active:
+                    cur = fg
+                    for _ in range(6):
+                        if not cur or cur == 0:
+                            break
+                        if cur in (target, dash_hwnd, my_hwnd):
+                            is_game_active = True
+                            break
+                        cur = win32gui.GetParent(cur)
+            except Exception:
+                pass
+
+        if not is_game_active:
+            if self.isVisible():
+                self.hide()
+            return
+
+        if not self.isVisible():
+            self.show()
+
+        if not getattr(self, 'is_dragging', False):
+            try:
+                rect = win32gui.GetWindowRect(target)
+                target_x = rect[0] + self.offset_x
+                target_y = rect[1] + self.offset_y
+                my_rect = win32gui.GetWindowRect(my_hwnd)
+                if my_rect[0] != target_x or my_rect[1] != target_y:
+                    win32gui.SetWindowPos(my_hwnd, 0, target_x, target_y, 0, 0,
+                                         win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER)
+            except Exception:
+                pass
+
+    def do_elude(self):
+        loc = self.combo.currentText()
+        if not loc:
+            return
+        target = self.get_target_hwnd()
+        def _run():
+            try:
+                if target:
+                    send_chat_command(target, 'cast "elusion"')
+                    time.sleep(1.2)
+                    phrase = 'say "I wish to travel to {loc}."'
+                    if self.dashboard and hasattr(self.dashboard, 'shortcut_phrase_combo'):
+                        phrase = self.dashboard.shortcut_phrase_combo.currentText()
+                    formatted = phrase.replace("{loc}", loc)
+                    send_chat_command(target, formatted)
+            except Exception as ex:
+                print(f"Elude macro execution failed: {ex}")
+        threading.Thread(target=_run, daemon=True).start()
+
+# ----------------------------------------------------------------------
+# Floating Chat Box Widget (Anchors to Game, Overlay over in-game chat)
+# ----------------------------------------------------------------------
+class QtFloatingChatBox(QWidget):
+    def __init__(self, parent=None, target_hwnd=None, dashboard=None):
+        super().__init__(parent, Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.dashboard = dashboard
+        self.target_hwnd = target_hwnd
+        self.setWindowTitle("M59 Floating Chatbox")
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+
+        self.offset_x = 20
+        self.offset_y = 350
+        self.expanded_height = 240
+        self.saved_width = 480
+        self.is_rolled_up = False
+
+        if self.dashboard:
+            try:
+                s = self.dashboard.load_gui_settings()
+                if 'floating_chat_x_offset' in s and 'floating_chat_y_offset' in s:
+                    self.offset_x = s['floating_chat_x_offset']
+                    self.offset_y = s['floating_chat_y_offset']
+                if 'floating_chat_width' in s and 'floating_chat_height' in s:
+                    self.saved_width = max(280, s['floating_chat_width'])
+                    self.expanded_height = max(160, s['floating_chat_height'])
+                if 'floating_chat_rolled_up' in s:
+                    self.is_rolled_up = s['floating_chat_rolled_up']
+            except Exception:
+                pass
+
+        self.drag_position = QPoint()
+        self.is_dragging = False
+        self.active_channel = "all"
+
+        self.setObjectName("FloatingChatContainer")
+
+        self.setStyleSheet("""
+            QWidget#FloatingChatContainer {
+                background-color: rgba(3, 7, 18, 0.94);
+                color: #f8fafc;
+                border: 1px solid #0284c7;
+                border-radius: 8px;
+            }
+            QFrame#TitleBar {
+                background-color: rgba(15, 23, 42, 0.98);
+                border-top-left-radius: 7px;
+                border-top-right-radius: 7px;
+                border-bottom: 1px solid #1e293b;
+            }
+            QLabel#Grip {
+                color: #38bdf8;
+                font-weight: 900;
+                font-size: 13px;
+                padding: 0 4px;
+            }
+            QLabel#TitleLabel {
+                color: #f8fafc;
+                font-weight: 800;
+                font-size: 11px;
+                letter-spacing: 0.5px;
+            }
+            QPushButton#RollBtn {
+                background-color: #0369a1;
+                color: #ffffff;
+                font-weight: 800;
+                border: none;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 10px;
+            }
+            QPushButton#RollBtn:hover {
+                background-color: #0284c7;
+            }
+            QPushButton#CloseBtn {
+                background-color: #7f1d1d;
+                color: #ffffff;
+                font-weight: 800;
+                border: none;
+                border-radius: 4px;
+                padding: 2px 6px;
+                font-size: 10px;
+            }
+            QPushButton#CloseBtn:hover {
+                background-color: #dc2626;
+            }
+            QPushButton.FloatFilterBtn {
+                background-color: #1e293b;
+                color: #94a3b8;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 2px 6px;
+                font-size: 10px;
+                font-weight: 700;
+            }
+            QPushButton.FloatFilterBtn:hover {
+                background-color: #334155;
+                color: #f1f5f9;
+            }
+            QPushButton.FloatFilterBtn[active="true"] {
+                background-color: #0284c7;
+                color: #ffffff;
+                border: 1px solid #38bdf8;
+            }
+            QTextEdit#FloatChatStream {
+                background-color: rgba(3, 7, 18, 0.88);
+                border: 1px solid #1e293b;
+                border-radius: 6px;
+                padding: 8px;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 11px;
+                line-height: 1.4;
+                color: #e2e8f0;
+            }
+            QLineEdit#FloatSearch {
+                background-color: #0f172a;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                color: #f8fafc;
+                padding: 2px 6px;
+                font-size: 10px;
+            }
+        """)
+
+        # Main Layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 1. Custom Title Bar / Grip
+        self.title_bar = QFrame()
+        self.title_bar.setObjectName("TitleBar")
+        tb_layout = QHBoxLayout(self.title_bar)
+        tb_layout.setContentsMargins(8, 4, 8, 4)
+        tb_layout.setSpacing(6)
+
+        self.grip = QLabel("::")
+        self.grip.setObjectName("Grip")
+        self.grip.setCursor(Qt.SizeAllCursor)
+        tb_layout.addWidget(self.grip)
+
+        self.title_lbl = QLabel("💬 M59 FLOATING CHAT")
+        self.title_lbl.setObjectName("TitleLabel")
+        tb_layout.addWidget(self.title_lbl)
+
+        self.live_indicator = QLabel("● LIVE")
+        self.live_indicator.setStyleSheet("color: #10b981; font-size: 9px; font-weight: 800; padding: 1px 4px; background: rgba(16, 185, 129, 0.15); border-radius: 3px;")
+        tb_layout.addWidget(self.live_indicator)
+
+        tb_layout.addStretch()
+
+        # Roll up / Roll down button
+        self.roll_btn = QPushButton("▲ Roll Up" if not self.is_rolled_up else "▼ Roll Down")
+        self.roll_btn.setObjectName("RollBtn")
+        self.roll_btn.setToolTip("Roll up or expand the floating chat box")
+        self.roll_btn.clicked.connect(self.toggle_roll)
+        tb_layout.addWidget(self.roll_btn)
+
+        # Close button
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("CloseBtn")
+        close_btn.setToolTip("Close floating chatbox")
+        close_btn.clicked.connect(self.close)
+        tb_layout.addWidget(close_btn)
+
+        main_layout.addWidget(self.title_bar)
+
+        # 2. Body Widget (Collapsible with Roll Up / Down)
+        self.body_widget = QWidget()
+        bw_layout = QVBoxLayout(self.body_widget)
+        bw_layout.setContentsMargins(8, 6, 8, 8)
+        bw_layout.setSpacing(6)
+
+        # Filter Bar: Channel Pills + Search
+        filter_bar = QHBoxLayout()
+        filter_bar.setSpacing(4)
+
+        self.channel_btns = {}
+        self.unread_private_count = 0
+        channels = [
+            ("all", "ALL"),
+            ("private", "PRIVATE"),
+            ("guild", "GUILD"),
+            ("chat", "CHAT"),
+            ("combat", "COMBAT"),
+            ("improves", "GAINS"),
+            ("system", "SYS")
+        ]
+
+        for cid, label in channels:
+            btn = QPushButton(label)
+            btn.setProperty("class", "FloatFilterBtn")
+            if cid == "all":
+                btn.setProperty("active", "true")
+            btn.clicked.connect(lambda checked=False, c=cid: self.set_channel_filter(c))
+            self.channel_btns[cid] = btn
+            filter_bar.addWidget(btn)
+
+        filter_bar.addStretch()
+
+        self.search_input = QLineEdit()
+        self.search_input.setObjectName("FloatSearch")
+        self.search_input.setPlaceholderText("Filter...")
+        self.search_input.setFixedWidth(85)
+        self.search_input.textChanged.connect(self.filter_chat)
+        filter_bar.addWidget(self.search_input)
+
+        bw_layout.addLayout(filter_bar)
+
+        # Stream View
+        self.stream_view = QTextEdit()
+        self.stream_view.setObjectName("FloatChatStream")
+        self.stream_view.setReadOnly(True)
+        bw_layout.addWidget(self.stream_view, 1)
+
+        # Bottom row with size grip
+        bot_row = QHBoxLayout()
+        bot_row.setContentsMargins(0, 0, 0, 0)
+        bot_desc = QLabel("Anchored over game client")
+        bot_desc.setStyleSheet("color: #64748b; font-size: 9px; font-style: italic;")
+        bot_row.addWidget(bot_desc)
+        bot_row.addStretch()
+        size_grip = QSizeGrip(self)
+        size_grip.setFixedSize(14, 14)
+        bot_row.addWidget(size_grip)
+        bw_layout.addLayout(bot_row)
+
+        main_layout.addWidget(self.body_widget, 1)
+
+        self.resize(self.saved_width, self.expanded_height)
+        if self.is_rolled_up:
+            self.body_widget.hide()
+            self.roll_btn.setText("▼ Roll Down")
+            tb_h = max(28, self.title_bar.sizeHint().height())
+            self.setFixedHeight(tb_h)
+            self.resize(self.saved_width, tb_h)
+
+        self.init_docking()
+
+        # Load existing chat logs from dashboard
+        if self.dashboard and hasattr(self.dashboard, 'chat_logs'):
+            for entry in self.dashboard.chat_logs:
+                self.render_entry(entry)
+
+        # Docking timer
+        self.dock_timer = QTimer(self)
+        self.dock_timer.setInterval(50)
+        self.dock_timer.timeout.connect(self.check_docking)
+        self.dock_timer.start()
+
+    def get_target_hwnd(self):
+        if self.target_hwnd and win32gui and win32gui.IsWindow(self.target_hwnd):
+            return self.target_hwnd
+        if self.dashboard and getattr(self.dashboard, 'main_hwnd', None):
+            dh = self.dashboard.main_hwnd
+            if win32gui and win32gui.IsWindow(dh):
+                return dh
+        return None
+
+    def init_docking(self):
+        target = self.get_target_hwnd()
+        if target and win32gui and win32gui.IsWindow(target):
+            try:
+                rect = win32gui.GetWindowRect(target)
+                target_x = rect[0] + self.offset_x
+                target_y = rect[1] + self.offset_y
+                hwnd = int(self.winId())
+                if win32gui and win32con:
+                    win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, target_x, target_y, 0, 0,
+                                         win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)
+            except Exception as ex:
+                print(f"Floating chatbox docking init error: {ex}")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = True
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton and getattr(self, 'is_dragging', False):
+            new_pos = event.globalPosition().toPoint() - self.drag_position
+            self.move(new_pos)
+            target = self.get_target_hwnd()
+            if target and win32gui and win32gui.IsWindow(target):
+                try:
+                    my_hwnd = int(self.winId())
+                    my_rect = win32gui.GetWindowRect(my_hwnd)
+                    target_rect = win32gui.GetWindowRect(target)
+                    self.offset_x = my_rect[0] - target_rect[0]
+                    self.offset_y = my_rect[1] - target_rect[1]
+                except Exception:
+                    pass
+            event.accept()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not self.is_rolled_up:
+            w = self.width()
+            h = self.height()
+            if w >= 280:
+                self.saved_width = w
+            if h >= 160:
+                self.expanded_height = h
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = False
+            if self.dashboard:
+                s = self.dashboard.load_gui_settings()
+                s['floating_chat_x_offset'] = self.offset_x
+                s['floating_chat_y_offset'] = self.offset_y
+                if not self.is_rolled_up:
+                    self.saved_width = max(280, self.width())
+                    self.expanded_height = max(160, self.height())
+                s['floating_chat_width'] = self.saved_width
+                s['floating_chat_height'] = self.expanded_height
+                s['floating_chat_rolled_up'] = self.is_rolled_up
+                self.dashboard.save_gui_settings(s)
+            event.accept()
+
+    def check_docking(self):
+        target = self.get_target_hwnd()
+        if not target or not win32gui or not win32gui.IsWindow(target):
+            if self.isVisible():
+                self.hide()
+            return
+
+        if win32gui.IsIconic(target):
+            if self.isVisible():
+                self.hide()
+            return
+
+        fg = win32gui.GetForegroundWindow()
+        dash_hwnd = None
+        if self.dashboard and hasattr(self.dashboard, 'winId'):
+            try:
+                dash_hwnd = int(self.dashboard.winId())
+            except Exception:
+                pass
+        my_hwnd = int(self.winId())
+
+        is_game_active = False
+        if self.isActiveWindow() or self.underMouse() or getattr(self, 'is_dragging', False):
+            is_game_active = True
+        elif self.dashboard and hasattr(self.dashboard, 'isActiveWindow') and self.dashboard.isActiveWindow():
+            is_game_active = True
+        elif fg in (target, dash_hwnd, my_hwnd):
+            is_game_active = True
+        elif fg:
+            try:
+                if win32process:
+                    _, fg_pid = win32process.GetWindowThreadProcessId(fg)
+                    if fg_pid == os.getpid():
+                        is_game_active = True
+                    else:
+                        _, target_pid = win32process.GetWindowThreadProcessId(target)
+                        if fg_pid == target_pid:
+                            is_game_active = True
+
+                if not is_game_active:
+                    cur = fg
+                    for _ in range(6):
+                        if not cur or cur == 0:
+                            break
+                        if cur in (target, dash_hwnd, my_hwnd):
+                            is_game_active = True
+                            break
+                        cur = win32gui.GetParent(cur)
+            except Exception:
+                pass
+
+        if not is_game_active:
+            if self.isVisible():
+                self.hide()
+            return
+
+        if not self.isVisible():
+            self.show()
+
+        if not getattr(self, 'is_dragging', False):
+            try:
+                rect = win32gui.GetWindowRect(target)
+                target_x = rect[0] + self.offset_x
+                target_y = rect[1] + self.offset_y
+                my_rect = win32gui.GetWindowRect(my_hwnd)
+                if my_rect[0] != target_x or my_rect[1] != target_y:
+                    win32gui.SetWindowPos(my_hwnd, 0, target_x, target_y, 0, 0,
+                                         win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER)
+            except Exception:
+                pass
+
+    def toggle_roll(self):
+        if not self.is_rolled_up:
+            self.expanded_height = max(160, self.height())
+            self.saved_width = max(280, self.width())
+            self.is_rolled_up = True
+            self.body_widget.hide()
+            self.roll_btn.setText("▼ Roll Down")
+            tb_h = max(28, self.title_bar.sizeHint().height() if hasattr(self, 'title_bar') else 28)
+            self.setFixedHeight(tb_h)
+            self.resize(self.saved_width, tb_h)
+        else:
+            self.is_rolled_up = False
+            self.setMaximumHeight(16777215)
+            self.setMinimumHeight(0)
+            self.body_widget.show()
+            self.roll_btn.setText("▲ Roll Up")
+            self.resize(self.saved_width, self.expanded_height)
+
+        if self.dashboard:
+            s = self.dashboard.load_gui_settings()
+            s['floating_chat_rolled_up'] = self.is_rolled_up
+            s['floating_chat_width'] = self.saved_width
+            s['floating_chat_height'] = self.expanded_height
+            self.dashboard.save_gui_settings(s)
+
+    def notify_private_message(self):
+        if self.active_channel != "private" or self.is_rolled_up or not self.isActiveWindow():
+            self.unread_private_count += 1
+            self.update_unread_badge()
+
+    def update_unread_badge(self):
+        if self.unread_private_count > 0:
+            self.title_lbl.setText(f"💬 M59 FLOATING CHAT  [{self.unread_private_count} Private]")
+            self.title_lbl.setStyleSheet("color: #a855f7; font-weight: 800; font-size: 11px;")
+            if "private" in self.channel_btns:
+                self.channel_btns["private"].setText(f"PRIVATE ({self.unread_private_count})")
+        else:
+            self.title_lbl.setText("💬 M59 FLOATING CHAT")
+            self.title_lbl.setStyleSheet("color: #94a3b8; font-weight: 800; font-size: 11px;")
+            if "private" in self.channel_btns:
+                self.channel_btns["private"].setText("PRIVATE")
+
+    def reset_unread_private(self):
+        self.unread_private_count = 0
+        self.update_unread_badge()
+
+    def set_channel_filter(self, channel_id):
+        self.active_channel = channel_id
+        if channel_id == "private":
+            self.reset_unread_private()
+        for cid, btn in self.channel_btns.items():
+            btn.setProperty("active", "true" if cid == channel_id else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        self.filter_chat()
+
+    def filter_chat(self):
+        self.stream_view.clear()
+        if not self.dashboard or not hasattr(self.dashboard, 'chat_logs'):
+            return
+        query = self.search_input.text().lower().strip()
+        for entry in self.dashboard.chat_logs:
+            if self.active_channel == "all" or self.active_channel == entry.get('channel'):
+                if not query or query in entry.get('text', '').lower():
+                    self.render_entry(entry)
+
+    def append_entry(self, entry):
+        if entry.get('channel') == 'private':
+            self.notify_private_message()
+        if self.active_channel == "all" or self.active_channel == entry.get('channel'):
+            query = self.search_input.text().lower().strip()
+            if not query or query in entry.get('text', '').lower():
+                self.render_entry(entry)
+
+    def render_entry(self, entry):
+        color = "#e2e8f0"
+        ch = entry.get('channel', 'system')
+        if ch == "improves":
+            color = "#34d399"
+        elif ch == "combat":
+            color = "#f87171"
+        elif ch == "private":
+            color = "#a855f7"
+        elif ch == "guild":
+            color = "#c084fc"
+        elif ch == "chat":
+            color = "#60a5fa"
+        elif ch == "system":
+            color = "#fbbf24"
+
+        fs = 11
+        if self.dashboard and hasattr(self.dashboard, 'font_settings'):
+            fs = max(10, self.dashboard.font_settings.get("chat_logger", 13) - 2)
+        ts_fs = max(8, fs - 2)
+        raw_text = entry.get('text', '')
+        text_escaped = raw_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        line_html = f"<div style='margin-bottom: 3px;'><span style='color: #64748b; font-size: {ts_fs}px;'>[{entry.get('ts', '')}]</span> <span style='color: {color}; font-weight: 600; font-size: {fs}px;'>{text_escaped}</span></div>"
+        self.stream_view.append(line_html)
+        self.stream_view.moveCursor(QTextCursor.End)
+
+    def closeEvent(self, event):
+        if self.dashboard and getattr(self.dashboard, 'active_floating_chat', None) == self:
+            self.dashboard.active_floating_chat = None
+        event.accept()
+
+# ----------------------------------------------------------------------
+# Alias & Macro Editor Modal Dialog
+# ----------------------------------------------------------------------
+class AliasEditDialog(QDialog):
+    def __init__(self, alias=None, parent=None):
+        super().__init__(parent)
+        self.alias = alias
+        self.setWindowTitle("Edit Command Alias" if alias else "Add New Command Alias")
+        self.resize(480, 330)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #0f172a;
+                color: #f8fafc;
+            }
+            QLabel {
+                font-size: 11px;
+                font-weight: 700;
+                color: #cbd5e1;
+            }
+            QLineEdit {
+                background-color: #1e293b;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 6px 10px;
+                color: #f8fafc;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border-color: #94a3b8;
+            }
+            QCheckBox {
+                color: #f8fafc;
+                font-size: 11px;
+                font-weight: 600;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                background-color: #1e293b;
+                border: 2px solid #64748b;
+                border-radius: 4px;
+            }
+            QCheckBox::indicator:hover {
+                border-color: #7dd3fc;
+                background-color: #334155;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #475569;
+                border-color: #94a3b8;
+                image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'></polyline></svg>");
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("e.g. Barloque Escape or Broadcast Art")
+        if alias and "name" in alias:
+            self.name_input.setText(alias["name"])
+
+        self.hotkey_input = QLineEdit()
+        self.hotkey_input.setPlaceholderText("e.g. f1 or ctrl+h")
+        if alias and "hotkey" in alias:
+            self.hotkey_input.setText(alias["hotkey"])
+
+        self.command_input = QLineEdit()
+        self.command_input.setPlaceholderText("e.g. broadcast [ART] ~~ [ART]")
+        if alias and "command1" in alias:
+            self.command_input.setText(alias["command1"])
+
+        cmd_box = QVBoxLayout()
+        cmd_box.setSpacing(3)
+        cmd_box.addWidget(self.command_input)
+
+        hint_lbl = QLabel("💡 Tip: Use '~~' anywhere in command to place cursor without sending Enter")
+        hint_lbl.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: normal;")
+        cmd_box.addWidget(hint_lbl)
+
+        self.send_enter_checkbox = QCheckBox("Send Enter automatically after placing command in chat box")
+        self.send_enter_checkbox.setChecked(alias.get("send_enter", True) if alias else True)
+
+        self.float_checkbox = QCheckBox("Show Floating Action Button on Screen")
+        if alias and alias.get("show_float", False):
+            self.float_checkbox.setChecked(True)
+
+        form.addRow("Alias Name:", self.name_input)
+        form.addRow("Hotkey Binding:", self.hotkey_input)
+        form.addRow("Chat Command:", cmd_box)
+        form.addRow("", self.send_enter_checkbox)
+        form.addRow("", self.float_checkbox)
+
+        layout.addLayout(form)
+
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(10)
+
+        save_btn = QPushButton("Save Alias")
+        save_btn.setProperty("class", "WebBtnPrimary")
+        save_btn.clicked.connect(self.accept)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setProperty("class", "WebBtnSecondary")
+        cancel_btn.clicked.connect(self.reject)
+
+        btn_box.addStretch()
+        btn_box.addWidget(save_btn)
+        btn_box.addWidget(cancel_btn)
+
+        layout.addLayout(btn_box)
+
+    def get_alias_data(self):
+        return {
+            "name": self.name_input.text().strip() or "New Alias",
+            "hotkey": self.hotkey_input.text().strip().lower(),
+            "command1": self.command_input.text().strip(),
+            "enabled": True,
+            "send_enter": self.send_enter_checkbox.isChecked(),
+            "show_float": self.float_checkbox.isChecked(),
+            "x_offset": self.alias.get("x_offset", 0) if (hasattr(self, 'alias') and self.alias) else 0,
+            "y_offset": self.alias.get("y_offset", 0) if (hasattr(self, 'alias') and self.alias) else 0
         }
 
-        self.session_kills = {"monsters": {}, "players": {}}
-        self.all_time_kills = {"monsters": {}, "players": {}}
-        self.last_tail = []
-        self.refresh_counter = 10
-        self.knowledge_cache = {}
-        self.current_attributes = {}
-        self.vault_data = {"barloque": [], "hungry": []}
-        self.calculator = SchoolCalculator()
+# ----------------------------------------------------------------------
+# Reorderable Container & Card System
+# ----------------------------------------------------------------------
+class GridReorderContainer(QWidget):
+    """Fluid flow container supporting responsive horizontal tile wrapping based on application width, row height alignment, and vertical drag-reordering."""
+    def __init__(self, cols=12, parent=None):
+        super().__init__(parent)
+        self.cols = cols
+        self.cards = []
+        self._is_refreshing = False
+        self._last_width = None
+        
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(12)
+        self.setAcceptDrops(True)
+
+        self.current_hover_target = None
+        self.current_hover_zone = None
+        self.current_hover_dragged = None
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = event.size().width()
+        if self._last_width is not None and abs(w - self._last_width) < 15:
+            return
+        self._last_width = w
+        self.refresh_layout()
+
+    def add_card(self, card):
+        card.grid_container = self
+        if card not in self.cards:
+            self.cards.append(card)
+        self.refresh_layout()
+
+    def remove_card(self, card):
+        if card in self.cards:
+            self.cards.remove(card)
+            card.grid_container = None
+            self.refresh_layout()
+
+    def refresh_layout(self):
+        if getattr(self, '_is_refreshing', False):
+            return
+        self._is_refreshing = True
+        try:
+            self._do_refresh_layout()
+        finally:
+            self._is_refreshing = False
+
+    def _do_refresh_layout(self):
+        self.reset_hover_state()
+
+        # Safely remove all layout items and nested layouts without deleting child widgets
+        while self.main_layout.count() > 0:
+            item = self.main_layout.takeAt(0)
+            if item.layout():
+                sub_layout = item.layout()
+                while sub_layout.count() > 0:
+                    sub_layout.takeAt(0)
+
+        # Filter out any C++ deleted or invalid card objects
+        valid_cards = []
+        for c in self.cards:
+            try:
+                _ = c.title_text
+                valid_cards.append(c)
+            except (RuntimeError, AttributeError):
+                pass
+        self.cards = valid_cards
+
+        if not self.cards:
+            return
+
+        # Ensure CHARACTER IDENTITY & OVERVIEW is ALWAYS first in self.cards
+        char_cards = [c for c in self.cards if c.title_text == "CHARACTER IDENTITY & OVERVIEW"]
+        other_cards = [c for c in self.cards if c.title_text != "CHARACTER IDENTITY & OVERVIEW"]
+        self.cards = char_cards + other_cards
+
+        # Handle 1-column Dock Panel layout
+        if self.cols == 1:
+            for card in self.cards:
+                card.row_siblings = [card]
+                if hasattr(card, 'update_width_controls'):
+                    card.update_width_controls()
+                card.custom_height = None
+                if getattr(card, 'is_expanding', False):
+                    card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                else:
+                    card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                    ideal_h = card.get_content_ideal_height()
+                    card.setMinimumHeight(ideal_h)
+                    card.setMaximumHeight(16777215)
+                self.main_layout.addWidget(card)
+            self.main_layout.addStretch()
+
+            if hasattr(self, 'parent_card') and self.parent_card and hasattr(self.parent_card, 'grid_container') and self.parent_card.grid_container:
+                self.parent_card.grid_container.refresh_layout()
+            return
+
+        # Handle Main Dashboard Responsive Flow Layout
+        avail_w = self.width()
+        if avail_w <= 100:
+            p = self.parentWidget()
+            if p and p.width() > 100:
+                avail_w = p.width() - 28
+            else:
+                avail_w = 1100
+
+        spacing = 12
+
+        # Group cards into horizontal rows based on available container width
+        rows = []
+        current_row = []
+        current_row_w = 0
+
+        for card in self.cards:
+            if hasattr(card, 'update_width_controls'):
+                card.update_width_controls()
+
+            # Character Overview defaults to full width unless specifically given custom width
+            if card.title_text == "CHARACTER IDENTITY & OVERVIEW" and not getattr(card, 'custom_width', None):
+                card_w = avail_w
+            else:
+                default_w = 420
+                card_w = getattr(card, 'custom_width', None) or default_w
+                card_w = max(280, min(avail_w, card_w))
+
+            card.target_width = card_w
+
+            # If card demands full width or exceeds remaining row space, start new row
+            if card_w >= avail_w or (current_row and current_row_w + card_w + spacing > avail_w):
+                if current_row:
+                    rows.append(current_row)
+                current_row = [card]
+                current_row_w = card_w
+            else:
+                current_row.append(card)
+                current_row_w += card_w + spacing
+
+        if current_row:
+            rows.append(current_row)
+
+        # Render rows and align row heights using QHBoxLayout
+        for row_cards in rows:
+            row_layout = QHBoxLayout()
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(spacing)
+
+            # Row height = max ideal height or custom height across all cards in row
+            row_h = 240
+            for c in row_cards:
+                ideal = c.get_content_ideal_height()
+                custom = getattr(c, 'custom_height', None)
+                card_req = max(ideal, custom) if custom else ideal
+                row_h = max(row_h, card_req)
+
+            for c in row_cards:
+                c.row_siblings = row_cards
+                if getattr(c, 'custom_height', None):
+                    c.setFixedHeight(c.custom_height)
+                else:
+                    c.setMinimumHeight(row_h)
+                    c.setMaximumHeight(16777215)
+
+                c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                if len(row_cards) == 1 and getattr(c, 'target_width', 0) >= avail_w * 0.9:
+                    c.setMinimumWidth(0)
+                    c.setMaximumWidth(16777215)
+                else:
+                    c.setMinimumWidth(min(280, getattr(c, 'target_width', 380)))
+                    if getattr(c, 'custom_width', None):
+                        c.setFixedWidth(min(avail_w, c.custom_width))
+                    else:
+                        c.setMaximumWidth(16777215)
+
+                row_layout.addWidget(c)
+
+            self.main_layout.addLayout(row_layout)
+
+        self.main_layout.addStretch()
+
+    def detect_zone(self, card, pos_in_card):
+        """Determines TOP or BOTTOM drop zone for reordering."""
+        h = max(1, card.height())
+        y = max(0, min(h, pos_in_card.y()))
+        return "TOP" if (y / h) < 0.5 else "BOTTOM"
+
+    def apply_zone_morph(self, dragged_card, target_card, zone):
+        """Applies reordering based on drag target position."""
+        if not getattr(dragged_card, 'is_draggable', True):
+            return
+
+        if dragged_card not in self.cards or target_card not in self.cards or dragged_card == target_card:
+            return
+
+        self.cards.remove(dragged_card)
+        target_idx = self.cards.index(target_card)
+
+        if zone == "TOP":
+            self.cards.insert(target_idx, dragged_card)
+        else:
+            self.cards.insert(target_idx + 1, dragged_card)
+
+        # Enforce CHARACTER IDENTITY & OVERVIEW is ALWAYS at index 0
+        char_cards = [c for c in self.cards if c.title_text == "CHARACTER IDENTITY & OVERVIEW"]
+        other_cards = [c for c in self.cards if c.title_text != "CHARACTER IDENTITY & OVERVIEW"]
+        self.cards = char_cards + other_cards
+
+        self.refresh_layout()
+        if hasattr(self.window(), 'save_layout_config'):
+            self.window().save_layout_config()
+
+    def handle_drag_over_card(self, dragged_card, target_card, pos_in_card):
+        zone = self.detect_zone(target_card, pos_in_card)
+        if target_card != self.current_hover_target and self.current_hover_target:
+            self.current_hover_target.clear_zone_style()
+
+        self.current_hover_target = target_card
+        self.current_hover_zone = zone
+        self.current_hover_dragged = dragged_card
+        target_card.apply_zone_style(zone)
+
+    def reset_hover_state(self):
+        if self.current_hover_target:
+            try:
+                if hasattr(self.current_hover_target, 'clear_zone_style'):
+                    self.current_hover_target.clear_zone_style()
+            except RuntimeError:
+                pass
+        self.current_hover_target = None
+        self.current_hover_zone = None
+        self.current_hover_dragged = None
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text() == "M59_REORDER_CARD":
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self.reset_hover_state()
+
+    def dropEvent(self, event):
+        if self.current_hover_dragged and self.current_hover_target and self.current_hover_zone:
+            self.apply_zone_morph(self.current_hover_dragged, self.current_hover_target, self.current_hover_zone)
+        self.reset_hover_state()
+        self.refresh_layout()
+        event.acceptProposedAction()
+
+
+class ReorderableCard(QFrame):
+    """Interactive Card component supporting automatic zone-based drag-and-drop morphing, vertical resizing, and content scrollbars."""
+    def __init__(self, title_text, grid_container=None, icon="⋮⋮ DRAG", default_colspan=6, is_draggable=True, parent=None):
+        border_color="#94a3b8"
+        super().__init__(parent)
+        self.setProperty("class", "WebCard")
+        self.setAcceptDrops(True)
+        self.grid_container = None
+        self.column_span = default_colspan
+        self.border_color = border_color
+        self.is_draggable = is_draggable
+        self.title_text = title_text
+        self.custom_height = None
+        self._card_ref = self
+
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(4, 4, 4, 4)
+        self.main_layout.setSpacing(4)
+
+        # Header Frame (Click & Drag Header if draggable)
+        self.header_frame = QWidget()
+        if self.is_draggable:
+            self.header_frame.setCursor(Qt.SizeAllCursor)
+        self.header_layout = QHBoxLayout(self.header_frame)
+        self.header_layout.setContentsMargins(0, 0, 0, 0)
+        self.header_layout.setSpacing(6)
+
+        # Drag Handle Badge (⋮⋮ DRAG if draggable)
+        if self.is_draggable:
+            self.drag_handle = QLabel(icon)
+            self.drag_handle.setCursor(Qt.SizeAllCursor)
+            self.drag_handle.setToolTip("Click & drag header into top, bottom, left, or right zone of another tile to dock/morph")
+            self.drag_handle.setStyleSheet("font-size: 11px; color: #94a3b8; font-weight: 800; padding: 2px 6px; border-radius: 4px; background: #030712; border: 1px solid #334155;")
+            self.header_layout.addWidget(self.drag_handle)
+        else:
+            self.drag_handle = None
+
+        # Card Title Label
+        self.title_label = QLabel(title_text)
+        if self.is_draggable:
+            self.title_label.setCursor(Qt.SizeAllCursor)
+        self.title_label.setStyleSheet(f"font-size: 11px; font-weight: 800; color: {border_color}; letter-spacing: 0.8px;")
+        self.header_layout.addWidget(self.title_label)
+
+        self.header_layout.addStretch()
+
+        # Width / Horizontal Resize Controls (◀ 1/3 ▶)
+        self.width_control_widget = QWidget()
+        wc_layout = QHBoxLayout(self.width_control_widget)
+        wc_layout.setContentsMargins(0, 0, 0, 0)
+        wc_layout.setSpacing(2)
+
+        self.btn_shrink = QPushButton("◀")
+        self.btn_shrink.setToolTip("Shrink tile width")
+        self.btn_shrink.setFixedSize(18, 18)
+        self.btn_shrink.setStyleSheet("""
+            QPushButton {
+                font-size: 9px; font-weight: 800; color: #94a3b8; background: #030712;
+                border: 1px solid #334155; border-radius: 3px; padding: 0px;
+            }
+            QPushButton:hover {
+                color: #94a3b8; background: #0f172a; border-color: #94a3b8;
+            }
+            QPushButton:disabled {
+                color: #334155; background: #030712; border-color: #0f172a;
+            }
+        """)
+        self.btn_shrink.clicked.connect(self.shrink_width)
+
+        self.span_badge = QLabel(f"{self.column_span}/3")
+        self.span_badge.setAlignment(Qt.AlignCenter)
+        self.span_badge.setStyleSheet("font-size: 9px; font-weight: 800; color: #64748b; padding: 0px 3px;")
+
+        self.btn_expand = QPushButton("▶")
+        self.btn_expand.setToolTip("Expand tile width")
+        self.btn_expand.setFixedSize(18, 18)
+        self.btn_expand.setStyleSheet("""
+            QPushButton {
+                font-size: 9px; font-weight: 800; color: #94a3b8; background: #030712;
+                border: 1px solid #334155; border-radius: 3px; padding: 0px;
+            }
+            QPushButton:hover {
+                color: #94a3b8; background: #0f172a; border-color: #94a3b8;
+            }
+            QPushButton:disabled {
+                color: #334155; background: #030712; border-color: #0f172a;
+            }
+        """)
+        self.btn_expand.clicked.connect(self.expand_width)
+
+        wc_layout.addWidget(self.btn_shrink)
+        wc_layout.addWidget(self.span_badge)
+        wc_layout.addWidget(self.btn_expand)
+
+        self.header_layout.addWidget(self.width_control_widget)
+        self.main_layout.addWidget(self.header_frame)
+
+        # Scroll Area for Card Content so scrollbars appear if box is small (NO horizontal scrollbar)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setStyleSheet("background: transparent; border: none;")
+
+        self.content_widget = QWidget()
+        self.content_widget.setStyleSheet("background: transparent;")
+        self.content_layout = QVBoxLayout(self.content_widget)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(8)
+
+        self.scroll_area.setWidget(self.content_widget)
+        self.main_layout.addWidget(self.scroll_area, 1)
+
+        # Bottom Bar with Bottom-Right Corner Square Resize Handle (Height & Width)
+        self.bottom_bar = QWidget()
+        self.bottom_bar.setFixedHeight(14)
+        bottom_layout = QHBoxLayout(self.bottom_bar)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(0)
+
+        bottom_layout.addStretch()
+
+        self.corner_resize_handle = QLabel("⤡")
+        self.corner_resize_handle.setFixedSize(16, 14)
+        self.corner_resize_handle.setAlignment(Qt.AlignCenter)
+        self.corner_resize_handle.setCursor(Qt.SizeFDiagCursor)
+        self.corner_resize_handle.setToolTip("Drag corner to resize height (up/down) and width (left/right). Double-click to reset height.")
+        self.corner_resize_handle.setStyleSheet("""
+            QLabel {
+                font-size: 11px;
+                font-weight: 900;
+                color: #94a3b8;
+                background: #030712;
+                border-top: 1px solid #1e293b;
+                border-left: 1px solid #1e293b;
+                border-top-left-radius: 4px;
+                border-bottom-right-radius: 6px;
+            }
+            QLabel:hover {
+                color: #f8fafc;
+                background: #0f172a;
+                border-color: #94a3b8;
+            }
+        """)
+
+        self._diag_resize_start_pos = None
+        self._diag_resize_start_h = None
+        self.corner_resize_handle.mousePressEvent = self.handle_corner_press
+        self.corner_resize_handle.mouseMoveEvent = self.handle_corner_move
+        self.corner_resize_handle.mouseDoubleClickEvent = self.handle_corner_dblclick
+
+        bottom_layout.addWidget(self.corner_resize_handle)
+        self.bottom_bar.show()
+        self.main_layout.addWidget(self.bottom_bar)
+
+        if grid_container:
+            grid_container.add_card(self)
+
+        # Connect mouse events for fluid header dragging if draggable
+        if self.is_draggable:
+            self._drag_start_pos = None
+            for w in (self.header_frame, self.drag_handle, self.title_label):
+                if w:
+                    w.mousePressEvent = self.handle_handle_press
+                    w.mouseMoveEvent = self.handle_handle_move
+
+    def get_content_ideal_height(self):
+        if self.grid_container and self.grid_container.cols == 1:
+            ch = 0
+            if hasattr(self, 'content_widget') and self.content_widget:
+                self.content_widget.adjustSize()
+                ch = max(0, self.content_widget.sizeHint().height(), self.content_widget.minimumSizeHint().height())
+            hh = self.header_frame.sizeHint().height() if hasattr(self, 'header_frame') and self.header_frame else 22
+            bh = self.bottom_bar.sizeHint().height() if hasattr(self, 'bottom_bar') and self.bottom_bar else 14
+            return ch + hh + bh + 18
+
+        ch = 200
+        if hasattr(self, 'content_widget') and self.content_widget:
+            self.content_widget.adjustSize()
+            ch = max(ch, self.content_widget.sizeHint().height(), self.content_widget.minimumSizeHint().height())
+
+        hh = self.header_frame.sizeHint().height() if hasattr(self, 'header_frame') and self.header_frame else 28
+        bh = self.bottom_bar.sizeHint().height() if hasattr(self, 'bottom_bar') and self.bottom_bar else 14
+
+        return ch + hh + bh + 24
+
+    def add_header_widget(self, widget):
+        idx = max(0, self.header_layout.count() - 2)
+        self.header_layout.insertWidget(idx, widget)
+
+    def shrink_width(self):
+        presets = [320, 420, 560, 800, 1200]
+        curr_w = getattr(self, 'custom_width', None) or 420
+        smaller = [p for p in presets if p < curr_w - 20]
+        if smaller:
+            self.custom_width = max(smaller)
+        else:
+            self.custom_width = 320
+        self.update_width_controls()
+        if self.grid_container:
+            self.grid_container.refresh_layout()
+        if hasattr(self.window(), 'save_layout_config'):
+            self.window().save_layout_config()
+
+    def expand_width(self):
+        presets = [320, 420, 560, 800, 1200]
+        curr_w = getattr(self, 'custom_width', None) or 420
+        larger = [p for p in presets if p > curr_w + 20]
+        if larger:
+            self.custom_width = min(larger)
+        else:
+            self.custom_width = 1200
+        self.update_width_controls()
+        if self.grid_container:
+            self.grid_container.refresh_layout()
+        if hasattr(self.window(), 'save_layout_config'):
+            self.window().save_layout_config()
+
+    def update_width_controls(self):
+        if not hasattr(self, 'width_control_widget') or not self.width_control_widget:
+            return
+        if self.grid_container and self.grid_container.cols == 1:
+            self.width_control_widget.hide()
+            if hasattr(self, 'bottom_bar') and self.bottom_bar:
+                self.bottom_bar.hide()
+            return
+
+        self.width_control_widget.show()
+        if hasattr(self, 'bottom_bar') and self.bottom_bar:
+            self.bottom_bar.show()
+        curr_w = getattr(self, 'custom_width', None) or 420
+        if hasattr(self, 'span_badge') and self.span_badge:
+            if curr_w >= 1000:
+                txt = "MAX"
+            elif curr_w >= 700:
+                txt = "XL"
+            elif curr_w >= 500:
+                txt = "L"
+            elif curr_w >= 380:
+                txt = "M"
+            else:
+                txt = "S"
+            self.span_badge.setText(txt)
+
+    def handle_corner_press(self, event):
+        if self.grid_container and self.grid_container.cols == 1:
+            return
+        if event.button() == Qt.LeftButton:
+            self._diag_resize_start_pos = event.globalPosition()
+            self._diag_resize_start_w = self.width()
+            self._diag_resize_start_h = self.height()
+
+    def handle_corner_move(self, event):
+        if self.grid_container and self.grid_container.cols == 1:
+            return
+        if (event.buttons() & Qt.LeftButton) and self._diag_resize_start_pos is not None:
+            curr_pos = event.globalPosition()
+            dx = curr_pos.x() - self._diag_resize_start_pos.x()
+            dy = curr_pos.y() - self._diag_resize_start_pos.y()
+
+            # Individual Tile Resizing (Width & Height)
+            self.custom_width = max(280, int(self._diag_resize_start_w + dx))
+            self.custom_height = max(180, int(self._diag_resize_start_h + dy))
+
+            if self.grid_container:
+                self.grid_container.refresh_layout()
+
+            if hasattr(self.window(), 'save_layout_config'):
+                self.window().save_layout_config()
+
+    def handle_corner_dblclick(self, event):
+        if self.grid_container and self.grid_container.cols == 1:
+            return
+        self.custom_width = None
+        self.custom_height = None
+        if self.grid_container:
+            self.grid_container.refresh_layout()
+        if hasattr(self.window(), 'save_layout_config'):
+            self.window().save_layout_config()
+
+    def apply_zone_style(self, zone):
+        """Highlights the active drop zone border on target card."""
+        if self.grid_container and self.grid_container.cols == 1:
+            if zone == "LEFT":
+                zone = "TOP"
+            elif zone == "RIGHT":
+                zone = "BOTTOM"
+
+        base = "border-radius: 6px; background-color: #020617; "
+        if zone == "LEFT":
+            self.setStyleSheet(base + "border-left: 6px solid #64748b; border-top: 1px solid #1e293b; border-right: 1px solid #1e293b; border-bottom: 1px solid #1e293b;")
+        elif zone == "RIGHT":
+            self.setStyleSheet(base + "border-right: 6px solid #64748b; border-top: 1px solid #1e293b; border-left: 1px solid #1e293b; border-bottom: 1px solid #1e293b;")
+        elif zone == "TOP":
+            self.setStyleSheet(base + "border-top: 6px solid #94a3b8; border-left: 1px solid #1e293b; border-right: 1px solid #1e293b; border-bottom: 1px solid #1e293b;")
+        elif zone == "BOTTOM":
+            self.setStyleSheet(base + "border-bottom: 6px solid #94a3b8; border-left: 1px solid #1e293b; border-right: 1px solid #1e293b; border-top: 1px solid #1e293b;")
+
+    def clear_zone_style(self):
+        self.setStyleSheet("")
+        self.setProperty("class", "WebCard")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def handle_handle_press(self, event):
+        if self.is_draggable and event.button() == Qt.LeftButton:
+            self._drag_start_pos = event.globalPosition().toPoint()
+
+    def handle_handle_move(self, event):
+        if not self.is_draggable:
+            return
+        if not (event.buttons() & Qt.LeftButton) or not self._drag_start_pos:
+            return
+        if (event.globalPosition().toPoint() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
+            return
+
+        mime = QMimeData()
+        mime.setText("M59_REORDER_CARD")
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+
+        pixmap = self.grab()
+        if not pixmap.isNull():
+            drag.setPixmap(pixmap.scaled(280, 90, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+        self.setStyleSheet("border: 2px dashed #64748b; border-radius: 10px; background-color: #020617;")
+        drag.exec_(Qt.MoveAction)
+        self.clear_zone_style()
+        self._drag_start_pos = None
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text() == "M59_REORDER_CARD":
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text() == "M59_REORDER_CARD":
+            src_widget = event.source()
+            if src_widget and self.grid_container:
+                dragged_card = getattr(src_widget, '_card_ref', None) or src_widget
+                while dragged_card and not isinstance(dragged_card, ReorderableCard):
+                    if hasattr(dragged_card, 'parent') and callable(dragged_card.parent):
+                        dragged_card = dragged_card.parent()
+                    else:
+                        break
+                if dragged_card and dragged_card != self and dragged_card in self.grid_container.cards:
+                    pos_in_card = event.position().toPoint()
+                    self.grid_container.handle_drag_over_card(dragged_card, self, pos_in_card)
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self.clear_zone_style()
+
+    def dropEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text() == "M59_REORDER_CARD":
+            src_widget = event.source()
+            if src_widget and self.grid_container:
+                dragged_card = getattr(src_widget, '_card_ref', None) or src_widget
+                while dragged_card and not isinstance(dragged_card, ReorderableCard):
+                    if hasattr(dragged_card, 'parent') and callable(dragged_card.parent):
+                        dragged_card = dragged_card.parent()
+                    else:
+                        break
+                if dragged_card and dragged_card in self.grid_container.cards:
+                    pos_in_card = event.position().toPoint()
+                    zone = self.grid_container.detect_zone(self, pos_in_card)
+                    self.grid_container.apply_zone_morph(dragged_card, self, zone)
+        self.clear_zone_style()
+        if self.grid_container:
+            self.grid_container.reset_hover_state()
+            self.grid_container.refresh_layout()
+        event.acceptProposedAction()
+
+
+class ReorderableSubCard(ReorderableCard):
+    """Compact inner sub-card for grouping multiple draggable data sections into one master parent container."""
+    def __init__(self, title_text, grid_container=None, icon="⋮⋮", default_colspan=1, is_draggable=True, parent=None):
+        super().__init__(title_text, grid_container=grid_container, icon=icon, default_colspan=default_colspan, is_draggable=is_draggable, parent=parent)
+        self.setObjectName("WebSubCard")
+        self.set_sub_style()
+        self.main_layout.setContentsMargins(4, 3, 4, 3)
+        self.main_layout.setSpacing(2)
+        self.content_layout.setContentsMargins(2, 2, 2, 2)
+        self.content_layout.setSpacing(2)
+
+        if hasattr(self, 'width_control_widget') and self.width_control_widget:
+            self.width_control_widget.hide()
+        if hasattr(self, 'bottom_bar') and self.bottom_bar:
+            self.bottom_bar.hide()
+
+    def set_sub_style(self):
+        self.setStyleSheet("""
+            QFrame#WebSubCard {
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
+                border-radius: 6px;
+            }
+        """)
+
+    def apply_zone_style(self, zone):
+        base = "border-radius: 6px; background-color: #020617; "
+        if zone in ("LEFT", "TOP"):
+            self.setStyleSheet(base + "border-top: 3px solid #38bdf8; border-left: 1px solid #1e293b; border-right: 1px solid #1e293b; border-bottom: 1px solid #1e293b;")
+        else:
+            self.setStyleSheet(base + "border-bottom: 3px solid #38bdf8; border-left: 1px solid #1e293b; border-right: 1px solid #1e293b; border-top: 1px solid #1e293b;")
+
+    def clear_zone_style(self):
+        self.set_sub_style()
+
+    def get_content_ideal_height(self):
+        ch = 0
+        if hasattr(self, 'content_widget') and self.content_widget:
+            self.content_widget.adjustSize()
+            ch = max(0, self.content_widget.sizeHint().height(), self.content_widget.minimumSizeHint().height())
+        hh = self.header_frame.sizeHint().height() if hasattr(self, 'header_frame') and self.header_frame else 18
+        return ch + hh + 10
+
+
+# ----------------------------------------------------------------------
+# Local Companion Modules
+# ----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# PySide6 Splash Screen & Status Overlay
+# ----------------------------------------------------------------------
+class M59SplashScreen(QWidget):
+    """Frameless Splash Screen overlay displaying m59comp image & startup status messages."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.SplashScreen)
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self.setFixedSize(580, 420)
+
+        # Center on Primary Screen
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.geometry()
+            x = (geo.width() - 580) // 2
+            y = (geo.height() - 420) // 2
+            self.move(x, y)
+
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #0B0F19;
+                border: 2px solid #1E293B;
+                border-radius: 14px;
+            }
+            QLabel {
+                background: transparent;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setAlignment(Qt.AlignCenter)
+
+        # Image Container Label
+        self.img_lbl = QLabel()
+        self.img_lbl.setAlignment(Qt.AlignCenter)
+
+        # Search for m59comp splash image
+        img_path = resource_path(os.path.join("imgs", "m59comp.jpg"))
+        if not os.path.exists(img_path):
+            img_path = resource_path(os.path.join("imgs", "m59comp.png"))
+
+        if os.path.exists(img_path):
+            pix = QPixmap(img_path)
+            if not pix.isNull():
+                scaled_pix = pix.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.img_lbl.setPixmap(scaled_pix)
+        else:
+            self.img_lbl.setText("🛡️")
+            self.img_lbl.setStyleSheet("font-size: 64px; color: #94a3b8;")
+
+        layout.addWidget(self.img_lbl, 0, Qt.AlignCenter)
+        layout.addSpacing(12)
+
+        title_lbl = QLabel("MERIDIAN 59 COMPANION")
+        title_lbl.setStyleSheet("font-size: 20px; font-weight: 900; color: #f8fafc; letter-spacing: 1.5px;")
+        title_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_lbl, 0, Qt.AlignCenter)
+
+        layout.addSpacing(14)
+
+        self.status_title_lbl = QLabel("↻ SCANNING FOR GAME PROCESS")
+        self.status_title_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #94a3b8; letter-spacing: 1px;")
+        self.status_title_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.status_title_lbl, 0, Qt.AlignCenter)
+
+        self.status_sub_lbl = QLabel("Please launch Meridian 59 (meridian.exe) to continue...")
+        self.status_sub_lbl.setStyleSheet("font-size: 11px; color: #94a3b8;")
+        self.status_sub_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.status_sub_lbl, 0, Qt.AlignCenter)
+
+    def set_status(self, mode="searching", title=None, msg=None):
+        if mode == "initializing":
+            self.status_title_lbl.setText(title or "↻ INITIALIZING GAME STATE")
+            self.status_title_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #fbbf24; letter-spacing: 1px;")
+            self.status_sub_lbl.setText(msg or "Synchronizing memory state and character ledgers...")
+        elif mode == "login":
+            self.status_title_lbl.setText(title or "↻ WAITING FOR CHARACTER LOGIN")
+            self.status_title_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #60a5fa; letter-spacing: 1px;")
+            self.status_sub_lbl.setText(msg or "Please select a character and enter the world.")
+        elif mode == "connected":
+            self.status_title_lbl.setText(title or "🟢 CONNECTED & READY")
+            self.status_title_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #94a3b8; letter-spacing: 1px;")
+            self.status_sub_lbl.setText(msg or "Meridian 59 game process attached successfully!")
+        else:
+            self.status_title_lbl.setText(title or "↻ SCANNING FOR GAME PROCESS")
+            self.status_title_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #94a3b8; letter-spacing: 1px;")
+            self.status_sub_lbl.setText(msg or "Please launch Meridian 59 (meridian.exe) to continue.")
+        QApplication.processEvents()
+
+try:
+    pass
+except Exception:
+    InstanceManager = None
+
+try:
+    pass
+except Exception:
+    capture_identity = None
+    cycle_tabs_and_scrape = None
+    MemoryReader = None
+    get_blakgraph_stats = None
+    get_text_from_hwnd = None
+
+try:
+    pass
+except Exception:
+    WhoListMonitor = None
+
+try:
+    pass
+except Exception:
+    InventoryScraper = None
+    process_inventory = None
+
+try:
+    pass
+except Exception:
+    perform_vault_scan = None
+    send_chat_command = None
+
+
+# ----------------------------------------------------------------------
+# Modern Web QSS Stylesheet
+# ----------------------------------------------------------------------
+FLUID_WEB_QSS = """
+* {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    outline: none;
+}
+
+QMainWindow {
+    background-color: #0f172a;
+}
+
+QWidget {
+    background-color: transparent;
+    color: #f8fafc;
+}
+
+/* Sidebar Navigation */
+#SidebarWidget {
+    background-color: #0f172a;
+    border-right: 1px solid #1e293b;
+}
+
+#SidebarTitle {
+    font-size: 15px;
+    font-weight: 800;
+    color: #f8fafc;
+    letter-spacing: -0.5px;
+}
+
+#SidebarSub {
+    font-size: 11px;
+    color: #94a3b8;
+    font-weight: 500;
+}
+
+QListWidget#NavList {
+    background-color: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QListWidget#NavList::item {
+    padding: 12px 16px;
+    border-radius: 8px;
+    color: #cbd5e1;
+    margin-bottom: 6px;
+    border: 1px solid transparent;
+}
+
+QListWidget#NavList::item:hover {
+    background-color: #1e293b;
+    color: #f8fafc;
+}
+
+QListWidget#NavList::item:selected {
+    background-color: #1e293b;
+    color: #f8fafc;
+    border: 1px solid #334155;
+    font-weight: 700;
+}
+
+/* Right Side Dock Panel */
+#RightPanelWidget {
+    background-color: #0f172a;
+    border-left: 1px solid #1e293b;
+}
+
+/* Cards & Containers */
+.WebCard {
+    background-color: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+}
+
+/* Buttons */
+QPushButton.WebBtnPrimary {
+    background-color: #3b82f6;
+    color: #ffffff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton.WebBtnPrimary:hover {
+    background-color: #2563eb;
+}
+
+QPushButton.WebBtnSecondary {
+    background-color: #334155;
+    color: #f8fafc;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton.WebBtnSecondary:hover {
+    background-color: #475569;
+}
+
+/* Inputs */
+QLineEdit {
+    background-color: #0f172a;
+    color: #f8fafc;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+QLineEdit:focus {
+    border: 1px solid #3b82f6;
+}
+
+/* Progress Bars */
+QProgressBar {
+    background-color: #334155;
+    border: none;
+    border-radius: 4px;
+    text-align: center;
+    color: transparent;
+}
+
+QProgressBar::chunk {
+    background-color: #3b82f6;
+    border-radius: 4px;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    border: none;
+    background: #0f172a;
+    width: 10px;
+    margin: 0px 0px 0px 0px;
+}
+QScrollBar::handle:vertical {
+    background: #334155;
+    min-height: 30px;
+    border-radius: 5px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #475569;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+"""
+
+
+# ----------------------------------------------------------------------
+# Qt Signal Bridge for Game Lifecycle Events
+# ----------------------------------------------------------------------
+class GameBridgeSignal(QObject):
+    game_connected = Signal(object, int) # pm, pid
+    game_disconnected = Signal(int)       # pid
+    log_line_received = Signal(str)      # line
+    sync_stats_received = Signal(dict)   # stats dict
+    wholist_updated = Signal(dict)       # players dict {name: status}
+    scrape_finished = Signal()           # memory scrape cycle complete
+    identity_found = Signal(str)         # character name found from bio window
+    vault_updated = Signal(str, list, str) # vault_type, items list, last_scan timestamp string
+    room_changed = Signal(str)           # current room name string
+    knowledge_updated = Signal(dict)     # knowledge dict {skill/spell: percent}
+
+
+# ----------------------------------------------------------------------
+# Standalone Desktop Dock Window (AppBar)
+# ----------------------------------------------------------------------
+class M59StandaloneDockWindow(QWidget):
+    """Standalone Desktop Dock Window for the Dock Panel (World Clock & Who List).
+    Registers as a Windows AppBar so all maximized windows automatically resize around it."""
+    def __init__(self, parent_app):
+        super().__init__()
+        self.parent_app = parent_app
+        self.is_docked = False
+        self.dock_content = None
+        self.dock_width = 290
+
+        self.setWindowTitle("M59 Companion Dock")
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setMinimumWidth(200)
+        self.setMaximumWidth(600)
+        self.resize(self.dock_width, 800)
+        self.setStyleSheet(FLUID_WEB_QSS + """
+            M59StandaloneDockWindow {
+                border-left: 3px solid #64748b;
+                background-color: #0b0f19;
+            }
+        """)
+
+        self.container_layout = QVBoxLayout(self)
+        self.container_layout.setContentsMargins(0, 0, 0, 0)
+        self.container_layout.setSpacing(0)
+
+        # Standalone Header
+        hdr = QHBoxLayout()
+        hdr.setContentsMargins(6, 6, 6, 6)
+        title = QLabel("🛡️ M59 DOCK PANEL")
+        title.setStyleSheet("font-size: 11px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
+        hdr.addWidget(title)
+        hdr.addStretch()
+
+        self.undock_btn = QPushButton("🪟 Undock")
+        self.undock_btn.setProperty("class", "WebBtnSecondary")
+        self.undock_btn.setToolTip("Undock panel and return to main Companion application")
+        self.undock_btn.clicked.connect(self.undock_desktop)
+        hdr.addWidget(self.undock_btn)
+
+        self.container_layout.addLayout(hdr)
+
+    def attach_dock_content(self, content_widget):
+        """Attaches right_panel_content widget into this standalone window and registers Windows AppBar."""
+        self.dock_content = content_widget
+
+        # Remove from main window layout first if present
+        if hasattr(self.parent_app, 'right_panel_layout') and self.parent_app.right_panel_layout:
+            self.parent_app.right_panel_layout.removeWidget(self.dock_content)
+
+        self.dock_content.setParent(self)
+        self.container_layout.addWidget(self.dock_content, 1)
+        self.dock_content.show()
+
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+        # Register as Windows AppBar so desktop work area resizes around it
+        hwnd = int(self.winId())
+        self.is_docked = register_window_appbar(hwnd, width=self.dock_width)
+
+        # Refresh WhoList rendering for new parent
+        if hasattr(self.parent_app, 'update_wholist_gui') and hasattr(self.parent_app, 'wholist_data'):
+            self.parent_app.update_wholist_gui(self.parent_app.wholist_data)
+
+    def undock_desktop(self):
+        """Unregisters AppBar and notifies parent_app to return the dock content to main window."""
+        if self.is_docked:
+            hwnd = int(self.winId())
+            unregister_window_appbar(hwnd)
+            self.is_docked = False
+
+        if self.dock_content:
+            self.container_layout.removeWidget(self.dock_content)
+
+        self.hide()
+        self.parent_app.on_standalone_dock_undocked()
+
+    def closeEvent(self, event):
+        self.undock_desktop()
+        event.accept()
+
+
+# ----------------------------------------------------------------------
+# Main Application Window
+# ----------------------------------------------------------------------
+class M59CompanionApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Meridian 59 Companion - Fluid Web Edition")
+        self.resize(1380, 880)
+
+        # Print Startup Debug
+        print("\n========================================================", flush=True)
+        print("[M59-INIT] Starting Meridian 59 Companion - Pure Real-Data Engine", flush=True)
+        print("[M59-INIT] All initial fields strictly blank until game attachment.", flush=True)
+        print("========================================================\n", flush=True)
+
+        # Docking & Splash State
+        self.is_desktop_docked = False
+        self.saved_geometry = None
+        self.standalone_dock = None
+        self.splash_screen = None
+        self.main_hwnd = None
+        self.pm_obj = None
+
+        # Sound & Audio Alert State
+        ensure_default_sounds()
+        self.unread_private_count = 0
+        s_cfg = self.load_gui_settings()
+        self.pk_alert_enabled = s_cfg.get("pk_alert_enabled", True)
+        self.pk_sound_enabled = s_cfg.get("pk_sound_enabled", True)
+        self.pk_sound_path = s_cfg.get("pk_sound_path", "sound/alert.wav")
+        self.tell_sound_enabled = s_cfg.get("tell_sound_enabled", True)
+        self.tell_sound_path = s_cfg.get("tell_sound_path", "sound/dm_chime.wav")
+        self.pk_frame_enabled = s_cfg.get("pk_frame_enabled", True)
+        self.pk_frame = PKFrame(self.main_hwnd, dashboard=self)
+
+        # Init BGF Manager with Steam / Non-Steam / Local installation detection
+        import m59_bgf
+        from m59_map import detect_installation
+        try:
+            rooms_dir, _, _ = detect_installation()
+        except Exception:
+            rooms_dir = None
+        if not rooms_dir:
+            rooms_dir = resource_path("graphics") if os.path.exists(resource_path("graphics")) else os.getcwd()
+        self.bgf_manager = m59_bgf.BGFManager(rooms_dir)
+        self.bgf_manager.load_mob_mapping(resource_path("settings/moblist.csv"))
+        self.current_bgf_frames = []
+        self.current_bgf_image_pixmaps = []
+
+        # Signal Bridge
+        self.signals = GameBridgeSignal()
+        self.signals.game_connected.connect(self.on_game_connected)
+        self.signals.game_disconnected.connect(self.on_game_disconnected)
+        self.signals.log_line_received.connect(self.process_log_line)
+        self.signals.sync_stats_received.connect(self.update_gui_stats)
+        self.signals.wholist_updated.connect(self.update_wholist_gui)
+        self.signals.scrape_finished.connect(self.on_scrape_finished)
+        self.signals.identity_found.connect(self.on_identity_found)
+        self.signals.vault_updated.connect(self.on_vault_updated)
+        self.signals.room_changed.connect(self.update_gps_room)
+        self.signals.knowledge_updated.connect(self.update_progression_ui)
+
+        # Character State
+        self.char_name = "--"
+        self.target_pid = None
+        self.wholist_monitor = None
+        self.wholist_data = {}
+        self.use_24h_clock = True
+        self.right_panel_collapsed = False
+
+        # Models
+        self.tracker = SessionTracker()
+        self.combat_monitor = CombatMonitor(self.char_name)
         self.bank_manager = BankManager()
+        self.gps_manager = GPSManager()
+        self.gps_room_options = self.gps_manager.get_room_options() if self.gps_manager else []
+        self.current_room_name = "Unknown Location"
+        self.calculator = SchoolCalculator()
+        self.knowledge_cache = {}
+
+        # Vault Data State
+        self.vault_data = {"barloque": [], "hungry": []}
+        self.vault_last_scan = {"barloque": "No scan data", "hungry": "No scan data"}
+
+        # Inventory & Memory Scraper State
         self.inventory_scraper = None
         self.inventory_items = []
-        self.sync_in_progress = False
+        self.inv_weight = 0
+        self.inv_bulk = 0
+        self.inv_sat_perc = 0.0
+        self.inv_w_perc = 0.0
+        self.inv_b_perc = 0.0
+        self.inv_max_cap = 1700
 
-        # --- Session Tracking Stats ---
-        self.total_improves = 0
-        self.who_footer_labels = {}
+        # Vitals Data (Max HP 150, Mana 250, Vigor 200)
+        self.hp_current, self.hp_max = 0, 150
+        self.mp_current, self.mp_max = 0, 250
+        self.vg_current, self.vg_max = 0, 200
 
-        # --- Layout ---
-        self.status_var = tk.StringVar(value="Initializing...")
-        self.status_frame = tk.Frame(self, bd=1, relief=tk.SUNKEN)
-        self.status_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        self.status_bar = tk.Label(self.status_frame, textvariable=self.status_var, anchor=tk.W, padx=5)
-        self.status_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        # All 7 Meridian Attributes (Blank initial values)
+        self.attributes = {
+            "Might": "--",
+            "Intellect": "--",
+            "Stamina": "--",
+            "Agility": "--",
+            "Mysticism": "--",
+            "Aim": "--",
+            "Karma": "--"
+        }
 
-        # Container for Side Panel + Notebook
-        self.main_container = tk.Frame(self)
-        self.main_container.pack(fill="both", expand=True)
+        # Session Ledgers
+        self.session_kills = {"monsters": {}, "players": {}}
+        self.improves_history = []
+        self.kills_history = []
+        self.chat_logs = []
+        self.recent_log_fingerprints = deque(maxlen=250)
+        self.active_channel = "all"
+        self.session_seconds = 0
+        self.comms_mode = "live"
+        self.active_floating_chat = None
+        self.active_elude_bar = None
 
-        self.setup_who_list_panel()
+        # Font Settings State (Grouped logically by UI domains)
+        self.font_settings = {
+            "player_list": 13,
+            "chat_logger": 13,
+            "dashboard_cards": 13,
+            "clock_panel": 20,
+            "sidebar_nav": 13,
+        }
 
-        self.notebook = DraggableNotebook(self.main_container)
-        self.notebook.pack(side="left", fill="both", expand=True, padx=5, pady=5)
-        
-        # Tab Creation
-        tabs = [("Dashboard", "dash"), ("Shortcuts", "shortcuts"), ("Inventory", "inv"), ("Communications", "comms"), ("GPS", "gps"), ("Progression", "prog"), ("Vault", "vault"), ("Kill Book", "book"), ("Settings", "settings")]
-        for name, key in tabs:
-            f = tk.Frame(self.notebook, bg="#f0f0f0")
-            setattr(self, f"tab_{key}", f)
-            self.notebook.add(f, text=f" {name} ")
-        
-        self.setup_tab_dashboard()
-        self.setup_tab_shortcuts()
-        self.setup_tab_inventory()
-        self.setup_tab_communications()
-        self.setup_tab_gps()
-        self.setup_tab_progression()
-        self.setup_tab_vault()
+        # Apply Fluid QSS
+        self.setStyleSheet(FLUID_WEB_QSS)
 
-        # Init BGF Manager
-        try:
-            rooms_dir, _, _ = m59_map.detect_installation()
-            self.bgf_manager = m59_bgf.BGFManager(rooms_dir)
-            self.bgf_manager.load_mob_mapping(resource_path("settings/moblist.csv"))
-        except:
-            self.bgf_manager = None
-            
-        self.setup_tab_book()
-        self.setup_tab_settings()
-        
-        # Apply initial side panel state
-        self.update_who_list_visibility()
-        
-        # Start Live Tail Polling
-        self.poll_chat_log()
+        # Build Interface
+        self.setup_ui()
 
-        self.minsize(400, 300)
-        self.after(100, self.background_update_check)
-        self.after(100, self.update_game_time)
-        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        # Load Knowledge Cache & Progression
+        self.load_knowledge_cache()
 
+        # Load Historical Logs in Settings Directory
+        self.refresh_historical_logs_list()
 
-    def load_pvp_icons(self):
-        self.pvp_icons = {}
-        try:
-            from PIL import Image, ImageTk
-            import os
-            
-            # For older PIL versions
-            resample_filter = getattr(Image, 'Resampling', Image).LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
+        # Clock Timer
+        self.clock_timer = QTimer(self)
+        self.clock_timer.timeout.connect(self.on_clock_tick)
+        self.clock_timer.start(1000)
 
-            icon_files = {
-                "Standard PVP": "open_pvp.jpg",
-                "Guild PVP Only": "guild_combat.jpg",
-                "Safe (No PVP)": "no_pvp.jpg",
-                "Safe Logoff": "safe_to_log.jpg"
+        # Initialize Game Process Attachment Engine
+        self.init_lifecycle_engine()
+
+        # Start HWND Chat Monitor (Live Stream)
+        self.start_chat_monitor()
+
+        # Initialize Floating Action Buttons & Global Hotkeys
+        self.update_floating_hotkey_buttons()
+        self.register_global_hotkeys()
+
+    def setup_ui(self):
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QHBoxLayout(main_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # --------------------------------------------------------------
+        # 1. LEFT SIDEBAR NAVIGATION
+        # --------------------------------------------------------------
+        sidebar = QWidget()
+        sidebar.setObjectName("SidebarWidget")
+        sidebar.setFixedWidth(240)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(16, 20, 16, 20)
+        sidebar_layout.setSpacing(12)
+
+        # Brand Title Header
+        brand_box = QHBoxLayout()
+        logo_badge = QLabel("M59")
+        logo_badge.setStyleSheet("""
+            background-color: rgba(16, 185, 129, 0.15);
+            color: #94a3b8;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 8px;
+            font-weight: 900;
+            font-size: 12px;
+            padding: 6px 10px;
+        """)
+        brand_box.addWidget(logo_badge)
+
+        title_v = QVBoxLayout()
+        t1 = QLabel("M59 Companion", objectName="SidebarTitle")
+        t2 = QLabel("v3.0 Fluid Web Interface", objectName="SidebarSub")
+        title_v.addWidget(t1)
+        title_v.addWidget(t2)
+        brand_box.addLayout(title_v)
+        brand_box.addStretch()
+        sidebar_layout.addLayout(brand_box)
+
+        sidebar_layout.addSpacing(10)
+
+        # Nav Section Header
+        sec_lbl = QLabel("SECTIONS")
+        sec_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #475569; letter-spacing: 1px;")
+        sidebar_layout.addWidget(sec_lbl)
+
+        # Navigation Menu List
+        self.nav_list = QListWidget()
+        self.nav_list.setObjectName("NavList")
+        self.nav_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.nav_list.setMinimumHeight(240)
+        self.nav_list.setMaximumHeight(16777215)
+        self.nav_list.addItem("  Dashboard (Main)")
+        self.nav_list.addItem("  Progression (Schools)")
+        self.nav_list.addItem("  Shortcuts (Macros & Elude)")
+        self.nav_list.addItem("  Chat Logger (Comms)")
+        self.nav_list.addItem("  Vault Storage (Ledger)")
+        self.nav_list.addItem("  Kill Book (Ledger)")
+        self.nav_list.addItem("  Settings (Preferences)")
+        self.nav_list.currentRowChanged.connect(self.switch_section)
+        sidebar_layout.addWidget(self.nav_list, 1)
+
+        # Live Game Engine Attachment Box
+        self.status_box = QFrame()
+        self.status_box.setStyleSheet("background-color: #030712; border: 1px solid #334155; border-radius: 10px;")
+        sb_layout = QVBoxLayout(self.status_box)
+        sb_layout.setContentsMargins(8, 8, 8, 8)
+        sb_layout.setSpacing(6)
+
+        st_hdr = QLabel("GAME ATTACHMENT PROCESS")
+        st_hdr.setStyleSheet("font-size: 9px; font-weight: 800; color: #64748b; letter-spacing: 0.8px;")
+        sb_layout.addWidget(st_hdr)
+
+        self.status_txt = QLabel("🟡 Searching for meridian.exe...")
+        self.status_txt.setStyleSheet("font-size: 11px; font-weight: 700; color: #f59e0b;")
+        sb_layout.addWidget(self.status_txt)
+
+        # Action Buttons (Bottom-Left Controls)
+        btn_box = QVBoxLayout()
+        btn_box.setSpacing(4)
+
+        self.sync_btn = QPushButton("🔄 Scrape Memory Stats")
+        self.sync_btn.setProperty("class", "WebBtnPrimary")
+        self.sync_btn.setToolTip("Triggers live memory scraping cycle.")
+        self.sync_btn.clicked.connect(self.trigger_manual_sync)
+        btn_box.addWidget(self.sync_btn)
+
+        self.reset_layout_btn = QPushButton("↺ Reset View")
+        self.reset_layout_btn.setProperty("class", "WebBtnSecondary")
+        self.reset_layout_btn.setToolTip("Reset dashboard layout")
+        self.reset_layout_btn.clicked.connect(self.reset_layout_config)
+        btn_box.addWidget(self.reset_layout_btn)
+
+        sb_layout.addLayout(btn_box)
+
+        sidebar_layout.addWidget(self.status_box)
+
+        main_layout.addWidget(sidebar)
+
+        # --------------------------------------------------------------
+        # 2. MAIN WORKSPACE (STACKED WIDGET)
+        # --------------------------------------------------------------
+        self.stacked_widget = QStackedWidget()
+
+        # Section 1: Dashboard Page
+        self.page_dashboard = self.build_dashboard_page()
+        self.stacked_widget.addWidget(self.page_dashboard)
+
+        # Section 2: Progression Page
+        self.page_progression = self.build_progression_page()
+        self.stacked_widget.addWidget(self.page_progression)
+
+        # Section 3: Shortcuts Page
+        self.page_shortcuts = self.build_shortcuts_page()
+        self.stacked_widget.addWidget(self.page_shortcuts)
+
+        # Section 4: Chat Logger Page
+        self.page_chat = self.build_chat_logger_page()
+        self.stacked_widget.addWidget(self.page_chat)
+
+        # Section 5: Vault Storage Page
+        self.page_vault = self.build_vault_page()
+        self.stacked_widget.addWidget(self.page_vault)
+
+        # Section 6: Kill Book Page
+        self.page_killbook = self.build_killbook_page()
+        self.stacked_widget.addWidget(self.page_killbook)
+
+        # Section 7: Settings Preferences Page
+        self.page_settings = self.build_settings_page()
+        self.stacked_widget.addWidget(self.page_settings)
+
+        main_layout.addWidget(self.stacked_widget, 1)
+
+        # --------------------------------------------------------------
+        # 3. RIGHT COLLAPSIBLE SIDE PANEL (Who List, Game Clock & Bottom Dock)
+        # --------------------------------------------------------------
+        self.right_panel = QWidget()
+        self.right_panel.setObjectName("RightPanelWidget")
+        self.right_panel.setMinimumWidth(200)
+        self.right_panel.setMaximumWidth(700)
+        self.right_panel.setFixedWidth(290)
+        self.right_panel_layout = QVBoxLayout(self.right_panel)
+        self.right_panel_layout.setContentsMargins(0, 0, 0, 0)
+        self.right_panel_layout.setSpacing(0)
+
+        # Minimalist Panel Header
+        rp_hdr = QHBoxLayout()
+        rp_hdr.setContentsMargins(8, 6, 8, 6)
+        rp_hdr.setSpacing(6)
+
+        self.rp_title = QLabel("DOCK PANEL")
+        self.rp_title.setStyleSheet("font-size: 11px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
+        rp_hdr.addWidget(self.rp_title)
+        rp_hdr.addStretch()
+
+        self.dock_desktop_btn = QPushButton("📌 Dock")
+        self.dock_desktop_btn.setFixedHeight(24)
+        self.dock_desktop_btn.setToolTip("Snap Dock Panel to Right Edge of Desktop Screen as an AppBar")
+        self.dock_desktop_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 10px; font-weight: 600; color: #94a3b8; background: transparent;
+                border: 1px solid #334155; border-radius: 4px; padding: 2px 8px;
             }
-            size = int(24 * self.scaling_factor)
-            
-            for key, filename in icon_files.items():
-                path = resource_path(os.path.join("imgs", filename))
-                if os.path.exists(path):
-                    img = Image.open(path).convert("RGBA")
-                    # Crop to center square to avoid stretching
-                    w, h = img.size
-                    min_dim = min(w, h)
-                    left = (w - min_dim) / 2
-                    top = (h - min_dim) / 2
-                    right = (w + min_dim) / 2
-                    bottom = (h + min_dim) / 2
-                    img = img.crop((left, top, right, bottom))
-                    img = img.resize((size, size), resample_filter)
-                    self.pvp_icons[key] = ImageTk.PhotoImage(img)
-                else:
-                    logger.debug(f"PVP Icon not found: {path}")
+            QPushButton:hover {
+                color: #f8fafc; background: #1e293b; border-color: #475569;
+            }
+        """)
+        self.dock_desktop_btn.clicked.connect(self.toggle_desktop_dock)
+        rp_hdr.addWidget(self.dock_desktop_btn)
+
+        self.collapse_btn = QPushButton("⇥ Hide")
+        self.collapse_btn.setFixedHeight(24)
+        self.collapse_btn.setToolTip("Hide / Collapse Dock Panel")
+        self.collapse_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 10px; font-weight: 700; color: #f8fafc; background: #334155;
+                border: 1px solid #475569; border-radius: 4px; padding: 2px 8px;
+            }
+            QPushButton:hover {
+                background: #475569; border-color: #64748b;
+            }
+        """)
+        self.collapse_btn.clicked.connect(self.toggle_right_panel)
+        rp_hdr.addWidget(self.collapse_btn)
+        self.right_panel_layout.addLayout(rp_hdr)
+
+        # Panel Content Container
+        self.right_panel_content = QWidget()
+        rpc_layout = QVBoxLayout(self.right_panel_content)
+        rpc_layout.setContentsMargins(4, 4, 4, 4)
+        rpc_layout.setSpacing(6)
+
+        # 1. LOW-PROFILE TOP TIME CLOCK BAR (Fixed Top)
+        self.time_bar = QFrame()
+        self.time_bar.setObjectName("DockTimeBar")
+        self.time_bar.setStyleSheet("""
+            QFrame#DockTimeBar {
+                background-color: #1e293b;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 2px 6px;
+            }
+        """)
+        tb_layout = QHBoxLayout(self.time_bar)
+        tb_layout.setContentsMargins(6, 4, 6, 4)
+        tb_layout.setSpacing(6)
+
+        clock_lbl = QLabel("🕒 CLOCK")
+        clock_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.5px;")
+
+        self.dock_game_time_lbl = QLabel("12:00:00 ☀️")
+        self.dock_game_time_lbl.setAlignment(Qt.AlignCenter)
+        self.dock_game_time_lbl.setStyleSheet("""
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+            font-weight: 800;
+            color: #f8fafc;
+        """)
+
+        self.time_format_btn = QPushButton("12h / 24h")
+        self.time_format_btn.setFixedSize(54, 20)
+        self.time_format_btn.setToolTip("Toggle 12-hour or 24-hour time format")
+        self.time_format_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 9px; font-weight: 700; color: #94a3b8; background: #0f172a;
+                border: 1px solid #334155; border-radius: 4px; padding: 0px;
+            }
+            QPushButton:hover {
+                color: #f8fafc; background: #334155;
+            }
+        """)
+        self.time_format_btn.clicked.connect(self.toggle_clock_format)
+
+        tb_layout.addWidget(clock_lbl)
+        tb_layout.addStretch()
+        tb_layout.addWidget(self.dock_game_time_lbl)
+        tb_layout.addSpacing(6)
+        tb_layout.addWidget(self.time_format_btn)
+
+        rpc_layout.addWidget(self.time_bar, 0)
+
+        # 2. ONLINE PLAYERS (WHO'S ONLINE) - Positioned under Time, Expands to fill maximum available panel space
+        who_card = ReorderableCard("WHO'S ONLINE", grid_container=None, default_colspan=1, is_draggable=False)
+        who_card.is_expanding = True
+        who_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self.who_count_badge = QLabel("0 Online")
+        self.who_count_badge.setStyleSheet("""
+            background-color: #064e3b;
+            color: #94a3b8;
+            font-size: 10px;
+            font-weight: 800;
+            padding: 2px 8px;
+            border-radius: 6px;
+        """)
+        who_card.add_header_widget(self.who_count_badge)
+
+        self.who_search_input = QLineEdit()
+        self.who_search_input.setPlaceholderText("Filter online players...")
+        self.who_search_input.textChanged.connect(lambda: self.update_wholist_gui(self.wholist_data))
+        who_card.content_layout.addWidget(self.who_search_input)
+
+        self.who_list_widget = QListWidget()
+        self.who_list_widget.setObjectName("WhoListWidget")
+        self.who_list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.who_list_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.who_list_widget.setStyleSheet("border: none; background: transparent; padding: 0px; margin: 0px;")
+        who_card.content_layout.addWidget(self.who_list_widget, 1)
+
+        rpc_layout.addWidget(who_card, 1)
+
+        # 3. BOTTOM ANCHORED CONTAINER FOR DRAGGABLE SECTIONS (Non-draggable footer container, no title)
+        dock_footer_container = QFrame()
+        dock_footer_container.setObjectName("DockFooterContainer")
+        dock_footer_container.setStyleSheet("""
+            QFrame#DockFooterContainer {
+                background-color: #020617;
+                border: 1px solid #1e293b;
+                border-radius: 8px;
+            }
+        """)
+        dock_footer_layout = QVBoxLayout(dock_footer_container)
+        dock_footer_layout.setContentsMargins(4, 4, 4, 4)
+        dock_footer_layout.setSpacing(4)
+
+        # Internal Reorderable Grid for Sub-Sections inside the Footer Container
+        self.dock_sub_grid = GridReorderContainer(cols=1)
+        self.dock_sub_grid.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.dock_sub_grid.main_layout.setSpacing(4)
+
+        dock_footer_layout.addWidget(self.dock_sub_grid)
+
+        # SUB-CARD A: GPS NAVIGATOR
+        dock_gps_card = ReorderableSubCard("GPS NAVIGATOR", self.dock_sub_grid, default_colspan=1, is_draggable=True)
+        dock_gps_card.is_expanding = False
+
+        self.dock_gps_status_lbl = QLabel("READY")
+        self.dock_gps_status_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #38bdf8;")
+        dock_gps_card.add_header_widget(self.dock_gps_status_lbl)
+
+        # Line 1: Current location + Target status
+        gps_loc_box = QHBoxLayout()
+        gps_loc_box.setContentsMargins(0, 0, 0, 0)
+        gps_loc_box.setSpacing(4)
+
+        self.dock_gps_loc_lbl = QLabel("📍 Unknown")
+        self.dock_gps_loc_lbl.setStyleSheet("font-size: 9px; font-weight: 700; color: #38bdf8;")
+        gps_loc_box.addWidget(self.dock_gps_loc_lbl)
+
+        arrow_lbl = QLabel("➔")
+        arrow_lbl.setStyleSheet("font-size: 9px; color: #64748b;")
+        gps_loc_box.addWidget(arrow_lbl)
+
+        self.dock_gps_target_lbl = QLabel("No Target")
+        self.dock_gps_target_lbl.setStyleSheet("font-size: 9px; font-weight: 700; color: #94a3b8;")
+        gps_loc_box.addWidget(self.dock_gps_target_lbl)
+        gps_loc_box.addStretch()
+
+        dock_gps_card.content_layout.addLayout(gps_loc_box)
+
+        # Line 2: Search input with Autocomplete + Action Buttons
+        gps_input_box = QHBoxLayout()
+        gps_input_box.setContentsMargins(0, 0, 0, 0)
+        gps_input_box.setSpacing(3)
+
+        self.dock_gps_search = QLineEdit()
+        self.dock_gps_search.setPlaceholderText("Type destination...")
+        self.dock_gps_search.setFixedHeight(22)
+        self.dock_gps_search.setStyleSheet("""
+            QLineEdit {
+                background-color: #030712;
+                color: #f8fafc;
+                border: 1px solid #334155;
+                border-radius: 3px;
+                padding: 0 4px;
+                font-size: 10px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #3b82f6;
+            }
+        """)
+
+        dock_completer = self.create_room_completer(self.dock_gps_search)
+        if dock_completer:
+            self.dock_gps_search.setCompleter(dock_completer)
+        self.dock_gps_search.returnPressed.connect(lambda: self.start_navigation(source_text=self.dock_gps_search.text()))
+
+        self.dock_gps_start_btn = QPushButton("GO")
+        self.dock_gps_start_btn.setFixedSize(32, 22)
+        self.dock_gps_start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.dock_gps_start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #16a34a;
+                color: #ffffff;
+                border: none;
+                border-radius: 3px;
+                font-size: 9px;
+                font-weight: 800;
+            }
+            QPushButton:hover {
+                background-color: #22c55e;
+            }
+        """)
+        self.dock_gps_start_btn.clicked.connect(lambda: self.start_navigation(source_text=self.dock_gps_search.text()))
+
+        self.dock_gps_stop_btn = QPushButton("STOP")
+        self.dock_gps_stop_btn.setFixedSize(38, 22)
+        self.dock_gps_stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.dock_gps_stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc2626;
+                color: #ffffff;
+                border: none;
+                border-radius: 3px;
+                font-size: 9px;
+                font-weight: 800;
+            }
+            QPushButton:hover {
+                background-color: #ef4444;
+            }
+        """)
+        self.dock_gps_stop_btn.clicked.connect(self.stop_navigation)
+
+        gps_input_box.addWidget(self.dock_gps_search, 1)
+        gps_input_box.addWidget(self.dock_gps_start_btn)
+        gps_input_box.addWidget(self.dock_gps_stop_btn)
+
+        dock_gps_card.content_layout.addLayout(gps_input_box)
+
+        # Line 3: Prominent Direction Banner Box with Arrow and Details
+        dock_dir_frame = QFrame()
+        dock_dir_frame.setObjectName("DockGPSDirFrame")
+        dock_dir_frame.setStyleSheet("""
+            QFrame#DockGPSDirFrame {
+                background-color: #030712;
+                border: 1px solid #1e293b;
+                border-radius: 4px;
+            }
+        """)
+        dock_dir_layout = QVBoxLayout(dock_dir_frame)
+        dock_dir_layout.setContentsMargins(6, 4, 6, 4)
+        dock_dir_layout.setSpacing(2)
+
+        self.dock_gps_dir_lbl = QLabel("SELECT DESTINATION")
+        self.dock_gps_dir_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #38bdf8;")
+        self.dock_gps_dir_lbl.setWordWrap(True)
+
+        self.dock_gps_detail_lbl = QLabel("Enter room name & press GO")
+        self.dock_gps_detail_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #94a3b8;")
+        self.dock_gps_detail_lbl.setWordWrap(True)
+
+        dock_dir_layout.addWidget(self.dock_gps_dir_lbl)
+        dock_dir_layout.addWidget(self.dock_gps_detail_lbl)
+
+        dock_gps_card.content_layout.addWidget(dock_dir_frame)
+
+        # Alias for backwards compatibility
+        self.dock_gps_step_lbl = self.dock_gps_dir_lbl
+
+        # SUB-CARD B: BAG SPACE & LOAD
+        dock_inv_card = ReorderableSubCard("BAG SPACE & LOAD", self.dock_sub_grid, default_colspan=1, is_draggable=True)
+        dock_inv_card.is_expanding = False
+
+        self.dock_inv_sat_lbl = QLabel("0.0%")
+        self.dock_inv_sat_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #94a3b8;")
+        dock_inv_card.add_header_widget(self.dock_inv_sat_lbl)
+
+        self.dock_inv_bar = QProgressBar()
+        self.dock_inv_bar.setFixedHeight(6)
+        self.dock_inv_bar.setValue(0)
+        dock_inv_card.content_layout.addWidget(self.dock_inv_bar)
+
+        det_box = QHBoxLayout()
+        det_box.setContentsMargins(0, 0, 0, 0)
+        det_box.setSpacing(4)
+
+        self.dock_inv_weight_lbl = QLabel("W: 0 / 1,700")
+        self.dock_inv_weight_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #cbd5e1;")
+        det_box.addWidget(self.dock_inv_weight_lbl)
+
+        sep1 = QLabel("•")
+        sep1.setStyleSheet("font-size: 9px; color: #475569;")
+        det_box.addWidget(sep1)
+
+        self.dock_inv_bulk_lbl = QLabel("B: 0 / 1,700")
+        self.dock_inv_bulk_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #cbd5e1;")
+        det_box.addWidget(self.dock_inv_bulk_lbl)
+
+        sep2 = QLabel("•")
+        sep2.setStyleSheet("font-size: 9px; color: #475569;")
+        det_box.addWidget(sep2)
+
+        self.dock_inv_count_lbl = QLabel("0 Items")
+        self.dock_inv_count_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #94a3b8;")
+        det_box.addWidget(self.dock_inv_count_lbl)
+        det_box.addStretch()
+
+        dock_inv_card.content_layout.addLayout(det_box)
+
+        # SUB-CARD C: BANK BALANCES
+        dock_bank_card = ReorderableSubCard("BANK BALANCES", self.dock_sub_grid, default_colspan=1, is_draggable=True)
+        dock_bank_card.is_expanding = False
+
+        bank_box = QHBoxLayout()
+        bank_box.setContentsMargins(0, 0, 0, 0)
+        bank_box.setSpacing(4)
+
+        self.dock_bank_total_lbl = QLabel("Total: 0 sh")
+        self.dock_bank_total_lbl.setStyleSheet("font-size: 9px; font-weight: 800; color: #38bdf8;")
+        bank_box.addWidget(self.dock_bank_total_lbl)
+
+        sep_b1 = QLabel("•")
+        sep_b1.setStyleSheet("font-size: 9px; color: #475569;")
+        bank_box.addWidget(sep_b1)
+
+        self.dock_bank_mainland_lbl = QLabel("Mainland: 0 sh")
+        self.dock_bank_mainland_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #cbd5e1;")
+        bank_box.addWidget(self.dock_bank_mainland_lbl)
+
+        sep_b2 = QLabel("•")
+        sep_b2.setStyleSheet("font-size: 9px; color: #475569;")
+        bank_box.addWidget(sep_b2)
+
+        self.dock_bank_island_lbl = QLabel("Island: 0 sh")
+        self.dock_bank_island_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #cbd5e1;")
+        bank_box.addWidget(self.dock_bank_island_lbl)
+        bank_box.addStretch()
+
+        dock_bank_card.content_layout.addLayout(bank_box)
+
+        rpc_layout.addWidget(dock_footer_container, 0)
+
+        self.right_panel_layout.addWidget(self.right_panel_content)
+        main_layout.addWidget(self.right_panel)
+
+        # Load saved view layout configuration if exists
+        self.load_layout_config()
+        self.update_bank_ui()
+        self.load_kill_book()
+
+        # Default to Dashboard
+        self.nav_list.setCurrentRow(0)
+
+    def toggle_desktop_dock(self):
+        """Toggles docking ONLY the right Dock Panel to the desktop edge as a Windows AppBar.
+        When docked, Windows adjusts the desktop work area so maximized windows resize around it."""
+        if not self.is_desktop_docked:
+            print("[M59-DOCK] Detaching Dock Panel to standalone desktop AppBar...", flush=True)
+
+            if not self.standalone_dock:
+                self.standalone_dock = M59StandaloneDockWindow(self)
+
+            # Detach right_panel_content from main application and pass to standalone dock
+            self.right_panel_layout.removeWidget(self.right_panel_content)
+            self.right_panel.hide()
+
+            self.standalone_dock.attach_dock_content(self.right_panel_content)
+            self.is_desktop_docked = True
+
+            if hasattr(self, 'hdr_dock_btn'):
+                self.hdr_dock_btn.setText("🪟 Undock")
+            if hasattr(self, 'dock_desktop_btn'):
+                self.dock_desktop_btn.setText("🪟 Undock")
+
+            print("[M59-DOCK] Standalone Dock Panel successfully docked as Windows AppBar.", flush=True)
+        else:
+            print("[M59-DOCK] Undocking Standalone Dock Panel back to main application window...", flush=True)
+            if self.standalone_dock:
+                self.standalone_dock.undock_desktop()
+
+    def on_standalone_dock_undocked(self):
+        """Callback triggered when the standalone dock panel is undocked or closed."""
+        if self.is_desktop_docked:
+            self.is_desktop_docked = False
+
+            if self.standalone_dock:
+                self.right_panel.setFixedWidth(self.standalone_dock.dock_width)
+
+            # Return right_panel_content back to main right_panel layout
+            if hasattr(self, 'right_panel_content') and self.right_panel_content:
+                self.right_panel_content.setParent(self.right_panel)
+                self.right_panel_layout.addWidget(self.right_panel_content)
+                self.right_panel_content.show()
+                self.right_panel.show()
+
+            if hasattr(self, 'hdr_dock_btn'):
+                self.hdr_dock_btn.setText("📌 Dock")
+            if hasattr(self, 'dock_desktop_btn'):
+                self.dock_desktop_btn.setText("📌 Dock")
+
+            # Refresh WhoList rendering for restored parent
+            if hasattr(self, 'update_wholist_gui') and hasattr(self, 'wholist_data'):
+                self.update_wholist_gui(self.wholist_data)
+
+            print("[M59-DOCK] Dock Panel restored to main application window.", flush=True)
+
+    def get_layout_config_path(self):
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "m59_layout_config.json")
+
+    def save_layout_config(self):
+        try:
+            config = {
+                "dashboard_grid": [],
+                "dock_grid": []
+            }
+            if hasattr(self, 'dashboard_grid') and self.dashboard_grid:
+                for c in self.dashboard_grid.cards:
+                    config["dashboard_grid"].append({
+                        "title": c.title_text,
+                        "width": getattr(c, 'custom_width', None),
+                        "height": getattr(c, 'custom_height', None)
+                    })
+            if hasattr(self, 'dock_grid') and self.dock_grid:
+                for c in self.dock_grid.cards:
+                    config["dock_grid"].append({
+                        "title": c.title_text,
+                        "width": getattr(c, 'custom_width', None),
+                        "height": getattr(c, 'custom_height', None)
+                    })
+            if hasattr(self, 'dock_sub_grid') and self.dock_sub_grid:
+                config["dock_sub_grid"] = [c.title_text for c in self.dock_sub_grid.cards]
+            with open(self.get_layout_config_path(), "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=2)
         except Exception as e:
-            import traceback
-            logger.error(f"Failed to load PVP icons: {e}")
-            traceback.print_exc()
+            print(f"[M59-LAYOUT] Error saving layout config: {e}", flush=True)
 
-    def scale_px(self, px):
-        """Helper to scale pixel values by the current scaling factor."""
-        return int(px * self.scaling_factor)
-
-    def hide_tooltip(self):
-        """Destroys the active hover tooltip, if any."""
-        tip = getattr(self, "tooltip", None)
-        if tip is None:
+    def load_layout_config(self):
+        path = self.get_layout_config_path()
+        if not os.path.exists(path):
             return
         try:
-            tip.destroy()
-        except tk.TclError:
-            pass
-        self.tooltip = None
+            with open(path, "r", encoding="utf-8") as f:
+                config = json.load(f)
 
-    def set_tooltip(self, widget, text):
-        """Adds a simple hover tooltip to a widget."""
-        def enter(event):
-            self.hide_tooltip()
-            tip = tk.Toplevel(widget.winfo_toplevel())
-            tip.overrideredirect(True)
-            tip.attributes("-topmost", True)
+            if hasattr(self, 'dashboard_grid') and self.dashboard_grid and "dashboard_grid" in config:
+                card_map = {c.title_text: c for c in self.dashboard_grid.cards}
+                new_cards = []
+                for item in config["dashboard_grid"]:
+                    t = item.get("title")
+                    if t in card_map:
+                        c = card_map.pop(t)
+                        c.custom_width = item.get("width")
+                        c.custom_height = item.get("height")
+                        new_cards.append(c)
+                new_cards.extend(card_map.values())
+                self.dashboard_grid.cards = new_cards
+                self.dashboard_grid.refresh_layout()
 
-            x = event.x_root + 20
-            y = event.y_root + 10
-            tip.geometry(f"+{x}+{y}")
+            if hasattr(self, 'dock_grid') and self.dock_grid and "dock_grid" in config:
+                card_map = {c.title_text: c for c in self.dock_grid.cards}
+                new_cards = []
+                for item in config["dock_grid"]:
+                    t = item.get("title")
+                    if t in card_map:
+                        c = card_map.pop(t)
+                        c.custom_width = item.get("width")
+                        c.custom_height = item.get("height")
+                        new_cards.append(c)
+                new_cards.extend(card_map.values())
+                self.dock_grid.cards = new_cards
+                self.dock_grid.refresh_layout()
 
-            label = tk.Label(tip, text=text, bg="#ffffca", fg="#333",
-                             font=("Arial", 9), relief=tk.SOLID, borderwidth=1, padx=5, pady=2)
-            label.pack()
-            self.tooltip = tip
+            if hasattr(self, 'dock_sub_grid') and self.dock_sub_grid and "dock_sub_grid" in config:
+                sub_map = {c.title_text: c for c in self.dock_sub_grid.cards}
+                new_sub = []
+                for t in config["dock_sub_grid"]:
+                    if t in sub_map:
+                        new_sub.append(sub_map.pop(t))
+                new_sub.extend(sub_map.values())
+                self.dock_sub_grid.cards = new_sub
+                self.dock_sub_grid.refresh_layout()
 
-        widget.bind("<Enter>", enter, add="+")
-        widget.bind("<Leave>", lambda e: self.hide_tooltip(), add="+")
-        widget.bind("<Button-1>", lambda e: self.hide_tooltip(), add="+")
-        widget.bind("<Destroy>", lambda e: self.hide_tooltip(), add="+")
+            print("[M59-LAYOUT] Custom layout configuration successfully loaded.", flush=True)
+        except Exception as e:
+            print(f"[M59-LAYOUT] Error loading layout config: {e}", flush=True)
 
-    def apply_ui_scaling(self):
-        """Configures ttk styles for correct scaling (especially rowheight)."""
-        # Rowheight is in pixels, so it MUST be scaled manually.
-        # 25px is a good base for 10pt fonts at 96 DPI.
-        row_h = self.scale_px(25)
-        
-        # Font sizes in points (positive) are auto-scaled by Tkinter internally 
-        # when 'tk scaling' is set. Manual scaling here causes "double-scaling".
-        header_font = ("Arial", 10, "bold")
-        cell_font = ("Arial", 10)
-        
-        self.style.configure("Treeview", rowheight=row_h, font=cell_font)
-        self.style.configure("Treeview.Heading", font=header_font)
-        
-        logger.debug(f"UI: Applied Treeview scaling (rowheight={row_h}, font=10pt)")
+    def reset_layout_config(self):
+        try:
+            path = self.get_layout_config_path()
+            if os.path.exists(path):
+                os.remove(path)
 
-    def load_filters(self):
-        """Loads filter definitions from m59_filters.json and initializes Show All."""
-        # Ensure 'Show All' is always the primary state
-        self.filter_vars["Show All"] = tk.BooleanVar(value=True)
-        
-        # Check local directory first, then fallback to bundled assets
-        p = "settings/m59_filters.json"
-        if not os.path.exists(p):
-            p = resource_path("settings/m59_filters.json")
+            if hasattr(self, 'dashboard_grid') and self.dashboard_grid:
+                for c in self.dashboard_grid.cards:
+                    c.custom_width = None
+                    c.custom_height = None
 
-        if os.path.exists(p):
+                title_order = [
+                    "CHARACTER IDENTITY & OVERVIEW",
+                    "GPS NAVIGATION",
+                    "SCHOOL PROGRESSION",
+                    "VAULT MANAGEMENT",
+                    "SESSION KILLS (COMBAT)",
+                    "SESSION IMPROVES (SKILLS & SPELLS)",
+                    "CARRIED ITEMS LEDGER"
+                ]
+                card_map = {c.title_text: c for c in self.dashboard_grid.cards}
+                self.dashboard_grid.cards = [card_map[t] for t in title_order if t in card_map] + [c for t, c in card_map.items() if t not in title_order]
+                self.dashboard_grid.refresh_layout()
+
+            if hasattr(self, 'dock_grid') and self.dock_grid:
+                for c in self.dock_grid.cards:
+                    c.custom_width = None
+                    c.custom_height = None
+
+                title_order = [
+                    "WORLD CLOCK",
+                    "WHO'S ONLINE",
+                    "BAG SPACE & LOAD"
+                ]
+                card_map = {c.title_text: c for c in self.dock_grid.cards}
+                self.dock_grid.cards = [card_map[t] for t in title_order if t in card_map] + [c for t, c in card_map.items() if t not in title_order]
+                self.dock_grid.refresh_layout()
+
+            if hasattr(self, 'dock_sub_grid') and self.dock_sub_grid:
+                title_order = [
+                    "GPS NAVIGATOR",
+                    "BAG SPACE & LOAD",
+                    "BANK BALANCES"
+                ]
+                sub_map = {c.title_text: c for c in self.dock_sub_grid.cards}
+                self.dock_sub_grid.cards = [sub_map[t] for t in title_order if t in sub_map] + [c for t, c in sub_map.items() if t not in title_order]
+                self.dock_sub_grid.refresh_layout()
+
+            print("[M59-LAYOUT] Dashboard layout reset to default.", flush=True)
+        except Exception as e:
+            print(f"[M59-LAYOUT] Error resetting layout: {e}", flush=True)
+
+    def closeEvent(self, event):
+        """Ensure layout config is saved and standalone AppBar is cleanly unregistered when exiting."""
+        self.save_layout_config()
+        if self.standalone_dock and self.standalone_dock.is_docked:
+            self.standalone_dock.undock_desktop()
+        if hasattr(self, 'active_floating_chat') and self.active_floating_chat:
             try:
-                with open(p, "r") as f:
-                    self.filter_data = json.load(f)
-                    for cat in self.filter_data:
-                        if cat != "Show All":
-                            # Default specific categories to False
-                            self.filter_vars[cat] = tk.BooleanVar(value=False)
-            except Exception as e:
-                logger.error(f"Failed to load filters: {e}")
+                self.active_floating_chat.close()
+            except Exception:
+                pass
+        if hasattr(self, 'active_elude_bar') and self.active_elude_bar:
+            try:
+                self.active_elude_bar.close()
+            except Exception:
+                pass
+        if hasattr(self, 'floating_hotkey_buttons'):
+            for btn in self.floating_hotkey_buttons:
+                try:
+                    btn.close()
+                except Exception:
+                    pass
+        event.accept()
 
-    def setup_tab_shortcuts(self):
-        self.commalias_tab = m59_commalias.CommaliasTab(self.tab_shortcuts, self)
-        self.commalias_tab.pack(fill="both", expand=True)
+    def toggle_right_panel(self):
+        if getattr(self, 'right_panel_collapsed', False):
+            self.right_panel.setFixedWidth(290)
+            self.right_panel_content.show()
+            if hasattr(self, 'rp_title'):
+                self.rp_title.show()
+            if hasattr(self, 'dock_desktop_btn'):
+                self.dock_desktop_btn.show()
+            self.collapse_btn.setText("⇥ Hide")
+            self.collapse_btn.setToolTip("Hide / Collapse Dock Panel")
+            self.right_panel_collapsed = False
+        else:
+            self.right_panel.setFixedWidth(36)
+            self.right_panel_content.hide()
+            if hasattr(self, 'rp_title'):
+                self.rp_title.hide()
+            if hasattr(self, 'dock_desktop_btn'):
+                self.dock_desktop_btn.hide()
+            self.collapse_btn.setText("⇤")
+            self.collapse_btn.setToolTip("Expand Dock Panel")
+            self.right_panel_collapsed = True
 
-    def setup_tab_inventory(self):
-        """Creates the real-time Inventory list tab with Weight and Bulk metrics."""
-        cont = tk.Frame(self.tab_inv, bg="#f0f0f0")
-        cont.pack(fill="both", expand=True, padx=10, pady=10)
+    def toggle_clock_format(self):
+        self.use_24h_clock = not self.use_24h_clock
+        self.on_clock_tick()
 
-        # --- TOP SECTION: Primary Saturation Meter ---
-        sat_frame = tk.Frame(cont, bg="#f0f0f0")
-        sat_frame.pack(fill="x", pady=(0, 5))
-        tk.Label(sat_frame, text="TOTAL INVENTORY SATURATION", font=("Arial", 10, "bold"), bg="#f0f0f0", fg="#333").pack(anchor="w")
-        self.sat_bar_canvas = tk.Canvas(sat_frame, height=self.scale_px(18), bg="#ddd", highlightthickness=0)
-        self.sat_bar_canvas.pack(fill="x", pady=2)
-        self.sat_lbl = tk.Label(sat_frame, text="Current Load: 0%", font=("Arial", 9, "bold"), bg="#f0f0f0", fg="#555")
-        self.sat_lbl.pack(anchor="w")
+    def switch_section(self, index):
+        self.stacked_widget.setCurrentIndex(index)
+        if index == 5:
+            self.load_kill_book()
 
-        # --- MIDDLE SECTION: Detailed Metrics ---
-        metrics_frame = tk.Frame(cont, bg="#f0f0f0")
-        metrics_frame.pack(fill="x", pady=(10, 10))
+    # ==================================================================
+    # SECTION 1: DASHBOARD PAGE (Main)
+    # ==================================================================
+    def build_dashboard_page(self):
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("background: transparent;")
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(12)
+
+        # =========================================================================
+        # DASHBOARD TILES GRID (12-Column Flexible Grid System)
+        # =========================================================================
+        self.dashboard_grid = GridReorderContainer(cols=12)
+        layout.addWidget(self.dashboard_grid, 1)
+
+        # 1. UNIFIED TILE: CHARACTER IDENTITY & OVERVIEW (Shiftable)
+        char_card = ReorderableCard("CHARACTER IDENTITY & OVERVIEW", self.dashboard_grid, default_colspan=12, is_draggable=True)
+        char_card.content_layout.setContentsMargins(10, 8, 10, 10)
+        char_card.content_layout.setSpacing(10)
+
+        # CHARACTER NAME & ATTACHMENT OVERVIEW
+        self.char_name_lbl = QLabel("CHARACTER: --")
+        self.char_name_lbl.setStyleSheet("font-size: 15px; font-weight: 800; color: #f8fafc;")
+
+        self.char_sub_lbl = QLabel("ATTACHMENT: Waiting for Meridian 59 process...")
+        self.char_sub_lbl.setStyleSheet("font-size: 11px; color: #64748b;")
+        self.char_sub_lbl.setWordWrap(True)
+
+        char_card.content_layout.addWidget(self.char_name_lbl)
+        char_card.content_layout.addWidget(self.char_sub_lbl)
+
+        # Divider line
+        div1 = QFrame()
+        div1.setFrameShape(QFrame.HLine)
+        div1.setStyleSheet("background-color: #1e293b; max-height: 1px;")
+        char_card.content_layout.addWidget(div1)
+
+        # VITAL GAUGES
+        vc_title = QLabel("VITAL GAUGES")
+        vc_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #ef4444; letter-spacing: 0.8px;")
+        char_card.content_layout.addWidget(vc_title)
+
+        self.hp_bar_widget = self.create_vital_gauge("HEALTH (HP)", "#ef4444", 150)
+        char_card.content_layout.addLayout(self.hp_bar_widget['layout'])
+
+        self.mp_bar_widget = self.create_vital_gauge("MANA (MP)", "#3b82f6", 250)
+        char_card.content_layout.addLayout(self.mp_bar_widget['layout'])
+
+        self.vg_bar_widget = self.create_vital_gauge("VIGOR (VG)", "#64748b", 200)
+        char_card.content_layout.addLayout(self.vg_bar_widget['layout'])
+
+        # Divider line
+        div2 = QFrame()
+        div2.setFrameShape(QFrame.HLine)
+        div2.setStyleSheet("background-color: #1e293b; max-height: 1px;")
+        char_card.content_layout.addWidget(div2)
+
+        # CHARACTER ATTRIBUTES (COMPACT CLEAN LIST FORMAT - TIGHT PADDING)
+        ac_title = QLabel("CHARACTER ATTRIBUTES")
+        ac_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
+        char_card.content_layout.addWidget(ac_title)
+
+        attr_list_layout = QHBoxLayout()
+        attr_list_layout.setContentsMargins(0, 0, 0, 0)
+        attr_list_layout.setSpacing(12)
+
+        col1_layout = QVBoxLayout()
+        col1_layout.setContentsMargins(0, 0, 0, 0)
+        col1_layout.setSpacing(1)
+        col2_layout = QVBoxLayout()
+        col2_layout.setContentsMargins(0, 0, 0, 0)
+        col2_layout.setSpacing(1)
+
+        self.attr_labels = {}
+        attr_keys = ["Might", "Intellect", "Stamina", "Agility", "Mysticism", "Aim", "Karma"]
+
+        for idx, key in enumerate(attr_keys):
+            row_widget = QWidget()
+            row_widget.setStyleSheet("border-bottom: 1px solid #1e293b;")
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(2, 1, 2, 1)
+
+            lbl_title = QLabel(key.upper())
+            lbl_title.setStyleSheet("font-size: 10px; font-weight: 700; color: #94a3b8; background: transparent;")
+
+            lbl_val = QLabel("--")
+            lbl_val.setStyleSheet("font-size: 11px; font-weight: 900; color: #94a3b8; background: transparent;")
+            lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+            self.attr_labels[key] = lbl_val
+
+            row_layout.addWidget(lbl_title)
+            row_layout.addStretch()
+            row_layout.addWidget(lbl_val)
+
+            if idx < 4:
+                col1_layout.addWidget(row_widget)
+            else:
+                col2_layout.addWidget(row_widget)
+
+        attr_list_layout.addLayout(col1_layout, 1)
+        attr_list_layout.addLayout(col2_layout, 1)
+
+        char_card.content_layout.addLayout(attr_list_layout)
+
+        # Divider line
+        div3 = QFrame()
+        div3.setFrameShape(QFrame.HLine)
+        div3.setStyleSheet("background-color: #1e293b; max-height: 1px;")
+        char_card.content_layout.addWidget(div3)
+
+        # BANK BALANCES (CLEAN TEXT DISPLAY)
+        bank_title = QLabel("BANK BALANCES")
+        bank_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
+        char_card.content_layout.addWidget(bank_title)
+
+        bank_text_layout = QHBoxLayout()
+        bank_text_layout.setContentsMargins(0, 0, 0, 0)
+        bank_text_layout.setSpacing(12)
+
+        self.bank_mainland_lbl = QLabel("Mainland Bank: 0 shillings")
+        self.bank_mainland_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #e2e8f0;")
+
+        self.bank_island_lbl = QLabel("Island Bank: 0 shillings")
+        self.bank_island_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #e2e8f0;")
+
+        bank_text_layout.addWidget(self.bank_mainland_lbl)
+        bank_text_layout.addStretch()
+        bank_text_layout.addWidget(self.bank_island_lbl)
+
+        char_card.content_layout.addLayout(bank_text_layout)
+
+        # 2. GPS NAVIGATION TILE (Placed right after CHARACTER IDENTITY & OVERVIEW)
+        gps_card = ReorderableCard("GPS NAVIGATION", self.dashboard_grid, default_colspan=6, is_draggable=True)
+        gps_card.content_layout.setContentsMargins(8, 8, 8, 8)
+        gps_card.content_layout.setSpacing(8)
+
+        # Top Bar: Location & Destination Badges
+        gps_top_box = QHBoxLayout()
+        gps_top_box.setContentsMargins(0, 0, 0, 0)
+        gps_top_box.setSpacing(8)
+
+        self.gps_main_loc_lbl = QLabel("📍 CURRENT: Unknown")
+        self.gps_main_loc_lbl.setStyleSheet("""
+            QLabel {
+                background-color: #0f172a;
+                color: #38bdf8;
+                border: 1px solid #1e293b;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+                font-weight: 800;
+            }
+        """)
+
+        self.gps_main_target_lbl = QLabel("🏁 TARGET: None")
+        self.gps_main_target_lbl.setStyleSheet("""
+            QLabel {
+                background-color: #0f172a;
+                color: #f1f5f9;
+                border: 1px solid #1e293b;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+                font-weight: 800;
+            }
+        """)
+
+        gps_top_box.addWidget(self.gps_main_loc_lbl)
+        gps_top_box.addWidget(self.gps_main_target_lbl)
+        gps_top_box.addStretch()
+
+        gps_card.content_layout.addLayout(gps_top_box)
+
+        # Search Bar + Action Buttons
+        gps_search_box = QHBoxLayout()
+        gps_search_box.setContentsMargins(0, 0, 0, 0)
+        gps_search_box.setSpacing(6)
+
+        lbl_search = QLabel("Destination:")
+        lbl_search.setStyleSheet("font-size: 11px; font-weight: 700; color: #94a3b8;")
+
+        self.gps_main_search = QLineEdit()
+        self.gps_main_search.setPlaceholderText("Search destination room (e.g. Marion, Jas Inn)...")
+        self.gps_main_search.setFixedHeight(28)
+        self.gps_main_search.setStyleSheet("""
+            QLineEdit {
+                background-color: #0b1120;
+                color: #f8fafc;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 0 8px;
+                font-size: 11px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #3b82f6;
+            }
+        """)
+
+        main_completer = self.create_room_completer(self.gps_main_search)
+        if main_completer:
+            self.gps_main_search.setCompleter(main_completer)
+        self.gps_main_search.returnPressed.connect(lambda: self.start_navigation(source_text=self.gps_main_search.text()))
+
+        self.gps_main_start_btn = QPushButton("START GPS")
+        self.gps_main_start_btn.setFixedHeight(28)
+        self.gps_main_start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.gps_main_start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #16a34a;
+                color: #ffffff;
+                border: none;
+                border-radius: 4px;
+                padding: 0 12px;
+                font-size: 11px;
+                font-weight: 800;
+            }
+            QPushButton:hover {
+                background-color: #22c55e;
+            }
+        """)
+        self.gps_main_start_btn.clicked.connect(lambda: self.start_navigation(source_text=self.gps_main_search.text()))
+
+        self.gps_main_stop_btn = QPushButton("STOP")
+        self.gps_main_stop_btn.setFixedHeight(28)
+        self.gps_main_stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.gps_main_stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc2626;
+                color: #ffffff;
+                border: none;
+                border-radius: 4px;
+                padding: 0 12px;
+                font-size: 11px;
+                font-weight: 800;
+            }
+            QPushButton:hover {
+                background-color: #ef4444;
+            }
+        """)
+        self.gps_main_stop_btn.clicked.connect(self.stop_navigation)
+
+        gps_search_box.addWidget(lbl_search)
+        gps_search_box.addWidget(self.gps_main_search, 1)
+        gps_search_box.addWidget(self.gps_main_start_btn)
+        gps_search_box.addWidget(self.gps_main_stop_btn)
+
+        gps_card.content_layout.addLayout(gps_search_box)
+
+        # Main Navigation Step Banner ("NEXT STEP")
+        step_frame = QFrame()
+        step_frame.setStyleSheet("""
+            QFrame {
+                background-color: #0b1120;
+                border: 1px solid #1e293b;
+                border-radius: 6px;
+            }
+        """)
+        step_layout = QVBoxLayout(step_frame)
+        step_layout.setContentsMargins(10, 8, 10, 8)
+        step_layout.setSpacing(4)
+
+        self.gps_step_header = QLabel("NEXT STEP")
+        self.gps_step_header.setStyleSheet("font-size: 10px; font-weight: 800; color: #3b82f6; letter-spacing: 0.8px;")
+
+        self.gps_instruction_lbl = QLabel("Select a destination to begin navigation...")
+        self.gps_instruction_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #f1f5f9;")
+        self.gps_instruction_lbl.setWordWrap(True)
+        self.gps_instruction_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        step_layout.addWidget(self.gps_step_header)
+        step_layout.addWidget(self.gps_instruction_lbl)
+
+        gps_card.content_layout.addWidget(step_frame)
+
+        # Route Preview List
+        route_title = QLabel("ROUTE PREVIEW")
+        route_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
+        gps_card.content_layout.addWidget(route_title)
+
+        self.gps_route_list = QListWidget()
+        self.gps_route_list.setFixedHeight(100)
+        self.gps_route_list.setStyleSheet("""
+            QListWidget {
+                background-color: #090d16;
+                color: #e2e8f0;
+                border: 1px solid #1e293b;
+                border-radius: 4px;
+                font-family: monospace;
+                font-size: 11px;
+                padding: 4px;
+            }
+            QListWidget::item {
+                padding: 3px 6px;
+                border-bottom: 1px solid #0f172a;
+            }
+            QListWidget::item:selected {
+                background-color: #1e3a8a;
+                color: #ffffff;
+            }
+        """)
+        gps_card.content_layout.addWidget(self.gps_route_list)
+
+        # Beta Disclaimer Footer
+        beta_lbl = QLabel("⚠ BETA: GPS Navigation is under development. Map dataset may be incomplete.")
+        beta_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #eab308;")
+        gps_card.content_layout.addWidget(beta_lbl)
+
+        # 3. VAULT MANAGEMENT TILE WITH TABS (Shiftable)
+        vault_card = ReorderableCard("VAULT MANAGEMENT", self.dashboard_grid, default_colspan=6, is_draggable=True)
+        vault_card.content_layout.setContentsMargins(8, 8, 8, 8)
+        vault_card.content_layout.setSpacing(8)
+
+        # BANK BALANCES IN VAULT TILE
+        v_bank_title = QLabel("BANK BALANCES")
+        v_bank_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
+        vault_card.content_layout.addWidget(v_bank_title)
+
+        v_bank_text_layout = QHBoxLayout()
+        v_bank_text_layout.setContentsMargins(0, 0, 0, 0)
+        v_bank_text_layout.setSpacing(12)
+
+        self.vault_bank_mainland_lbl = QLabel("Mainland Bank: 0 shillings")
+        self.vault_bank_mainland_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #e2e8f0;")
+
+        self.vault_bank_island_lbl = QLabel("Island Bank: 0 shillings")
+        self.vault_bank_island_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #e2e8f0;")
+
+        v_bank_text_layout.addWidget(self.vault_bank_mainland_lbl)
+        v_bank_text_layout.addStretch()
+        v_bank_text_layout.addWidget(self.vault_bank_island_lbl)
+
+        vault_card.content_layout.addLayout(v_bank_text_layout)
+
+        self.vault_tab_widget = QTabWidget()
+        self.vault_tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #1e293b;
+                background-color: #0b1120;
+                border-radius: 6px;
+            }
+            QTabBar::tab {
+                background-color: #0f172a;
+                color: #94a3b8;
+                padding: 6px 14px;
+                font-size: 11px;
+                font-weight: 700;
+                border: 1px solid #1e293b;
+                border-bottom: none;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                margin-right: 2px;
+            }
+            QTabBar::tab:selected {
+                background-color: #1e293b;
+                color: #94a3b8;
+                border-color: #94a3b8;
+            }
+            QTabBar::tab:hover {
+                color: #f8fafc;
+            }
+        """)
+
+        self.vault_widgets = {}
+
+        # --- Tab 1: Barloque Vault ---
+        barloque_tab = QWidget()
+        bt_layout = QVBoxLayout(barloque_tab)
+        bt_layout.setContentsMargins(8, 8, 8, 8)
+        bt_layout.setSpacing(6)
+
+        b_ctrl_layout = QHBoxLayout()
+        b_search = QLineEdit()
+        b_search.setPlaceholderText("Filter Barloque items...")
+        b_search.textChanged.connect(lambda: self.update_vault_table("barloque"))
+        b_ctrl_layout.addWidget(b_search, 1)
+
+        b_scan_btn = QPushButton("🔄 Scan Barloque")
+        b_scan_btn.setProperty("class", "WebBtnPrimary")
+        b_scan_btn.setToolTip("Triggers automated in-game Barloque Vault scanning.")
+        b_scan_btn.clicked.connect(lambda: self.trigger_vault_scan("barloque"))
+        b_ctrl_layout.addWidget(b_scan_btn)
+
+        bt_layout.addLayout(b_ctrl_layout)
+
+        b_table = QTableWidget(0, 2)
+        b_table.setMinimumHeight(180)
+        b_table.verticalHeader().setVisible(False)
+        b_table.setHorizontalHeaderLabels(["ITEM NAME", "QTY"])
+        b_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        b_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        bt_layout.addWidget(b_table)
+
+        b_status = QLabel("No scan data")
+        b_status.setStyleSheet("font-size: 10px; color: #64748b; font-style: italic;")
+        bt_layout.addWidget(b_status)
+
+        self.vault_widgets["barloque"] = {
+            "table": b_table,
+            "search": b_search,
+            "status": b_status,
+            "btn": b_scan_btn
+        }
+
+        # --- Tab 2: Hungry Vault ---
+        hungry_tab = QWidget()
+        ht_layout = QVBoxLayout(hungry_tab)
+        ht_layout.setContentsMargins(8, 8, 8, 8)
+        ht_layout.setSpacing(6)
+
+        h_ctrl_layout = QHBoxLayout()
+        h_search = QLineEdit()
+        h_search.setPlaceholderText("Filter Hungry items...")
+        h_search.textChanged.connect(lambda: self.update_vault_table("hungry"))
+        h_ctrl_layout.addWidget(h_search, 1)
+
+        h_scan_btn = QPushButton("🔄 Scan Hungry")
+        h_scan_btn.setProperty("class", "WebBtnSecondary")
+        h_scan_btn.setToolTip("Triggers automated in-game Hungry Vault scanning.")
+        h_scan_btn.clicked.connect(lambda: self.trigger_vault_scan("hungry"))
+        h_ctrl_layout.addWidget(h_scan_btn)
+
+        ht_layout.addLayout(h_ctrl_layout)
+
+        h_table = QTableWidget(0, 2)
+        h_table.setMinimumHeight(180)
+        h_table.verticalHeader().setVisible(False)
+        h_table.setHorizontalHeaderLabels(["ITEM NAME", "QTY"])
+        h_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        h_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        ht_layout.addWidget(h_table)
+
+        h_status = QLabel("No scan data")
+        h_status.setStyleSheet("font-size: 10px; color: #64748b; font-style: italic;")
+        ht_layout.addWidget(h_status)
+
+        self.vault_widgets["hungry"] = {
+            "table": h_table,
+            "search": h_search,
+            "status": h_status,
+            "btn": h_scan_btn
+        }
+
+        self.vault_tab_widget.addTab(barloque_tab, "🏰 Barloque Vault")
+        self.vault_tab_widget.addTab(hungry_tab, "🏝️ Hungry Vault")
+
+        vault_card.content_layout.addWidget(self.vault_tab_widget)
+
+        # 4. School Progression Card (Shiftable Tile)
+        prog_card = ReorderableCard("SCHOOL PROGRESSION", self.dashboard_grid, default_colspan=6, is_draggable=True)
+
+        self.dash_prog_summary_badge = QLabel("0 Active Schools")
+        self.dash_prog_summary_badge.setStyleSheet("background-color: #0c4a6e; color: #38bdf8; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 6px;")
+        prog_card.add_header_widget(self.dash_prog_summary_badge)
+
+        self.dash_prog_rescan_btn = QPushButton("🔄 Refresh")
+        self.dash_prog_rescan_btn.setProperty("class", "WebBtnSecondary")
+        self.dash_prog_rescan_btn.setToolTip("Refresh progression metrics from memory cache or trigger stats sync")
+        self.dash_prog_rescan_btn.clicked.connect(lambda: self.update_progression_ui())
+        prog_card.add_header_widget(self.dash_prog_rescan_btn)
+
+        self.dash_prog_tree = QTreeWidget()
+        self.dash_prog_tree.setMinimumHeight(180)
+        self.dash_prog_tree.setHeaderLabels(["SCHOOL / ABILITY", "LEVEL", "SUM", "GOAL", "NEEDED"])
+        self.dash_prog_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.dash_prog_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.dash_prog_tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.dash_prog_tree.header().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.dash_prog_tree.header().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.dash_prog_tree.setStyleSheet("""
+            QTreeWidget {
+                background-color: #030712;
+                color: #f8fafc;
+                border: 1px solid #334155;
+                border-radius: 6px;
+            }
+            QHeaderView::section {
+                background-color: #0f172a;
+                color: #94a3b8;
+                font-size: 10px;
+                font-weight: 800;
+                padding: 4px;
+                border: 1px solid #1e293b;
+            }
+            QTreeWidget::item {
+                padding: 3px 0px;
+            }
+            QTreeWidget::item:selected {
+                background-color: #1e293b;
+                color: #38bdf8;
+            }
+        """)
+        prog_card.content_layout.addWidget(self.dash_prog_tree)
+
+        # 5. Session Kills Ledger Section (Shiftable)
+        kill_card = ReorderableCard("SESSION KILLS (COMBAT)", self.dashboard_grid, default_colspan=6)
+
+        self.kill_count_badge = QLabel("0 Kills")
+        self.kill_count_badge.setStyleSheet("background-color: #881337; color: #fda4af; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 6px;")
+        kill_card.add_header_widget(self.kill_count_badge)
+
+        self.kill_table = QTableWidget(0, 4)
+        self.kill_table.setMinimumHeight(180)
+        self.kill_table.verticalHeader().setVisible(False)
+        self.kill_table.setHorizontalHeaderLabels(["TARGET", "CATEGORY", "SESSION KILLS", "TIME"])
+        self.kill_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.kill_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.kill_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.kill_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        kill_card.content_layout.addWidget(self.kill_table)
+
+        # 5. Session Improves Ledger Section (Shiftable)
+        imp_card = ReorderableCard("SESSION IMPROVES (SKILLS & SPELLS)", self.dashboard_grid, default_colspan=6)
+
+        self.imp_count_badge = QLabel("0 Gains")
+        self.imp_count_badge.setStyleSheet("background-color: #064e3b; color: #94a3b8; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 6px;")
+        imp_card.add_header_widget(self.imp_count_badge)
+
+        self.imp_table = QTableWidget(0, 4)
+        self.imp_table.setMinimumHeight(180)
+        self.imp_table.verticalHeader().setVisible(False)
+        self.imp_table.setHorizontalHeaderLabels(["SKILL / SPELL", "TOTAL GAINS", "DELTA", "LAST GAIN"])
+        self.imp_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.imp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.imp_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.imp_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        imp_card.content_layout.addWidget(self.imp_table)
+
+        # 6. Carried Items Ledger Table Section (Shiftable - Low Profile Gauge Bars Above List)
+        items_card = ReorderableCard("CARRIED ITEMS LEDGER", self.dashboard_grid, default_colspan=6)
+
+        self.inv_search_input = QLineEdit()
+        self.inv_search_input.setPlaceholderText("Filter carried items...")
+        self.inv_search_input.setFixedWidth(150)
+        self.inv_search_input.textChanged.connect(self.filter_inventory_table)
+        items_card.add_header_widget(self.inv_search_input)
+
+        self.inv_rescan_btn = QPushButton("↻ Rescan")
+        self.inv_rescan_btn.setProperty("class", "WebBtnSecondary")
+        self.inv_rescan_btn.clicked.connect(self.poll_inventory)
+        items_card.add_header_widget(self.inv_rescan_btn)
+
+        # Low-profile Gauge Bars section above carried items table
+        gauge_frame = QFrame()
+        gauge_frame.setStyleSheet("background-color: #030712; border: 1px solid #334155; border-radius: 6px;")
+        gauge_layout = QHBoxLayout(gauge_frame)
+        gauge_layout.setContentsMargins(8, 6, 8, 6)
+        gauge_layout.setSpacing(10)
+
+        # Meter 1: Saturation
+        m1_layout = QVBoxLayout()
+        m1_layout.setSpacing(2)
+        m1_hdr = QHBoxLayout()
+        m1_title = QLabel("SATURATION")
+        m1_title.setStyleSheet("font-size: 9px; font-weight: 800; color: #94a3b8;")
+        self.sat_val_lbl = QLabel("0.0%")
+        self.sat_val_lbl.setStyleSheet("font-size: 11px; font-weight: 900; color: #94a3b8;")
+        m1_hdr.addWidget(m1_title)
+        m1_hdr.addStretch()
+        m1_hdr.addWidget(self.sat_val_lbl)
+        m1_layout.addLayout(m1_hdr)
+
+        self.sat_bar = QProgressBar()
+        self.sat_bar.setFixedHeight(6)
+        self.sat_bar.setTextVisible(False)
+        self.set_progress_bar_color(self.sat_bar, 0)
+        m1_layout.addWidget(self.sat_bar)
+
+        self.sat_sub_lbl = QLabel("Max Cap: 1,700")
+        self.sat_sub_lbl.setStyleSheet("font-size: 9px; color: #64748b;")
+        m1_layout.addWidget(self.sat_sub_lbl)
+        gauge_layout.addLayout(m1_layout, 1)
+
+        # Meter 2: Weight Load
+        m2_layout = QVBoxLayout()
+        m2_layout.setSpacing(2)
+        m2_hdr = QHBoxLayout()
+        m2_title = QLabel("WEIGHT LOAD")
+        m2_title.setStyleSheet("font-size: 9px; font-weight: 800; color: #60a5fa;")
+        self.weight_val_lbl = QLabel("0 / 1,700 W")
+        self.weight_val_lbl.setStyleSheet("font-size: 11px; font-weight: 900; color: #60a5fa;")
+        m2_hdr.addWidget(m2_title)
+        m2_hdr.addStretch()
+        m2_hdr.addWidget(self.weight_val_lbl)
+        m2_layout.addLayout(m2_hdr)
+
+        self.weight_bar = QProgressBar()
+        self.weight_bar.setFixedHeight(6)
+        self.weight_bar.setTextVisible(False)
+        self.set_progress_bar_color(self.weight_bar, 0)
+        m2_layout.addWidget(self.weight_bar)
+
+        self.weight_sub_lbl = QLabel("Cap: 1,700 Stone")
+        self.weight_sub_lbl.setStyleSheet("font-size: 9px; color: #64748b;")
+        m2_layout.addWidget(self.weight_sub_lbl)
+        gauge_layout.addLayout(m2_layout, 1)
+
+        # Meter 3: Bulk Load
+        m3_layout = QVBoxLayout()
+        m3_layout.setSpacing(2)
+        m3_hdr = QHBoxLayout()
+        m3_title = QLabel("BULK LOAD")
+        m3_title.setStyleSheet("font-size: 9px; font-weight: 800; color: #c084fc;")
+        self.bulk_val_lbl = QLabel("0 / 1,700 B")
+        self.bulk_val_lbl.setStyleSheet("font-size: 11px; font-weight: 900; color: #c084fc;")
+        m3_hdr.addWidget(m3_title)
+        m3_hdr.addStretch()
+        m3_hdr.addWidget(self.bulk_val_lbl)
+        m3_layout.addLayout(m3_hdr)
+
+        self.bulk_bar = QProgressBar()
+        self.bulk_bar.setFixedHeight(6)
+        self.bulk_bar.setTextVisible(False)
+        self.set_progress_bar_color(self.bulk_bar, 0)
+        m3_layout.addWidget(self.bulk_bar)
+
+        self.bulk_sub_lbl = QLabel("Cap: 1,700 Vol")
+        self.bulk_sub_lbl.setStyleSheet("font-size: 9px; color: #64748b;")
+        m3_layout.addWidget(self.bulk_sub_lbl)
+        gauge_layout.addLayout(m3_layout, 1)
+
+        items_card.content_layout.addWidget(gauge_frame)
+
+        self.inv_table = QTableWidget(0, 5)
+        self.inv_table.setMinimumHeight(200)
+        self.inv_table.verticalHeader().setVisible(False)
+        self.inv_table.setHorizontalHeaderLabels(["ITEM NAME", "QTY", "WEIGHT (W)", "BULK (B)", "TOTAL W/B"])
+        self.inv_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.inv_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.inv_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.inv_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.inv_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        items_card.content_layout.addWidget(self.inv_table)
+
+        scroll.setWidget(container)
+        page_layout.addWidget(scroll)
+
+        return page
+
+    def create_vital_gauge(self, title, color, initial_max=None):
+        layout = QVBoxLayout()
+        layout.setSpacing(4)
+
+        hdr = QHBoxLayout()
+        lbl = QLabel(title)
+        lbl.setStyleSheet(f"font-size: 10px; font-weight: 800; color: {color}; letter-spacing: 0.8px;")
+
+        init_str = f"-- / {initial_max}" if initial_max is not None else "-- / --"
+        v_lbl = QLabel(init_str)
+        v_lbl.setStyleSheet("font-size: 12px; font-weight: 800; color: #f8fafc;")
+
+        hdr.addWidget(lbl)
+        hdr.addStretch()
+        hdr.addWidget(v_lbl)
+        layout.addLayout(hdr)
+
+        pbar = QProgressBar()
+        pbar.setRange(0, 100)
+        pbar.setValue(0)
+        pbar.setTextVisible(False)
+        pbar.setFixedHeight(8)
+        pbar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: #030712;
+                border: 1px solid #334155;
+                border-radius: 4px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {color};
+                border-radius: 3px;
+            }}
+        """)
+        layout.addWidget(pbar)
+
+        return {"layout": layout, "v_lbl": v_lbl, "pbar": pbar}
+
+    # ==================================================================
+    # SECTION 2: SHORTCUTS & ELUSION MACROS PAGE
+    # ==================================================================
+    def build_shortcuts_page(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(18)
+
+        # Header Title Banner
+        hdr_card = QFrame()
+        hdr_card.setProperty("class", "WebCard")
+        hc_layout = QHBoxLayout(hdr_card)
+        hc_layout.setContentsMargins(16, 14, 16, 14)
+
+        title_box = QVBoxLayout()
+        t_lbl = QLabel("⚡ Shortcuts, Teleports & Command Macros")
+        t_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc;")
+        s_lbl = QLabel("Configure quick teleportation eludes, custom chat macros, floating action bars, and key bindings.")
+        s_lbl.setStyleSheet("font-size: 11px; color: #94a3b8;")
+        title_box.addWidget(t_lbl)
+        title_box.addWidget(s_lbl)
+        hc_layout.addLayout(title_box)
+        hc_layout.addStretch()
+
+        layout.addWidget(hdr_card)
+
+        # --------------------------------------------------------------
+        # CARD 1: ELUSION & TELEPORT SHORTCUTS
+        # --------------------------------------------------------------
+        elude_card = QFrame()
+        elude_card.setProperty("class", "WebCard")
+        ec_layout = QVBoxLayout(elude_card)
+        ec_layout.setContentsMargins(18, 16, 18, 16)
+        ec_layout.setSpacing(14)
+
+        eh_box = QHBoxLayout()
+        eh_lbl = QLabel("🔮 ELUSION & TELEPORT SHORTCUTS")
+        eh_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #94a3b8; letter-spacing: 0.6px;")
+        eh_badge = QLabel("Quick Escape")
+        eh_badge.setStyleSheet("background-color: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700;")
+        eh_box.addWidget(eh_lbl)
+        eh_box.addSpacing(8)
+        eh_box.addWidget(eh_badge)
+        eh_box.addStretch()
+        ec_layout.addLayout(eh_box)
+
+        form_grid = QGridLayout()
+        form_grid.setSpacing(12)
+
+        # Guildhall Name Input
+        gh_lbl = QLabel("Guildhall Name:")
+        gh_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1;")
+        self.shortcut_guildhall_input = QLineEdit()
+        self.shortcut_guildhall_input.setPlaceholderText("e.g. Order of the Black Rose")
+        self.shortcut_guildhall_input.setText(getattr(self, 'guildhall_name_val', ''))
+        self.shortcut_guildhall_input.textChanged.connect(self.on_elude_settings_changed)
+
+        form_grid.addWidget(gh_lbl, 0, 0)
+        form_grid.addWidget(self.shortcut_guildhall_input, 0, 1)
+
+        # Elusion Phrase Selector
+        phrase_lbl = QLabel("Elusion Phrase ({loc}):")
+        phrase_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1;")
+        self.shortcut_phrase_combo = QComboBox()
+        self.shortcut_phrase_combo.setEditable(True)
+        base_phrases = [
+            'say "I wish to travel to {loc}."',
+            'say "By the grace of the High Council, I demand passage to {loc}!"',
+            'emote separates the earths and forms a path to {loc}',
+            'emote traces a rune in the air, opening a rift to {loc}',
+            'emote bends the fabric of space with Riija\'s chaotic magic, stepping towards {loc}'
+        ]
+        self.shortcut_phrase_combo.addItems(base_phrases)
+
+        form_grid.addWidget(phrase_lbl, 1, 0)
+        form_grid.addWidget(self.shortcut_phrase_combo, 1, 1)
+
+        # Destination Location Picker
+        loc_lbl = QLabel("Target Destination:")
+        loc_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1;")
+        self.shortcut_loc_combo = QComboBox()
+        self.update_elude_locations_list()
+
+        form_grid.addWidget(loc_lbl, 2, 0)
+        form_grid.addWidget(self.shortcut_loc_combo, 2, 1)
+
+        ec_layout.addLayout(form_grid)
+
+        # Action buttons for Elude
+        elude_btn_box = QHBoxLayout()
+        elude_btn_box.setSpacing(10)
+
+        self.cast_elude_btn = QPushButton("⚡ Cast Elude Spell")
+        self.cast_elude_btn.setProperty("class", "WebBtnPrimary")
+        self.cast_elude_btn.clicked.connect(self.trigger_cast_elude)
+
+        self.float_elude_btn = QPushButton("🚀 Launch Floating Elude Bar")
+        self.float_elude_btn.setProperty("class", "WebBtnSecondary")
+        self.float_elude_btn.clicked.connect(self.trigger_launch_elude_bar)
+
+        elude_btn_box.addWidget(self.cast_elude_btn)
+        elude_btn_box.addWidget(self.float_elude_btn)
+        elude_btn_box.addStretch()
+
+        ec_layout.addLayout(elude_btn_box)
+        layout.addWidget(elude_card)
+
+        # --------------------------------------------------------------
+        # CARD 2: COMMAND ALIASES & HOTKEYS TABLE
+        # --------------------------------------------------------------
+        alias_card = QFrame()
+        alias_card.setProperty("class", "WebCard")
+        ac_layout = QVBoxLayout(alias_card)
+        ac_layout.setContentsMargins(18, 16, 18, 16)
+        ac_layout.setSpacing(12)
+
+        ah_box = QHBoxLayout()
+        ah_lbl = QLabel("⚡ COMMAND ALIASES & MACRO HOTKEYS")
+        ah_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #94a3b8; letter-spacing: 0.6px;")
+        ah_badge = QLabel("Key Binds")
+        ah_badge.setStyleSheet("background-color: rgba(56, 189, 248, 0.15); color: #94a3b8; border: 1px solid rgba(56, 189, 248, 0.4); padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700;")
+        ah_box.addWidget(ah_lbl)
+        ah_box.addSpacing(8)
+        ah_box.addWidget(ah_badge)
+        ah_box.addStretch()
+
+        ac_layout.addLayout(ah_box)
+
+        # Toolbar
+        tb_box = QHBoxLayout()
+        tb_box.setSpacing(8)
+
+        add_alias_btn = QPushButton("✚ Add New Alias")
+        add_alias_btn.setProperty("class", "WebBtnPrimary")
+        add_alias_btn.clicked.connect(self.open_add_alias_dialog)
+
+        edit_alias_btn = QPushButton("✎ Edit Selected")
+        edit_alias_btn.setProperty("class", "WebBtnSecondary")
+        edit_alias_btn.clicked.connect(self.edit_selected_alias)
+
+        del_alias_btn = QPushButton("🗑 Delete Selected")
+        del_alias_btn.setProperty("class", "WebBtnSecondary")
+        del_alias_btn.clicked.connect(self.delete_selected_alias)
+
+        refresh_cfg_btn = QPushButton("🔄 Refresh Config Keys")
+        refresh_cfg_btn.setProperty("class", "WebBtnSecondary")
+        refresh_cfg_btn.clicked.connect(self.refresh_m59_config_keys)
+
+        tb_box.addWidget(add_alias_btn)
+        tb_box.addWidget(edit_alias_btn)
+        tb_box.addWidget(del_alias_btn)
+        tb_box.addWidget(refresh_cfg_btn)
+        tb_box.addStretch()
+
+        ac_layout.addLayout(tb_box)
+
+        # Table
+        self.alias_table = QTableWidget()
+        self.alias_table.setColumnCount(5)
+        self.alias_table.setHorizontalHeaderLabels(["Alias Name", "Hotkey", "Command Phrase", "Send Enter", "Floating Button"])
+        self.alias_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
+        self.alias_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
+        self.alias_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.alias_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Interactive)
+        self.alias_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Interactive)
+        self.alias_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.alias_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.alias_table.setAlternatingRowColors(True)
+        self.alias_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #090d16;
+                gridline-color: #1e293b;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                color: #e2e8f0;
+            }
+            QHeaderView::section {
+                background-color: #111827;
+                color: #94a3b8;
+                font-weight: 800;
+                font-size: 11px;
+                padding: 6px;
+                border: none;
+                border-bottom: 1px solid #1e293b;
+            }
+            QTableWidget::item:selected {
+                background-color: #1e293b;
+                color: #94a3b8;
+            }
+        """)
+
+        ac_layout.addWidget(self.alias_table)
+        layout.addWidget(alias_card)
+
+        scroll.setWidget(page)
+
+        # Populate initial alias list
+        self.populate_alias_table()
+
+        return scroll
+
+    def update_elude_locations_list(self):
+        if not hasattr(self, 'shortcut_loc_combo'):
+            return
+        cur = self.shortcut_loc_combo.currentText()
+        self.shortcut_loc_combo.clear()
+        locs = [
+            "The Streets of Tos",
+            "Marion",
+            "South Barloque",
+            "Cor Noth",
+            "East Jasper",
+            "The Aerie Guest House",
+            "Guild Hall"
+        ]
+        gh = self.shortcut_guildhall_input.text().strip() if hasattr(self, 'shortcut_guildhall_input') else ""
+        if gh and gh not in locs:
+            locs.append(gh)
+        self.shortcut_loc_combo.addItems(locs)
+        if cur and cur in locs:
+            self.shortcut_loc_combo.setCurrentText(cur)
+
+    def on_elude_settings_changed(self):
+        if hasattr(self, 'shortcut_guildhall_input'):
+            self.guildhall_name_val = self.shortcut_guildhall_input.text().strip()
+            self.update_elude_locations_list()
+
+    def trigger_cast_elude(self):
+        loc = self.shortcut_loc_combo.currentText() if hasattr(self, 'shortcut_loc_combo') else "Marion"
+        phrase = self.shortcut_phrase_combo.currentText() if hasattr(self, 'shortcut_phrase_combo') else 'say "I wish to travel to {loc}."'
+        formatted = phrase.replace("{loc}", loc)
+        hwnd = getattr(self, 'main_hwnd', None)
+        try:
+            if hwnd:
+                send_chat_command(hwnd, 'cast "elusion"')
+                time.sleep(1.2)
+                send_chat_command(hwnd, formatted)
+        except Exception as ex:
+            print(f"[M59-ELUDE] Error sending elude command: {ex}", flush=True)
+
+    def trigger_launch_elude_bar(self):
+        try:
+            hwnd = getattr(self, 'main_hwnd', None)
+            if hasattr(self, 'active_elude_bar') and self.active_elude_bar:
+                try:
+                    if self.active_elude_bar.isVisible():
+                        self.active_elude_bar.raise_()
+                        self.active_elude_bar.activateWindow()
+                        return
+                    else:
+                        self.active_elude_bar.show()
+                        return
+                except Exception:
+                    pass
+            self.active_elude_bar = QtFloatingEludeBar(dashboard=self, target_hwnd=hwnd)
+            self.active_elude_bar.show()
+        except Exception as ex:
+            print(f"[M59-ELUDE] Error launching floating elude bar: {ex}", flush=True)
+
+    def trigger_launch_floating_chat(self):
+        try:
+            hwnd = getattr(self, 'main_hwnd', None)
+            if hasattr(self, 'active_floating_chat') and self.active_floating_chat:
+                try:
+                    if self.active_floating_chat.isVisible():
+                        self.active_floating_chat.raise_()
+                        self.active_floating_chat.activateWindow()
+                        return
+                    else:
+                        self.active_floating_chat.show()
+                        return
+                except Exception:
+                    pass
+            self.active_floating_chat = QtFloatingChatBox(dashboard=self, target_hwnd=hwnd)
+            self.active_floating_chat.show()
+        except Exception as ex:
+            print(f"[M59-CHAT] Error launching floating chatbox: {ex}", flush=True)
+
+    def update_floating_hotkey_buttons(self):
+        if hasattr(self, 'floating_hotkey_buttons'):
+            for btn in self.floating_hotkey_buttons:
+                try:
+                    btn.close()
+                except Exception:
+                    pass
+        self.floating_hotkey_buttons = []
+
+        target = getattr(self, 'main_hwnd', None)
+        aliases = self.load_commaliases()
+        x_off = 30
+        for alias in aliases:
+            if alias.get('show_float', False) and alias.get('enabled', True):
+                saved_x = alias.get('x_offset')
+                if saved_x is None:
+                    saved_x = x_off
+                saved_y = alias.get('y_offset')
+                if saved_y is None:
+                    saved_y = 60
+                btn = QtFloatingHotkeyButton(
+                    alias_name=alias.get('name', 'Alias'),
+                    command1=alias.get('command1', ''),
+                    send_enter=alias.get('send_enter', True),
+                    alias_dict=alias,
+                    dashboard=self,
+                    target_hwnd=target,
+                    x_offset=saved_x,
+                    y_offset=saved_y
+                )
+                btn.show()
+                self.floating_hotkey_buttons.append(btn)
+                x_off += 130
+
+    def register_global_hotkeys(self):
+        try:
+            try:
+                keyboard.unhook_all()
+            except Exception:
+                pass
+
+            aliases = self.load_commaliases()
+            for alias in aliases:
+                if not alias.get('enabled', True):
+                    continue
+                hotkey = alias.get('hotkey', '').strip()
+                if hotkey:
+                    k_hotkey = self._translate_hotkey_for_keyboard(hotkey)
+                    if k_hotkey:
+                        try:
+                            keyboard.add_hotkey(k_hotkey, self._on_global_hotkey_triggered, args=(alias,))
+                        except Exception as ex:
+                            print(f"Failed to bind hotkey {k_hotkey}: {ex}")
+        except Exception as ex:
+            print(f"Global hotkey hook warning: {ex}")
+
+    def _translate_hotkey_for_keyboard(self, key_str):
+        key_str = key_str.lower().strip()
+        parts = key_str.split('+')
+        modifiers = []
+        main_key = None
+        for p in parts:
+            p = p.strip()
+            if p in ('ctrl', 'alt', 'shift'):
+                modifiers.append(p)
+            else:
+                main_key = p
+        if not main_key:
+            return None
+        if modifiers:
+            return "+".join(modifiers) + "+" + main_key
+        return main_key
+
+    def _on_global_hotkey_triggered(self, alias):
+        target = getattr(self, 'main_hwnd', None)
+        if not target:
+            return
+        if win32gui:
+            try:
+                active_hwnd = win32gui.GetForegroundWindow()
+                if active_hwnd != target:
+                    return
+            except Exception:
+                pass
+        cmd1 = alias.get('command1', '').strip()
+        send_enter = alias.get('send_enter', True)
+        if cmd1:
+            def _run():
+                try:
+                    send_chat_command(target, cmd1, send_enter=send_enter)
+                except Exception as ex:
+                    print(f"Hotkey command execution failed: {ex}")
+            threading.Thread(target=_run, daemon=True).start()
+
+    def load_commaliases(self):
+        candidate_paths = [
+            os.path.join("settings", "commalias.json"),
+            os.path.join("settings", "commaliases.json"),
+            os.path.join("settings", "aliases.json"),
+            "commalias.json",
+            "aliases.json",
+        ]
+        for p in candidate_paths:
+            if os.path.exists(p):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            return data
+                except Exception as e:
+                    print(f"Error loading commaliases from {p}: {e}")
+        return []
+
+    def save_commaliases(self, aliases, rebuild_buttons=True):
+        os.makedirs("settings", exist_ok=True)
+        p = os.path.join("settings", "commalias.json")
+        try:
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(aliases, f, indent=2)
+        except Exception as ex:
+            print(f"Error saving commaliases: {ex}")
+        if rebuild_buttons:
+            self.update_floating_hotkey_buttons()
+            self.register_global_hotkeys()
+
+    def load_gui_settings(self):
+        candidate_paths = [
+            os.path.join("settings", "gui_settings.json"),
+            "gui_settings.json",
+            os.path.join("settings", "settings.json"),
+            "settings.json"
+        ]
+        for p in candidate_paths:
+            if os.path.exists(p):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            return data
+                except Exception as e:
+                    print(f"Error loading gui settings from {p}: {e}")
+        return {}
+
+    def save_gui_settings(self, settings_dict):
+        os.makedirs("settings", exist_ok=True)
+        p = os.path.join("settings", "gui_settings.json")
+        try:
+            current = self.load_gui_settings()
+            current.update(settings_dict)
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(current, f, indent=2)
+        except Exception as ex:
+            print(f"Error saving gui_settings.json: {ex}")
+
+    def trigger_pk_alert(self):
+        """Triggers PK/PvP alert sound and visual red box overlay if enabled."""
+        if getattr(self, 'pk_alert_enabled', True):
+            if getattr(self, 'pk_sound_enabled', True):
+                snd = getattr(self, 'pk_sound_path', "sound/alert.wav")
+                print(f"[M59-ALERT] Triggering PK alert audio: {snd}", flush=True)
+                play_audio_file(snd)
+            if getattr(self, 'pk_frame_enabled', True) and getattr(self, 'pk_frame', None):
+                print("[M59-ALERT] Flashing red box overlay around game window!", flush=True)
+                self.pk_frame.flash(5)
+
+    def play_tell_alert(self):
+        """Triggers tell / private message audio chime if enabled."""
+        if getattr(self, 'tell_sound_enabled', True):
+            snd = getattr(self, 'tell_sound_path', "sound/dm_chime.wav")
+            play_audio_file(snd)
+
+    def save_sound_settings(self):
+        """Saves current sound alert configuration to gui_settings.json."""
+        self.pk_alert_enabled = self.pk_chk.isChecked() if hasattr(self, 'pk_chk') else getattr(self, 'pk_alert_enabled', True)
+        self.pk_sound_enabled = self.pk_alert_enabled
+        self.pk_sound_path = self.pk_sound_combo.currentText() if hasattr(self, 'pk_sound_combo') else getattr(self, 'pk_sound_path', "sound/alert.wav")
+        self.tell_sound_enabled = self.tell_chk.isChecked() if hasattr(self, 'tell_chk') else getattr(self, 'tell_sound_enabled', True)
+        self.tell_sound_path = self.tell_sound_combo.currentText() if hasattr(self, 'tell_sound_combo') else getattr(self, 'tell_sound_path', "sound/dm_chime.wav")
+        self.pk_frame_enabled = self.pk_redbox_chk.isChecked() if hasattr(self, 'pk_redbox_chk') else getattr(self, 'pk_frame_enabled', True)
+
+        s = {
+            "pk_alert_enabled": self.pk_alert_enabled,
+            "pk_sound_enabled": self.pk_sound_enabled,
+            "pk_sound_path": self.pk_sound_path,
+            "tell_sound_enabled": self.tell_sound_enabled,
+            "tell_sound_path": self.tell_sound_path,
+            "pk_frame_enabled": self.pk_frame_enabled,
+        }
+        self.save_gui_settings(s)
+
+    def populate_alias_table(self):
+        if not hasattr(self, 'alias_table'):
+            return
+        aliases = self.load_commaliases()
+        self.alias_table.setRowCount(0)
+        for row_idx, alias in enumerate(aliases):
+            self.alias_table.insertRow(row_idx)
+            name_item = QTableWidgetItem(alias.get("name", "Alias"))
+            hk_item = QTableWidgetItem(alias.get("hotkey", "None"))
+            cmd_item = QTableWidgetItem(alias.get("command1", ""))
+            send_enter_str = "Yes" if alias.get("send_enter", True) else "No"
+            send_enter_item = QTableWidgetItem(send_enter_str)
+            float_str = "Yes" if alias.get("show_float", False) else "No"
+            float_item = QTableWidgetItem(float_str)
+
+            self.alias_table.setItem(row_idx, 0, name_item)
+            self.alias_table.setItem(row_idx, 1, hk_item)
+            self.alias_table.setItem(row_idx, 2, cmd_item)
+            self.alias_table.setItem(row_idx, 3, send_enter_item)
+            self.alias_table.setItem(row_idx, 4, float_item)
+
+        self.update_floating_hotkey_buttons()
+
+    def open_add_alias_dialog(self):
+        dialog = AliasEditDialog(parent=self)
+        if dialog.exec() == QDialog.Accepted:
+            new_data = dialog.get_alias_data()
+            aliases = self.load_commaliases()
+            aliases.append(new_data)
+            self.save_commaliases(aliases)
+            self.populate_alias_table()
+
+    def edit_selected_alias(self):
+        if not hasattr(self, 'alias_table'):
+            return
+        selected_rows = self.alias_table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "Selection Required", "Please select an alias row to edit.")
+            return
+        row = selected_rows[0].row()
+        aliases = self.load_commaliases()
+        if 0 <= row < len(aliases):
+            dialog = AliasEditDialog(alias=aliases[row], parent=self)
+            if dialog.exec() == QDialog.Accepted:
+                updated_data = dialog.get_alias_data()
+                aliases[row] = updated_data
+                self.save_commaliases(aliases)
+                self.populate_alias_table()
+
+    def delete_selected_alias(self):
+        if not hasattr(self, 'alias_table'):
+            return
+        selected_rows = self.alias_table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "Selection Required", "Please select an alias row to delete.")
+            return
+        row = selected_rows[0].row()
+        aliases = self.load_commaliases()
+        if 0 <= row < len(aliases):
+            name = aliases[row].get("name", "Selected Alias")
+            reply = QMessageBox.question(
+                self, "Confirm Deletion", f"Are you sure you want to delete alias '{name}'?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                del aliases[row]
+                self.save_commaliases(aliases)
+                self.populate_alias_table()
+
+    def refresh_m59_config_keys(self):
+        try:
+            used_keys = parse_config_ini()
+            if used_keys:
+                keys_str = ", ".join(sorted(list(used_keys))[:15])
+                if len(used_keys) > 15:
+                    keys_str += "..."
+                QMessageBox.information(self, "M59 Config Keys", f"Detected {len(used_keys)} keybindings in Meridian 59 config.ini:\n{keys_str}")
+            else:
+                QMessageBox.information(self, "M59 Config Keys", "No M59 config.ini key conflicts detected.")
+        except Exception as ex:
+            QMessageBox.information(self, "M59 Config Status", f"Could not read config.ini:\n{ex}")
+
+    # ==================================================================
+    # SECTION 3: CHAT LOGGER PAGE (Comms Engine)
+    # ==================================================================
+    def build_chat_logger_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        # Top Banner Card: Title, Description & Floating Chatbox Launcher
+        top_card = QFrame()
+        top_card.setProperty("class", "WebCard")
+        tc_layout = QHBoxLayout(top_card)
+        tc_layout.setContentsMargins(16, 14, 16, 14)
+        tc_layout.setSpacing(16)
+
+        t_box = QVBoxLayout()
+        t_box.setSpacing(3)
+        t_lbl = QLabel("💬 Communications & Live Chat Stream")
+        t_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc;")
+        t_desc = QLabel("This can be placed over the game chat with live stream logging, channel filtering, roll-up toggle, and game anchoring.")
+        t_desc.setStyleSheet("font-size: 12px; color: #94a3b8;")
+        t_box.addWidget(t_lbl)
+        t_box.addWidget(t_desc)
+        tc_layout.addLayout(t_box, 1)
+
+        # Floating Chatbox Launcher Button
+        self.floating_chat_btn = QPushButton("💬 Floating Chatbox")
+        self.floating_chat_btn.setProperty("class", "WebBtnPrimary")
+        self.floating_chat_btn.setToolTip("Open always-on-top floating chatbox that can be placed over the game chat")
+        self.floating_chat_btn.clicked.connect(self.trigger_launch_floating_chat)
+        tc_layout.addWidget(self.floating_chat_btn)
+
+        layout.addWidget(top_card)
+
+        # Header Bar: Filter Tabs & Controls
+        hdr_card = QFrame()
+        hdr_card.setProperty("class", "WebCard")
+        hc_layout = QHBoxLayout(hdr_card)
+        hc_layout.setContentsMargins(14, 12, 14, 12)
+        hc_layout.setSpacing(10)
+
+        # Live Stream Mode Button
+        self.mode_btn = QPushButton("🟢 LIVE STREAM")
+        self.mode_btn.setProperty("class", "WebBtnSecondary")
+        self.mode_btn.setStyleSheet("color: #94a3b8; font-weight: 800;")
+        self.mode_btn.clicked.connect(self.return_to_live_stream)
+        hc_layout.addWidget(self.mode_btn)
+
+        # Channel Filters
+        self.channel_btns = {}
+        channels = [
+            ("all", "All Channels"),
+            ("chat", "Chat / Say"),
+            ("guild", "Guild / Tells"),
+            ("combat", "Combat Log"),
+            ("improves", "Improves"),
+            ("system", "System Broadcasts")
+        ]
+
+        for cid, label in channels:
+            btn = QPushButton(label)
+            btn.setProperty("class", "WebTabBtn")
+            if cid == "all":
+                btn.setProperty("active", "true")
+            btn.clicked.connect(lambda checked=False, c=cid: self.set_chat_channel_filter(c))
+            self.channel_btns[cid] = btn
+            hc_layout.addWidget(btn)
+
+        hc_layout.addStretch()
+
+        # Clear Stream Button
+        clear_btn = QPushButton("Clear Stream")
+        clear_btn.setProperty("class", "WebBtnSecondary")
+        clear_btn.clicked.connect(lambda: self.chat_stream_view.clear())
+        hc_layout.addWidget(clear_btn)
+
+        # Search Query Input
+        self.chat_search = QLineEdit()
+        self.chat_search.setPlaceholderText("Filter chat log...")
+        self.chat_search.setFixedWidth(180)
+        self.chat_search.textChanged.connect(self.filter_chat_stream)
+        hc_layout.addWidget(self.chat_search)
+
+        layout.addWidget(hdr_card)
+
+        # Splitter: Historical Logs Sidebar + Stream View
+        chat_splitter = QSplitter(Qt.Horizontal)
+        chat_splitter.setHandleWidth(8)
+
+        # Historical Logs Drawer Card
+        hist_card = QFrame()
+        hist_card.setProperty("class", "WebCard")
+        hist_card.setMaximumWidth(220)
+        hc_layout = QVBoxLayout(hist_card)
+        hc_layout.setContentsMargins(12, 12, 12, 12)
+
+        hl_title = QLabel("HISTORICAL LOGS")
+        hl_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #64748b; letter-spacing: 0.8px;")
+        hc_layout.addWidget(hl_title)
+
+        self.hist_log_list = QListWidget()
+        self.hist_log_list.setStyleSheet("""
+            QListWidget {
+                background-color: #030712;
+                border: 1px solid #334155;
+                border-radius: 8px;
+            }
+            QListWidget::item {
+                padding: 6px 8px;
+                font-size: 11px;
+                color: #94a3b8;
+                border-bottom: 1px solid #111827;
+            }
+            QListWidget::item:hover {
+                background-color: #162032;
+                color: #f1f5f9;
+            }
+        """)
+        self.hist_log_list.itemClicked.connect(self.load_selected_historical_log)
+        hc_layout.addWidget(self.hist_log_list)
+
+        import_log_btn = QPushButton("Import External Log")
+        import_log_btn.setProperty("class", "WebBtnSecondary")
+        import_log_btn.clicked.connect(self.import_log_file_dialog)
+        hc_layout.addWidget(import_log_btn)
+
+        chat_splitter.addWidget(hist_card)
+
+        # Stream View
+        self.chat_stream_view = QTextEdit()
+        self.chat_stream_view.setReadOnly(True)
+        self.chat_stream_view.setStyleSheet("""
+            QTextEdit {
+                background-color: #030712;
+                border: 1px solid #334155;
+                border-radius: 12px;
+                padding: 14px;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 12px;
+                line-height: 1.5;
+            }
+        """)
+        chat_splitter.addWidget(self.chat_stream_view)
+
+        layout.addWidget(chat_splitter, 1)
+
+        # Bottom Manual Line Input Bar
+        bottom_card = QFrame()
+        bottom_card.setProperty("class", "WebCard")
+        bc_layout = QHBoxLayout(bottom_card)
+        bc_layout.setContentsMargins(12, 10, 12, 10)
+        bc_layout.setSpacing(10)
+
+        self.chat_input = QLineEdit()
+        self.chat_input.setPlaceholderText("Paste log line or chat output (e.g. You have improved in the art of Slash...)...")
+        self.chat_input.returnPressed.connect(self.parse_chat_input)
+        bc_layout.addWidget(self.chat_input, 1)
+
+        parse_btn = QPushButton("Parse Line")
+        parse_btn.setProperty("class", "WebBtnPrimary")
+        parse_btn.clicked.connect(self.parse_chat_input)
+        bc_layout.addWidget(parse_btn)
+
+        layout.addWidget(bottom_card)
+
+        return page
+
+    # ==================================================================
+    # SECTION: VAULT STORAGE LEDGER PAGE (Barloque & Hungry Vaults)
+    # ==================================================================
+    def build_vault_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        # Header Card
+        hdr_card = QFrame()
+        hdr_card.setProperty("class", "WebCard")
+        hc_layout = QHBoxLayout(hdr_card)
+        hc_layout.setContentsMargins(16, 14, 16, 14)
+
+        t_box = QVBoxLayout()
+        t_lbl = QLabel("🏦 M59 Vault Management & Storage Ledger")
+        t_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc;")
+        s_lbl = QLabel("Track and manage Barloque Vault and Hungry Vault items across application restarts.")
+        s_lbl.setStyleSheet("font-size: 12px; color: #64748b;")
+        t_box.addWidget(t_lbl)
+        t_box.addWidget(s_lbl)
+        hc_layout.addLayout(t_box)
+
+        hc_layout.addStretch()
+        layout.addWidget(hdr_card)
+
+        # Main Splitter for Barloque & Hungry Vaults
+        vault_splitter = QSplitter(Qt.Horizontal)
+        vault_splitter.setHandleWidth(8)
+
+        # 1. Barloque Vault Card
+        b_card = QFrame()
+        b_card.setProperty("class", "WebCard")
+        bc_layout = QVBoxLayout(b_card)
+        bc_layout.setContentsMargins(14, 14, 14, 14)
+        bc_layout.setSpacing(8)
+
+        bc_hdr = QHBoxLayout()
+        bc_title = QLabel("🏰 BARLOQUE VAULT")
+        bc_title.setStyleSheet("font-size: 11px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
+        bc_hdr.addWidget(bc_title)
+        bc_hdr.addStretch()
+
+        b_search = QLineEdit()
+        b_search.setPlaceholderText("Filter Barloque items...")
+        b_search.setFixedWidth(160)
+        b_search.textChanged.connect(lambda: self.update_vault_table("barloque"))
+        bc_hdr.addWidget(b_search)
+
+        b_scan_btn = QPushButton("🔄 Scan Barloque")
+        b_scan_btn.setProperty("class", "WebBtnPrimary")
+        b_scan_btn.setToolTip("Triggers automated in-game vault scanning.")
+        b_scan_btn.clicked.connect(lambda: self.trigger_vault_scan("barloque"))
+        bc_hdr.addWidget(b_scan_btn)
+
+        bc_layout.addLayout(bc_hdr)
+
+        b_table = QTableWidget(0, 2)
+        b_table.setMinimumHeight(240)
+        b_table.verticalHeader().setVisible(False)
+        b_table.setHorizontalHeaderLabels(["ITEM NAME", "QTY"])
+        b_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        b_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        bc_layout.addWidget(b_table)
+
+        b_status = QLabel("No scan data")
+        b_status.setStyleSheet("font-size: 11px; color: #64748b; font-style: italic;")
+        bc_layout.addWidget(b_status)
+
+        vault_splitter.addWidget(b_card)
+
+        # 2. Hungry Vault Card
+        h_card = QFrame()
+        h_card.setProperty("class", "WebCard")
+        hc_layout2 = QVBoxLayout(h_card)
+        hc_layout2.setContentsMargins(14, 14, 14, 14)
+        hc_layout2.setSpacing(8)
+
+        hc_hdr = QHBoxLayout()
+        hc_title = QLabel("🏝️ HUNGRY VAULT")
+        hc_title.setStyleSheet("font-size: 11px; font-weight: 800; color: #3b82f6; letter-spacing: 0.8px;")
+        hc_hdr.addWidget(hc_title)
+        hc_hdr.addStretch()
+
+        h_search = QLineEdit()
+        h_search.setPlaceholderText("Filter Hungry items...")
+        h_search.setFixedWidth(160)
+        h_search.textChanged.connect(lambda: self.update_vault_table("hungry"))
+        hc_hdr.addWidget(h_search)
+
+        h_scan_btn = QPushButton("🔄 Scan Hungry")
+        h_scan_btn.setProperty("class", "WebBtnSecondary")
+        h_scan_btn.setToolTip("Triggers automated in-game vault scanning.")
+        h_scan_btn.clicked.connect(lambda: self.trigger_vault_scan("hungry"))
+        hc_hdr.addWidget(h_scan_btn)
+
+        hc_layout2.addLayout(hc_hdr)
+
+        h_table = QTableWidget(0, 2)
+        h_table.setMinimumHeight(240)
+        h_table.verticalHeader().setVisible(False)
+        h_table.setHorizontalHeaderLabels(["ITEM NAME", "QTY"])
+        h_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        h_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hc_layout2.addWidget(h_table)
+
+        h_status = QLabel("No scan data")
+        h_status.setStyleSheet("font-size: 11px; color: #64748b; font-style: italic;")
+        hc_layout2.addWidget(h_status)
+
+        vault_splitter.addWidget(h_card)
+
+        vault_splitter.setSizes([500, 500])
+        layout.addWidget(vault_splitter, 1)
+
+        self.vault_page_widgets = {
+            "barloque": {"table": b_table, "search": b_search, "status": b_status, "btn": b_scan_btn},
+            "hungry": {"table": h_table, "search": h_search, "status": h_status, "btn": h_scan_btn}
+        }
+
+        return page
+
+    def update_bank_ui(self):
+        """Updates clean text displays for Mainland Bank and Island Bank across tiles."""
+        if hasattr(self, 'bank_manager') and self.bank_manager:
+            mb = self.bank_manager.balances.get("mainland", 0)
+            ib = self.bank_manager.balances.get("island", 0)
+            tot = mb + ib
+            if hasattr(self, 'bank_mainland_lbl') and self.bank_mainland_lbl:
+                self.bank_mainland_lbl.setText(f"Mainland Bank: {mb:,} shillings")
+            if hasattr(self, 'bank_island_lbl') and self.bank_island_lbl:
+                self.bank_island_lbl.setText(f"Island Bank: {ib:,} shillings")
+            if hasattr(self, 'vault_bank_mainland_lbl') and self.vault_bank_mainland_lbl:
+                self.vault_bank_mainland_lbl.setText(f"Mainland Bank: {mb:,} shillings")
+            if hasattr(self, 'vault_bank_island_lbl') and self.vault_bank_island_lbl:
+                self.vault_bank_island_lbl.setText(f"Island Bank: {ib:,} shillings")
+            if hasattr(self, 'dock_bank_total_lbl') and self.dock_bank_total_lbl:
+                self.dock_bank_total_lbl.setText(f"Total: {tot:,} sh")
+            if hasattr(self, 'dock_bank_mainland_lbl') and self.dock_bank_mainland_lbl:
+                self.dock_bank_mainland_lbl.setText(f"Mainland: {mb:,} sh")
+            if hasattr(self, 'dock_bank_island_lbl') and self.dock_bank_island_lbl:
+                self.dock_bank_island_lbl.setText(f"Island: {ib:,} sh")
+
+    def update_vault_table(self, vt):
+        """Populates vault table widgets (tile and page) with filtered data."""
+        widget_groups = []
+        if hasattr(self, 'vault_widgets') and vt in self.vault_widgets:
+            widget_groups.append(self.vault_widgets[vt])
+        if hasattr(self, 'vault_page_widgets') and vt in self.vault_page_widgets:
+            widget_groups.append(self.vault_page_widgets[vt])
+
+        if not widget_groups:
+            return
+
+        items = self.vault_data.get(vt, [])
+        last_scan = self.vault_last_scan.get(vt, "No scan data")
+
+        for wg in widget_groups:
+            table = wg["table"]
+            search_txt = wg["search"].text().lower().strip()
+            status_lbl = wg["status"]
+
+            table.setRowCount(0)
+            filtered_count = 0
+            for item in items:
+                name = item.get("item", "")
+                qty = str(item.get("quantity", "1"))
+                if not search_txt or search_txt in name.lower():
+                    row = table.rowCount()
+                    table.insertRow(row)
+                    table.setItem(row, 0, QTableWidgetItem(name.title()))
+                    qty_item = QTableWidgetItem(qty)
+                    qty_item.setTextAlignment(Qt.AlignCenter)
+                    table.setItem(row, 1, qty_item)
+                    filtered_count += 1
+
+            if last_scan and last_scan != "No scan data":
+                status_lbl.setText(f"Last Scan: {last_scan} ({len(items)} items found)")
+            else:
+                status_lbl.setText("No scan data")
+
+    def load_vault_cache(self):
+        """Loads persistent vault inventory save files for current character."""
+        if not self.char_name or self.char_name == "--":
+            return
+        sn = get_safe_name(self.char_name)
+        for vt in ["barloque", "hungry"]:
+            loaded = False
+            paths = [
+                f"settings/{sn}_vault_{vt}.json",
+                f"logs/{sn}_vault_{vt}.json"
+            ]
+            for p in paths:
+                if os.path.exists(p):
+                    try:
+                        with open(p, "r") as f:
+                            d = json.load(f)
+                            items = d.get("items", [])
+                            last_scan = d.get("last_scan") or d.get("timestamp")
+                            if isinstance(last_scan, (int, float)):
+                                last_scan = datetime.fromtimestamp(last_scan).strftime('%Y-%m-%d %H:%M:%S')
+                            elif not last_scan:
+                                last_scan = "Loaded from cache"
+                            self.vault_data[vt] = items
+                            self.vault_last_scan[vt] = last_scan
+                            self.update_vault_table(vt)
+                            loaded = True
+                            break
+                    except Exception as ex:
+                        print(f"[M59-VAULT] Failed loading vault cache from {p}: {ex}", flush=True)
+            if not loaded:
+                self.vault_data[vt] = []
+                self.vault_last_scan[vt] = "No scan data"
+                self.update_vault_table(vt)
+
+        self.update_bank_ui()
+
+    def trigger_vault_scan(self, vt):
+        """Triggers an automated vault scan sequence in a background thread."""
+        if not self.main_hwnd or not win32gui or not win32gui.IsWindow(self.main_hwnd):
+            QMessageBox.warning(self, "Vault Scan Error", "Meridian 59 game client is not attached or process window handle is invalid.")
+            return
+
+        if not perform_vault_scan:
+            QMessageBox.warning(self, "Vault Scan Error", "m59_vault scanner module is not available.")
+            return
+
+        for group in [getattr(self, 'vault_widgets', {}), getattr(self, 'vault_page_widgets', {})]:
+            if vt in group:
+                group[vt]["btn"].setEnabled(False)
+                group[vt]["status"].setText("Scanning vault in progress...")
+
+        def run_scan():
+            try:
+                c_name = self.char_name if self.char_name and self.char_name != "--" else "Unknown"
+                inv = perform_vault_scan(self.main_hwnd, c_name, vt)
+                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                if inv is not None:
+                    self.signals.vault_updated.emit(vt, inv, now_str)
+                else:
+                    self.signals.vault_updated.emit(vt, [], "Scan failed or window not open")
+            except Exception as ex:
+                print(f"[M59-VAULT] Scan error: {ex}", flush=True)
+                self.signals.vault_updated.emit(vt, [], f"Scan error: {ex}")
+
+        threading.Thread(target=run_scan, daemon=True).start()
+
+    def on_vault_updated(self, vt, inv, last_scan_str):
+        """Slot called on main thread when vault scan completes."""
+        for group in [getattr(self, 'vault_widgets', {}), getattr(self, 'vault_page_widgets', {})]:
+            if vt in group:
+                group[vt]["btn"].setEnabled(True)
+        if inv is not None:
+            self.vault_data[vt] = inv
+            self.vault_last_scan[vt] = last_scan_str
+        self.update_vault_table(vt)
+
+    # ==================================================================
+    # SECTION: KILL BOOK PAGE (Monsters Bestiary & Players PK Ledger)
+    # ==================================================================
+    def build_killbook_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        # Header Card
+        hdr_card = QFrame()
+        hdr_card.setProperty("class", "WebCard")
+        hc_layout = QHBoxLayout(hdr_card)
+        hc_layout.setContentsMargins(16, 14, 16, 14)
+
+        t_box = QVBoxLayout()
+        t_lbl = QLabel("⚔️ M59 Kill Book & Bestiary")
+        t_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc;")
+        s_lbl = QLabel("All-time persistent kill records and active session combat statistics.")
+        s_lbl.setStyleSheet("font-size: 12px; color: #64748b;")
+        t_box.addWidget(t_lbl)
+        t_box.addWidget(s_lbl)
+        hc_layout.addLayout(t_box)
+
+        hc_layout.addStretch()
+
+        # Stat Badges
+        self.kb_monsters_badge = QLabel("0 Monsters Slain")
+        self.kb_monsters_badge.setStyleSheet("background-color: #064e3b; color: #94a3b8; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 8px;")
+        hc_layout.addWidget(self.kb_monsters_badge)
+
+        self.kb_players_badge = QLabel("0 Players Defeated")
+        self.kb_players_badge.setStyleSheet("background-color: #581c87; color: #c084fc; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 8px;")
+        hc_layout.addWidget(self.kb_players_badge)
+
+        self.kb_total_badge = QLabel("0 Total Victories")
+        self.kb_total_badge.setStyleSheet("background-color: #881337; color: #fda4af; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 8px;")
+        hc_layout.addWidget(self.kb_total_badge)
+
+        layout.addWidget(hdr_card)
+
+        # Main Splitter for Monsters & Players
+        kb_splitter = QSplitter(Qt.Horizontal)
+        kb_splitter.setHandleWidth(8)
+
+        # Left Card: Monsters Bestiary
+        m_card = QFrame()
+        m_card.setProperty("class", "WebCard")
+        mc_layout = QVBoxLayout(m_card)
+        mc_layout.setContentsMargins(14, 14, 14, 14)
+
+        mc_hdr = QHBoxLayout()
+        mc_title = QLabel("🧟 MONSTERS BESTIARY")
+        mc_title.setStyleSheet("font-size: 11px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
+        mc_hdr.addWidget(mc_title)
+        mc_hdr.addStretch()
+
+        self.kb_monsters_search = QLineEdit()
+        self.kb_monsters_search.setPlaceholderText("Filter monsters...")
+        self.kb_monsters_search.setFixedWidth(160)
+        self.kb_monsters_search.textChanged.connect(self.update_killbook_ui)
+        mc_hdr.addWidget(self.kb_monsters_search)
+        mc_layout.addLayout(mc_hdr)
+
+        self.kb_monsters_table = QTableWidget(0, 4)
+        self.kb_monsters_table.verticalHeader().setVisible(False)
+        self.kb_monsters_table.setHorizontalHeaderLabels(["MONSTER NAME", "ALL-TIME", "SESSION", "STATUS"])
+        self.kb_monsters_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.kb_monsters_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.kb_monsters_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.kb_monsters_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        mc_layout.addWidget(self.kb_monsters_table)
+
+        kb_splitter.addWidget(m_card)
+
+        self.kb_monsters_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.kb_monsters_table.itemSelectionChanged.connect(self.on_killbook_monster_selected)
+
+        # Right Card: Players PK Ledger
+        p_card = QFrame()
+        p_card.setProperty("class", "WebCard")
+        pc_layout = QVBoxLayout(p_card)
+        pc_layout.setContentsMargins(14, 14, 14, 14)
+
+        pc_hdr = QHBoxLayout()
+        pc_title = QLabel("⚔️ PLAYERS PK LEDGER")
+        pc_title.setStyleSheet("font-size: 11px; font-weight: 800; color: #c084fc; letter-spacing: 0.8px;")
+        pc_hdr.addWidget(pc_title)
+        pc_hdr.addStretch()
+
+        self.kb_players_search = QLineEdit()
+        self.kb_players_search.setPlaceholderText("Filter players...")
+        self.kb_players_search.setFixedWidth(160)
+        self.kb_players_search.textChanged.connect(self.update_killbook_ui)
+        pc_hdr.addWidget(self.kb_players_search)
+        pc_layout.addLayout(pc_hdr)
+
+        self.kb_players_table = QTableWidget(0, 4)
+        self.kb_players_table.verticalHeader().setVisible(False)
+        self.kb_players_table.setHorizontalHeaderLabels(["PLAYER NAME", "ALL-TIME", "SESSION", "STATUS"])
+        self.kb_players_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.kb_players_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.kb_players_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.kb_players_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        pc_layout.addWidget(self.kb_players_table)
+
+        kb_splitter.addWidget(p_card)
+
+        # Third Card: Monster BGF Model & Sprite Viewer (Available in section, not tile)
+        v_card = QFrame()
+        v_card.setProperty("class", "WebCard")
+        vc_layout = QVBoxLayout(v_card)
+        vc_layout.setContentsMargins(14, 14, 14, 14)
+
+        vc_hdr = QHBoxLayout()
+        self.kb_bgf_title = QLabel("🖼️ MODEL & SPRITE VIEWER")
+        self.kb_bgf_title.setStyleSheet("font-size: 11px; font-weight: 800; color: #38bdf8; letter-spacing: 0.8px;")
+        vc_hdr.addWidget(self.kb_bgf_title)
+        vc_hdr.addStretch()
+        vc_layout.addLayout(vc_hdr)
+
+        # Canvas Container
+        self.kb_bgf_canvas = QLabel("Select a monster from the Bestiary to view sprite model")
+        self.kb_bgf_canvas.setAlignment(Qt.AlignCenter)
+        self.kb_bgf_canvas.setMinimumSize(200, 200)
+        self.kb_bgf_canvas.setStyleSheet("""
+            background-color: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 10px;
+            color: #64748b;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 10px;
+        """)
+        vc_layout.addWidget(self.kb_bgf_canvas, 1)
+
+        # Controls Container
+        ctrl_box = QVBoxLayout()
+        ctrl_box.setSpacing(8)
+
+        # Pose Slider Row
+        pose_row = QHBoxLayout()
+        p_lbl = QLabel("Pose:")
+        p_lbl.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 700;")
+        self.kb_bgf_pose_slider = QSlider(Qt.Horizontal)
+        self.kb_bgf_pose_slider.setRange(0, 0)
+        self.kb_bgf_pose_slider.setEnabled(False)
+        self.kb_bgf_pose_slider.valueChanged.connect(self.on_bgf_slider_changed)
+        pose_row.addWidget(p_lbl)
+        pose_row.addWidget(self.kb_bgf_pose_slider)
+        ctrl_box.addLayout(pose_row)
+
+        # Angle Slider Row
+        angle_row = QHBoxLayout()
+        a_lbl = QLabel("Angle:")
+        a_lbl.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 700;")
+        self.kb_bgf_angle_slider = QSlider(Qt.Horizontal)
+        self.kb_bgf_angle_slider.setRange(0, 5)
+        self.kb_bgf_angle_slider.setEnabled(False)
+        self.kb_bgf_angle_slider.valueChanged.connect(self.on_bgf_slider_changed)
+        angle_row.addWidget(a_lbl)
+        angle_row.addWidget(self.kb_bgf_angle_slider)
+        ctrl_box.addLayout(angle_row)
+
+        # Frame Info Badge
+        self.kb_bgf_info_lbl = QLabel("No sprite loaded")
+        self.kb_bgf_info_lbl.setAlignment(Qt.AlignCenter)
+        self.kb_bgf_info_lbl.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 600;")
+        ctrl_box.addWidget(self.kb_bgf_info_lbl)
+
+        vc_layout.addLayout(ctrl_box)
+
+        kb_splitter.addWidget(v_card)
+        kb_splitter.setSizes([340, 340, 300])
+
+        layout.addWidget(kb_splitter, 1)
+
+        # Initial Population
+        self.update_killbook_ui()
+
+        return page
+
+    def load_kill_book(self):
+        """Loads persistent kill records for character from settings JSON file."""
+        if hasattr(self, 'combat_monitor') and self.combat_monitor:
+            self.combat_monitor.kill_book = self.combat_monitor._load_kill_book()
+        self.update_killbook_ui()
+
+    def on_killbook_monster_selected(self):
+        """Qt Slot called when a monster row is selected in the Bestiary table."""
+        selected = self.kb_monsters_table.selectedItems()
+        if not selected:
+            return
+        row = selected[0].row()
+        item = self.kb_monsters_table.item(row, 0)
+        if item:
+            self.load_monster_bgf_viewer(item.text())
+
+    def load_monster_bgf_viewer(self, monster_name):
+        """Loads BGF frames for selected monster and populates image viewer controls."""
+        self.kb_bgf_title.setText(f"🖼️ {monster_name.upper()} SPRITE MODEL")
+        self.current_bgf_frames = []
+        self.current_bgf_image_pixmaps = []
+
+        self.kb_bgf_pose_slider.blockSignals(True)
+        self.kb_bgf_angle_slider.blockSignals(True)
+        self.kb_bgf_pose_slider.setValue(0)
+        self.kb_bgf_angle_slider.setValue(0)
+        self.kb_bgf_pose_slider.setEnabled(False)
+        self.kb_bgf_angle_slider.setEnabled(False)
+        self.kb_bgf_pose_slider.blockSignals(False)
+        self.kb_bgf_angle_slider.blockSignals(False)
+
+        if getattr(self, "bgf_manager", None):
+            cleaned_sel = ''.join(c for c in monster_name.lower() if c.isalnum() or c.isspace() or c == "'" or c == "-")
+            internal_name = self.bgf_manager.mob_mapping.get(cleaned_sel)
+            if not internal_name:
+                internal_name = self.bgf_manager.mob_mapping.get(cleaned_sel.replace(" ", ""))
+            if not internal_name:
+                internal_name = self.bgf_manager.mob_mapping.get(monster_name.lower())
+
+            if internal_name:
+                bgf_path = self.bgf_manager.find_bgf_for_monster(internal_name)
+                if bgf_path:
+                    frames = self.bgf_manager.load_bgf_frames(bgf_path)
+                    if frames:
+                        self.current_bgf_frames = frames
+                        self.current_bgf_num_groups = 1
+                        if hasattr(self.bgf_manager, "get_bgf_header"):
+                            hdr = self.bgf_manager.get_bgf_header(bgf_path)
+                            if hdr and "num_groups" in hdr:
+                                self.current_bgf_num_groups = hdr["num_groups"]
+
+                        pixmaps = []
+                        for f in frames:
+                            img = f.get("image") if isinstance(f, dict) else f
+                            pix = pil_image_to_qpixmap(img)
+                            pixmaps.append(pix)
+                        self.current_bgf_image_pixmaps = pixmaps
+
+                        num_frames = len(frames)
+                        if num_frames >= 6:
+                            if self.current_bgf_num_groups == 6 or (num_frames in (12, 18, 24) and self.current_bgf_num_groups > 1):
+                                poses_per_angle = max(1, num_frames // 6)
+                                max_pose = max(0, poses_per_angle - 1)
+                            else:
+                                max_pose = max(0, (num_frames // 6) - 1)
+                            self.kb_bgf_pose_slider.setMaximum(max_pose)
+                            self.kb_bgf_pose_slider.setEnabled(max_pose > 0)
+                            self.kb_bgf_angle_slider.setMaximum(5)
+                            self.kb_bgf_angle_slider.setEnabled(True)
+                        else:
+                            # Single-pose or fewer than 6 angles
+                            self.kb_bgf_pose_slider.setMaximum(0)
+                            self.kb_bgf_pose_slider.setEnabled(False)
+                            self.kb_bgf_angle_slider.setMaximum(max(0, num_frames - 1))
+                            self.kb_bgf_angle_slider.setEnabled(num_frames > 1)
+                        self.kb_bgf_pose_slider.setValue(0)
+                        self.kb_bgf_angle_slider.setValue(0)
+                        self.show_bgf_frame(0)
+                        return
+
+        self.kb_bgf_canvas.setPixmap(QPixmap())
+        self.kb_bgf_canvas.setText("No sprite image available for this monster")
+        self.kb_bgf_info_lbl.setText("No BGF sprite asset found")
+
+    def on_bgf_slider_changed(self):
+        """Handles pose & angle slider adjustments to render specific BGF frame."""
+        num_frames = len(getattr(self, 'current_bgf_image_pixmaps', []))
+        if num_frames == 0:
+            return
+        pose = self.kb_bgf_pose_slider.value()
+        angle = self.kb_bgf_angle_slider.value()
+        num_groups = getattr(self, 'current_bgf_num_groups', 1)
         
-        # Weight Metric (Left)
-        w_frame = tk.Frame(metrics_frame, bg="#f0f0f0")
-        w_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
-        tk.Label(w_frame, text="Weight Load", font=("Arial", 8, "bold"), bg="#f0f0f0", fg="#666").pack(anchor="w")
-        self.weight_bar_canvas = tk.Canvas(w_frame, height=self.scale_px(8), bg="#eee", highlightthickness=0)
-        self.weight_bar_canvas.pack(fill="x", pady=1)
-        self.weight_lbl = tk.Label(w_frame, text="0 / 0", font=("Arial", 8), bg="#f0f0f0", fg="#777")
-        self.weight_lbl.pack(anchor="w")
+        try:
+            from m59_bgf import resolve_bgf_frame_index
+            index = resolve_bgf_frame_index(pose, angle, num_frames, num_groups)
+        except Exception:
+            if num_frames >= 6:
+                index = pose * 6 + angle
+            else:
+                index = max(pose, angle)
+        self.show_bgf_frame(index)
 
-        # Bulk Metric (Right)
-        b_frame = tk.Frame(metrics_frame, bg="#f0f0f0")
-        b_frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
-        tk.Label(b_frame, text="Bulk Volume", font=("Arial", 8, "bold"), bg="#f0f0f0", fg="#666").pack(anchor="w")
-        self.bulk_bar_canvas = tk.Canvas(b_frame, height=self.scale_px(8), bg="#eee", highlightthickness=0)
-        self.bulk_bar_canvas.pack(fill="x", pady=1)
-        self.bulk_lbl = tk.Label(b_frame, text="0 / 0", font=("Arial", 8), bg="#f0f0f0", fg="#777")
-        self.bulk_lbl.pack(anchor="w")
+    def show_bgf_frame(self, index):
+        """Displays frame at given index on BGF viewer canvas."""
+        if not getattr(self, 'current_bgf_image_pixmaps', None):
+            return
+        num_frames = len(self.current_bgf_image_pixmaps)
+        if index < 0:
+            index = 0
+        elif index >= num_frames:
+            index = num_frames - 1
+        pix = self.current_bgf_image_pixmaps[index]
+        if pix and not pix.isNull():
+            scaled = pix.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.kb_bgf_canvas.setPixmap(scaled)
+            pose = self.kb_bgf_pose_slider.value()
+            angle = self.kb_bgf_angle_slider.value()
+            num_groups = getattr(self, 'current_bgf_num_groups', 1)
+            if num_frames >= 6:
+                is_dir_major = num_groups == 6 or (num_frames in (12, 18, 24) and num_groups > 1)
+                scheme_str = "Dir-Major" if is_dir_major else "Angle-Major"
+                self.kb_bgf_info_lbl.setText(f"Pose: {pose} | Angle: {angle*60}° ({angle}/5) | Frame: {index+1}/{num_frames} [{scheme_str}]")
+            else:
+                self.kb_bgf_info_lbl.setText(f"Angle: {angle} | Frame: {index+1}/{num_frames}")
+        else:
+            self.kb_bgf_canvas.setPixmap(QPixmap())
+            self.kb_bgf_canvas.setText("No sprite frame image")
 
-        # --- BOTTOM SECTION: Item List ---
-        list_label = tk.Label(cont, text="CARRIED ITEMS", font=("Arial", 9, "bold"), bg="#f0f0f0", fg="#333")
-        list_label.pack(anchor="w", pady=(10, 5))
+    def update_killbook_ui(self):
+        if not hasattr(self, 'kb_monsters_table') or not hasattr(self, 'kb_players_table'):
+            return
 
-        # Treeview for Inventory with W/B columns
-        self.inv_tree = ttk.Treeview(cont, columns=("Name", "Qty", "W", "B"), show="headings", height=15)
-        self.inv_tree.heading("Name", text="Item Name")
-        self.inv_tree.heading("Qty", text="Qty")
-        self.inv_tree.heading("W", text="W")
-        self.inv_tree.heading("B", text="B")
+        all_time = getattr(self.combat_monitor, 'kill_book', {"monsters": {}, "players": {}})
+        all_mobs = all_time.get("monsters", {}) if isinstance(all_time, dict) else {}
+        all_plys = all_time.get("players", {}) if isinstance(all_time, dict) else {}
 
-        self.inv_tree.column("Name", width=self.scale_px(250), anchor="w")
-        self.inv_tree.column("Qty", width=self.scale_px(60), anchor="center")
-        self.inv_tree.column("W", width=self.scale_px(40), anchor="center")
-        self.inv_tree.column("B", width=self.scale_px(40), anchor="center")
+        session_mobs = self.session_kills.get("monsters", {})
+        session_plys = self.session_kills.get("players", {})
 
-        self.inv_tree.pack(fill="both", expand=True)
+        m_filter = self.kb_monsters_search.text().lower() if hasattr(self, 'kb_monsters_search') else ""
+        p_filter = self.kb_players_search.text().lower() if hasattr(self, 'kb_players_search') else ""
 
-        # Scrollbar
-        sb = ttk.Scrollbar(cont, orient="vertical", command=self.inv_tree.yview)
-        sb.pack(side="right", fill="y")
-        self.inv_tree.configure(yscrollcommand=sb.set)
+        # Populate Monsters
+        self.kb_monsters_table.setRowCount(0)
+        monster_names = sorted(list(set(all_mobs.keys()) | set(session_mobs.keys())))
+        total_m_count = 0
 
-    def update_inventory_ui(self, weight, bulk, w_perc, b_perc, max_cap, detailed_items):
-        """Updates the metrics bars and the item list."""
-        def draw_bar(canvas, perc, h_override=None):
-            canvas.update_idletasks()
-            w = canvas.winfo_width()
-            h = h_override if h_override else canvas.winfo_height()
-            canvas.delete("all")
+        for name in monster_names:
+            at = all_mobs.get(name, 0)
+            se = session_mobs.get(name, 0)
+            total_m_count += max(at, se) if at > 0 else se
 
-            # Colors: Green -> Yellow (80%) -> Red (95%)
-            color = "#4CAF50"
-            if perc > 95: color = "#F44336"
-            elif perc > 80: color = "#FFC107"
+            if m_filter and m_filter not in name.lower():
+                continue
 
-            fill_w = (min(100, perc) / 100.0) * w
-            canvas.create_rectangle(0, 0, fill_w, h, fill=color, outline="")
+            row = self.kb_monsters_table.rowCount()
+            self.kb_monsters_table.insertRow(row)
 
-        # 1. Primary Saturation (the dominant limit)
-        sat_perc = max(w_perc, b_perc)
-        draw_bar(self.sat_bar_canvas, sat_perc)
-        self.sat_lbl.config(text=f"Current Load: {sat_perc:.1f}%")
-        
-        # Update Dock Footer Saturation
-        if hasattr(self, 'dock_inv_lbl'):
-            self.dock_inv_lbl.config(text=f"{sat_perc:.1f}%")
-        if hasattr(self, 'dock_inv_canvas'):
-            draw_bar(self.dock_inv_canvas, sat_perc, h_override=self.scale_px(4))
+            display_name = name.title()
+            self.kb_monsters_table.setItem(row, 0, QTableWidgetItem(display_name))
+            self.kb_monsters_table.setItem(row, 1, QTableWidgetItem(str(at)))
+            self.kb_monsters_table.setItem(row, 2, QTableWidgetItem(f"+{se}" if se > 0 else "0"))
 
-        # 2. Detailed Bars
-        draw_bar(self.weight_bar_canvas, w_perc)
-        draw_bar(self.bulk_bar_canvas, b_perc)
-        self.weight_lbl.config(text=f"{int(weight):,} / {max_cap:,} ({w_perc:.1f}%)")
-        self.bulk_lbl.config(text=f"{int(bulk):,} / {max_cap:,} ({b_perc:.1f}%)")
+            status_str = "🟢 Active Hunt" if se > 0 else "Recorded"
+            self.kb_monsters_table.setItem(row, 3, QTableWidgetItem(status_str))
 
-        # 3. Update Tree
-        for i in self.inv_tree.get_children():
-            self.inv_tree.delete(i)
+        # Populate Players
+        self.kb_players_table.setRowCount(0)
+        player_names = sorted(list(set(all_plys.keys()) | set(session_plys.keys())))
+        total_p_count = 0
 
-        for item in detailed_items:
-            # handle 'qty' key from inventory.process_inventory
-            q = item.get('qty', 1)
-            qty_disp = f"x{q}" if q > 1 or q == 0 else ""
-            self.inv_tree.insert("", "end", values=(item['name'], qty_disp, item['weight'], item['bulk']))
+        for name in player_names:
+            at = all_plys.get(name, 0)
+            se = session_plys.get(name, 0)
+            total_p_count += max(at, se) if at > 0 else se
+
+            if p_filter and p_filter not in name.lower():
+                continue
+
+            row = self.kb_players_table.rowCount()
+            self.kb_players_table.insertRow(row)
+
+            display_name = name.title()
+            self.kb_players_table.setItem(row, 0, QTableWidgetItem(display_name))
+            self.kb_players_table.setItem(row, 1, QTableWidgetItem(str(at)))
+            self.kb_players_table.setItem(row, 2, QTableWidgetItem(f"+{se}" if se > 0 else "0"))
+
+            status_str = "⚔️ PK Defeated" if se > 0 else "Logged"
+            self.kb_players_table.setItem(row, 3, QTableWidgetItem(status_str))
+
+        # Update Badges
+        self.kb_monsters_badge.setText(f"{total_m_count} Monsters Slain")
+        self.kb_players_badge.setText(f"{total_p_count} Players Defeated")
+        self.kb_total_badge.setText(f"{total_m_count + total_p_count} Total Victories")
+
+    # ==================================================================
+    # INVENTORY SCRAPER & METRICS CALCULATIONS ENGINE
+    # ==================================================================
+    def set_progress_bar_color(self, bar, perc):
+        val = int(min(100, max(0, perc)))
+        bar.setValue(val)
+        if perc > 95:
+            chunk_col = "#ef4444"
+        elif perc > 80:
+            chunk_col = "#f59e0b"
+        else:
+            chunk_col = "#64748b"
+
+        bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: #030712;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                text-align: center;
+                color: #f8fafc;
+                font-size: 10px;
+                font-weight: 800;
+            }}
+            QProgressBar::chunk {{
+                background-color: {chunk_col};
+                border-radius: 5px;
+            }}
+        """)
+
+    def categorize_item(self, item_name):
+        name_l = item_name.lower()
+        if any(k in name_l for k in ["herb", "reagent", "flower", "root", "leaf", "mushroom", "heartstone", "blood", "powder", "berry"]):
+            return "🧪 Reagents"
+        if any(k in name_l for k in ["potion", "flask", "vial", "bottle", "elixir", "draught", "brew"]):
+            return "🍷 Potions"
+        if any(k in name_l for k in ["sword", "scimitar", "dagger", "axe", "hammer", "mace", "bow", "wand", "staff", "spear", "crossbow", "bonkstick"]):
+            return "⚔️ Weapons"
+        if any(k in name_l for k in ["robe", "shirt", "pants", "armor", "shield", "helm", "gauntlet", "boots", "cape", "ring", "amulet", "mask", "plate", "chain", "leather", "scale"]):
+            return "🛡️ Armor"
+        if any(k in name_l for k in ["pie", "meat", "bread", "apple", "soup", "stew", "grapes", "cheese", "wine", "ale", "fish"]):
+            return "🍖 Food & Drink"
+        if any(k in name_l for k in ["shilling", "gem", "ruby", "emerald", "sapphire", "diamond", "gold"]):
+            return "💎 Treasures"
+        return "📦 General"
 
     def poll_inventory(self):
-        """Background thread to poll inventory every 3 seconds using inventory.py logic."""
-        if not self.is_running: return
-
+        """Polls inventory from live memory via InventoryScraper."""
         if self.inventory_scraper and self.target_pid:
             try:
-                # 1. Get raw items using the robust pymem scraper
                 raw_items = self.inventory_scraper.scan_inventory()
-                if raw_items is not None:
-                    # 2. Map for inventory.process_inventory
-                    # Needs 'id', 'name', 'amount'
-                    # Fix: If qty is 0, it means it's a single item (non-stackable). Treat as 1.
+                if raw_items is not None and process_inventory:
                     calc_items = []
                     for i in raw_items:
                         qty = i['qty'] if i['qty'] > 0 else 1
                         calc_items.append({'id': '0', 'name': i['name'], 'amount': qty})
-                    
-                    # 3. Process using logic from inventory.py
-                    weight, bulk, detailed, unknowns = inventory.process_inventory(calc_items)
-                    
-                    # 4. Calculate Max Capacity based on Live Might stat
-                    # Formula: 1700 (Base) + (Might * 20)
-                    might = self.current_attributes.get("Might", 25)
-                    max_cap = 1700 + (int(might) * 20)
-                    
-                    # 5. Percentages
-                    w_perc = (weight / max_cap) * 100 if max_cap > 0 else 0
-                    b_perc = (bulk / max_cap) * 100 if max_cap > 0 else 0
-                    
-                    # Update UI
-                    self.after(0, lambda: self.update_inventory_ui(weight, bulk, w_perc, b_perc, max_cap, detailed))
+
+                    weight, bulk, detailed, unknowns = process_inventory(calc_items)
+
+                    might = self.attributes.get("Might", 25)
+                    try:
+                        might_val = int(might)
+                    except (ValueError, TypeError):
+                        might_val = 25
+
+                    max_cap = 1700 + (might_val * 20)
+                    w_perc = (weight / max_cap) * 100 if max_cap > 0 else 0.0
+                    b_perc = (bulk / max_cap) * 100 if max_cap > 0 else 0.0
+
+                    self.update_inventory_ui(weight, bulk, w_perc, b_perc, max_cap, detailed)
             except Exception as e:
-                logger.error(f"Inventory poll error: {e}")
+                print(f"[M59-INV] Exception polling inventory: {e}", flush=True)
 
+    def update_inventory_ui(self, weight, bulk, w_perc, b_perc, max_cap, detailed_items):
+        self.inv_weight = weight
+        self.inv_bulk = bulk
+        self.inv_w_perc = w_perc
+        self.inv_b_perc = b_perc
+        self.inv_max_cap = max_cap
+        self.inventory_items = detailed_items
 
-        # Poll every 3 seconds
-        self.after(3000, self.poll_inventory)
+        sat_perc = max(w_perc, b_perc)
+        self.inv_sat_perc = sat_perc
 
+        # 1. Update Header Badges
+        if hasattr(self, 'inv_sat_badge'):
+            self.inv_sat_badge.setText(f"{sat_perc:.1f}% Saturation")
+            self.inv_weight_badge.setText(f"{int(weight):,} / {max_cap:,} W")
+            self.inv_bulk_badge.setText(f"{int(bulk):,} / {max_cap:,} B")
+            self.inv_count_badge.setText(f"{len(detailed_items)} Items Carried")
 
-    def setup_tab_communications(self):
-        paned = ttk.PanedWindow(self.tab_comms, orient=tk.HORIZONTAL)
-        paned.pack(fill="both", expand=True, padx=5, pady=5)
-        
-        sidebar = tk.Frame(paned, bg="#f0f0f0")
-        paned.add(sidebar, weight=1)
-        
-        # --- Sidebar Header ---
-        tk.Label(sidebar, text=" CHAT LOGS ", font=("Arial", 9, "bold"), bg="#ddd").pack(fill="x", pady=(0, 5))
-        
-        # Return to Live Button
-        self.live_feed_btn = tk.Button(sidebar, text=" 🟢 LIVE STREAM ", command=self.return_to_live,
-                                       bg="#E8F5E9", font=("Arial", 8, "bold"), pady=8)
-        self.live_feed_btn.pack(fill="x", padx=5, pady=5)
+        # 2. Update Graphs & Capacity Meters
+        if hasattr(self, 'sat_val_lbl'):
+            self.sat_val_lbl.setText(f"{sat_perc:.1f}%")
+            self.set_progress_bar_color(self.sat_bar, sat_perc)
+            dominant = "WEIGHT" if w_perc >= b_perc else "BULK"
+            self.sat_sub_lbl.setText(f"Max Cap: {max_cap:,} | Dominant: {dominant}")
 
-        # Scrollable Listbox for logs
-        list_f = tk.Frame(sidebar, bg="#f0f0f0")
-        list_f.pack(fill="both", expand=True, padx=5, pady=(10, 0))
-        
-        self.log_file_list = tk.Listbox(list_f, font=("Arial", 9), height=15)
-        self.log_file_list.pack(side="left", fill="both", expand=True)
-        self.log_file_list.bind("<<ListboxSelect>>", self.load_historical_log)
-        
-        sb = ttk.Scrollbar(list_f, orient="vertical", command=self.log_file_list.yview)
-        sb.pack(side="right", fill="y")
-        self.log_file_list.config(yscrollcommand=sb.set)
-        
-        btn_row = tk.Frame(sidebar, bg="#f0f0f0")
-        btn_row.pack(fill="x", padx=5, pady=5)
-        tk.Button(btn_row, text="Refresh", command=self.refresh_log_list, font=("Arial", 8)).pack(side="left", fill="x", expand=True)
-        tk.Button(btn_row, text="Folder", command=lambda: os.startfile(os.path.abspath("settings")),
-                  font=("Arial", 8)).pack(side="left", fill="x", expand=True, padx=2)
-        
-        right_frame = tk.Frame(paned, bg="#f0f0f0")
-        paned.add(right_frame, weight=4)
+            self.weight_val_lbl.setText(f"{int(weight):,} / {max_cap:,} Stone ({w_perc:.1f}%)")
+            self.set_progress_bar_color(self.weight_bar, w_perc)
+            self.weight_sub_lbl.setText(f"{max(0, max_cap - int(weight)):,} Stone Capacity Remaining")
 
-        # --- SMART CHAT RIBBON ---
-        self.ribbon_frame = tk.Frame(right_frame, bg="#e0e0e0", pady=2)
-        self.ribbon_frame.pack(fill="x", padx=5, pady=(0, 5))
-        
-        self.pills_container = tk.Frame(self.ribbon_frame, bg="#e0e0e0")
-        self.pills_container.pack(side="left", fill="x", expand=True)
-        
-        self.render_ribbon_pills()
-        
-        # Add Filter Button
-        tk.Button(self.ribbon_frame, text=" + ", font=("Arial", 9, "bold"), bg="#4CAF50", fg="white", 
-                  relief=tk.FLAT, command=self.show_add_filter_dialog).pack(side="left", padx=5)
+            self.bulk_val_lbl.setText(f"{int(bulk):,} / {max_cap:,} Vol ({b_perc:.1f}%)")
+            self.set_progress_bar_color(self.bulk_bar, b_perc)
+            self.bulk_sub_lbl.setText(f"{max(0, max_cap - int(bulk)):,} Vol Capacity Remaining")
 
-        # Quick Search
-        search_f = tk.Frame(self.ribbon_frame, bg="#e0e0e0")
-        search_f.pack(side="right", padx=10)
-        tk.Label(search_f, text="🔍", bg="#e0e0e0").pack(side="left")
-        tk.Entry(search_f, textvariable=self.search_var, width=20).pack(side="left", padx=5)
+        # 3. Update Carried Items Table
+        self.filter_inventory_table()
 
-        self.comms_header_lbl = tk.Label(right_frame, text="🟢 LIVE STREAM", font=("Arial", 11, "bold"), fg="#2E7D32", bg="#f0f0f0")
-        self.comms_header_lbl.pack(pady=2)
-        
-        self.comms_view = scrolledtext.ScrolledText(right_frame, bg="black", fg="#00FFFF", font=("Consolas", 10), state="disabled")
-        self.comms_view.pack(fill="both", expand=True, padx=5, pady=5)
+        # 4. Update Dock Panel Cards
+        if hasattr(self, 'dock_inv_sat_lbl'):
+            self.dock_inv_sat_lbl.setText(f"{sat_perc:.1f}%")
+            self.set_progress_bar_color(self.dock_inv_bar, sat_perc)
+            self.dock_inv_weight_lbl.setText(f"W: {int(weight):,} / {max_cap:,}")
+            self.dock_inv_bulk_lbl.setText(f"B: {int(bulk):,} / {max_cap:,}")
+            self.dock_inv_count_lbl.setText(f"{len(detailed_items)} Carried Items")
 
-    def render_ribbon_pills(self):
-        """Dynamic rendering of toggleable pills in the ribbon."""
-        for widget in self.pills_container.winfo_children():
-            widget.destroy()
-        
-        self.pill_buttons = {}
-        
-        # 1. THE "ALL" PILL
-        all_state = self.filter_vars.get("Show All")
-        btn = tk.Button(self.pills_container, text=" ALL ", font=("Arial", 8, "bold"),
-                        relief=tk.FLAT, padx=10,
-                        command=lambda: self.toggle_filter_pill("Show All"))
-        btn.pack(side="left", padx=2)
-        self.pill_buttons["Show All"] = btn
-        
-        # 2. DYNAMIC CATEGORY PILLS
-        for cat in sorted(self.filter_data.keys()):
-            if cat == "Show All": continue
-            
-            p_frame = tk.Frame(self.pills_container, bg="#e0e0e0")
-            p_frame.pack(side="left", padx=2)
-            
-            btn = tk.Button(p_frame, text=f" {cat} ", font=("Arial", 8),
-                            relief=tk.FLAT, padx=8,
-                            command=lambda c=cat: self.toggle_filter_pill(c))
-            btn.pack(side="left")
-            self.pill_buttons[cat] = btn
-            
-            # Delete button for custom filters
-            del_btn = tk.Button(p_frame, text="×", font=("Arial", 8, "bold"),
-                                fg="#888", bg="#e0e0e0", relief=tk.FLAT, bd=0,
-                                command=lambda c=cat: self.delete_filter_category(c))
-            del_btn.pack(side="left")
+    def filter_inventory_table(self):
+        if not hasattr(self, 'inv_table'):
+            return
 
-        self.update_pill_visuals()
+        query = self.inv_search_input.text().lower().strip() if hasattr(self, 'inv_search_input') else ""
+        self.inv_table.setRowCount(0)
 
-    def toggle_filter_pill(self, cat):
-        """Smart toggle logic for pills."""
-        if cat == "Show All":
-            # Reset everything
-            self.filter_vars["Show All"].set(True)
-            for c, var in self.filter_vars.items():
-                if c != "Show All": var.set(False)
-        else:
-            # Unset ALL if a specific category is picked
-            self.filter_vars["Show All"].set(False)
-            current = self.filter_vars[cat].get()
-            self.filter_vars[cat].set(not current)
-            
-            # If nothing is selected now, return to ALL
-            any_active = any(v.get() for k, v in self.filter_vars.items() if k != "Show All")
-            if not any_active:
-                self.filter_vars["Show All"].set(True)
+        for item in self.inventory_items:
+            name = item.get('name', 'Unknown')
+            if query and query not in name.lower():
+                continue
 
-        self.update_pill_visuals()
-        self.refresh_comms_view()
+            qty = item.get('qty', 1)
+            w = item.get('weight', 0)
+            b = item.get('bulk', 0)
+            qty_str = f"x{qty}" if qty > 1 else "1"
 
-    def update_pill_visuals(self):
-        """Applies coloring to pills based on active state."""
-        for cat, btn in self.pill_buttons.items():
-            if self.filter_vars[cat].get():
-                btn.config(bg="#2196F3", fg="white") # Active Blue
-            else:
-                btn.config(bg="#ccc", fg="#333")    # Inactive Grey
+            row = self.inv_table.rowCount()
+            self.inv_table.insertRow(row)
 
-    def show_add_filter_dialog(self):
-        """Popup with multi-line rule entry."""
-        popup = tk.Toplevel(self)
-        popup.title("Add Chat Filter")
-        popup.geometry("400x450")
-        popup.attributes("-topmost", True)
-        popup.grab_set()
+            self.inv_table.setItem(row, 0, QTableWidgetItem(name.title()))
+            self.inv_table.setItem(row, 1, QTableWidgetItem(qty_str))
+            self.inv_table.setItem(row, 2, QTableWidgetItem(str(w)))
+            self.inv_table.setItem(row, 3, QTableWidgetItem(str(b)))
+            self.inv_table.setItem(row, 4, QTableWidgetItem(str(w + b)))
 
-        tk.Label(popup, text="Filter Name:", font=("Arial", 9, "bold")).pack(pady=(10, 0))
-        name_entry = tk.Entry(popup, width=30)
-        name_entry.pack(pady=5)
-        name_entry.focus_set()
+    # ==================================================================
+    # SECTION: SCHOOL PROGRESSION PAGE & METRICS
+    # ==================================================================
+    def build_progression_page(self):
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(20, 20, 20, 20)
+        page_layout.setSpacing(14)
 
-        tk.Label(popup, text="Keywords / Rules (One per line):", font=("Arial", 9, "bold")).pack(pady=(10, 0))
-        rules_text = tk.Text(popup, width=40, height=15)
-        rules_text.pack(padx=20, pady=5)
-        tk.Label(popup, text="Matches are case-insensitive. Use {*} for wildcards.", font=("Arial", 8, "italic"), fg="#888").pack()
+        # Header Frame
+        hdr_frame = QFrame()
+        hdr_frame.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px;")
+        hdr_layout = QHBoxLayout(hdr_frame)
+        hdr_layout.setContentsMargins(8, 8, 8, 8)
+        hdr_layout.setSpacing(12)
 
-        def save():
-            name = name_entry.get().strip()
-            if not name:
-                messagebox.showerror("Error", "Please provide a name.", parent=popup)
-                return
-            
-            raw_rules = rules_text.get("1.0", tk.END).splitlines()
-            rules = [r.strip() for r in raw_rules if r.strip()]
-            
-            if not rules:
-                messagebox.showerror("Error", "Please provide at least one rule.", parent=popup)
-                return
+        icon_lbl = QLabel("📜")
+        icon_lbl.setStyleSheet("font-size: 24px;")
+        hdr_layout.addWidget(icon_lbl)
 
-            self.filter_data[name] = rules
-            self.filter_vars[name] = tk.BooleanVar(value=True)
-            # Switch to the new filter immediately
-            self.toggle_filter_pill(name)
-            
-            # Persist and refresh UI
-            self.save_filters_to_disk()
-            self.render_ribbon_pills()
-            popup.destroy()
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+        t_lbl = QLabel("Real-time School Progression Goals")
+        t_lbl.setStyleSheet("font-size: 16px; font-weight: 900; color: #f8fafc;")
+        s_lbl = QLabel("Calculates Meridian 59 spell & skill level thresholds, goal sums, and remaining percentages needed to advance.")
+        s_lbl.setStyleSheet("font-size: 11px; color: #94a3b8;")
+        title_box.addWidget(t_lbl)
+        title_box.addWidget(s_lbl)
+        hdr_layout.addLayout(title_box, 1)
 
-        btn_f = tk.Frame(popup)
-        btn_f.pack(fill="x", pady=20)
-        tk.Button(btn_f, text=" CANCEL ", command=popup.destroy).pack(side="left", padx=40)
-        tk.Button(btn_f, text=" SAVE FILTER ", bg="#4CAF50", fg="white", font=("Arial", 9, "bold"), command=save).pack(side="right", padx=40)
+        self.full_prog_active_badge = QLabel("0 Active Schools")
+        self.full_prog_active_badge.setStyleSheet("background-color: #0c4a6e; color: #38bdf8; font-size: 11px; font-weight: 800; padding: 6px 12px; border-radius: 6px; border: 1px solid #0284c7;")
+        hdr_layout.addWidget(self.full_prog_active_badge)
 
-    def delete_filter_category(self, cat):
-        if messagebox.askyesno("Delete", f"Permanently delete filter '{cat}'?"):
-            self.filter_data.pop(cat, None)
-            self.filter_vars.pop(cat, None)
-            self.pill_buttons.pop(cat, None)
-            
-            # Default back to ALL if we deleted an active filter
-            if not any(v.get() for k, v in self.filter_vars.items()):
-                self.filter_vars["Show All"].set(True)
+        self.full_prog_known_badge = QLabel("0 Abilities Known")
+        self.full_prog_known_badge.setStyleSheet("background-color: #1e1b4b; color: #a78bfa; font-size: 11px; font-weight: 800; padding: 6px 12px; border-radius: 6px; border: 1px solid #6366f1;")
+        hdr_layout.addWidget(self.full_prog_known_badge)
 
-            self.save_filters_to_disk()
-            self.render_ribbon_pills()
-            self.refresh_comms_view()
+        self.prog_sample_btn = QPushButton("⚡ Load Sample Data")
+        self.prog_sample_btn.setProperty("class", "WebBtnSecondary")
+        self.prog_sample_btn.setToolTip("Loads realistic Meridian 59 spell and skill training data for testing")
+        self.prog_sample_btn.clicked.connect(self.load_sample_knowledge)
+        hdr_layout.addWidget(self.prog_sample_btn)
 
-    def save_filters_to_disk(self):
-        """Saves dynamic filters back to m59_filters.json."""
+        self.full_prog_sync_btn = QPushButton("🔄 Sync All (Tab Dance)")
+        self.full_prog_sync_btn.setProperty("class", "WebBtnPrimary")
+        self.full_prog_sync_btn.setToolTip("Triggers live memory scrape to read latest spell & skill knowledge from game client")
+        self.full_prog_sync_btn.clicked.connect(self.trigger_manual_sync)
+        hdr_layout.addWidget(self.full_prog_sync_btn)
+
+        page_layout.addWidget(hdr_frame)
+
+        # Full Progression Tree Card
+        card_frame = QFrame()
+        card_frame.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; border-radius: 8px;")
+        card_layout = QVBoxLayout(card_frame)
+        card_layout.setContentsMargins(12, 12, 12, 12)
+        card_layout.setSpacing(10)
+
+        # Controls & Filter Bar
+        ctrl_bar = QHBoxLayout()
+        ctrl_bar.setContentsMargins(0, 0, 0, 0)
+        ctrl_bar.setSpacing(10)
+
+        self.prog_search_input = QLineEdit()
+        self.prog_search_input.setPlaceholderText("Filter by school name or ability (e.g. Slash, Kraanan)...")
+        self.prog_search_input.setFixedWidth(280)
+        self.prog_search_input.textChanged.connect(lambda: self.update_progression_ui())
+        ctrl_bar.addWidget(self.prog_search_input)
+
+        # Intellect Selector
+        int_lbl = QLabel("Intellect:")
+        int_lbl.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 11px;")
+        ctrl_bar.addWidget(int_lbl)
+
+        self.prog_intellect_spin = QSpinBox()
+        self.prog_intellect_spin.setRange(1, 50)
+        self.prog_intellect_spin.setValue(25)
+        self.prog_intellect_spin.setFixedWidth(55)
+        self.prog_intellect_spin.setStyleSheet("""
+            QSpinBox {
+                background-color: #0f172a;
+                color: #38bdf8;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 3px;
+                font-weight: bold;
+            }
+        """)
+        self.prog_intellect_spin.valueChanged.connect(lambda: self.update_progression_ui())
+        ctrl_bar.addWidget(self.prog_intellect_spin)
+
+        self.prog_expand_btn = QPushButton("Expand All")
+        self.prog_expand_btn.setProperty("class", "WebBtnSecondary")
+        self.prog_expand_btn.clicked.connect(lambda: self.full_prog_tree.expandAll())
+        ctrl_bar.addWidget(self.prog_expand_btn)
+
+        self.prog_collapse_btn = QPushButton("Collapse All")
+        self.prog_collapse_btn.setProperty("class", "WebBtnSecondary")
+        self.prog_collapse_btn.clicked.connect(lambda: self.full_prog_tree.collapseAll())
+        ctrl_bar.addWidget(self.prog_collapse_btn)
+
+        self.prog_clear_btn = QPushButton("🧹 Clear")
+        self.prog_clear_btn.setProperty("class", "WebBtnSecondary")
+        self.prog_clear_btn.setToolTip("Clear knowledge cache")
+        self.prog_clear_btn.clicked.connect(self.clear_knowledge_cache)
+        ctrl_bar.addWidget(self.prog_clear_btn)
+
+        ctrl_bar.addStretch()
+        card_layout.addLayout(ctrl_bar)
+
+        # Main QTreeWidget for Full Progression Page
+        # Matching original dashboard columns: School / Ability, Level, Sum, Goal, Needed
+        self.full_prog_tree = QTreeWidget()
+        self.full_prog_tree.setHeaderLabels(["SCHOOL / ABILITY", "LEVEL", "SUM", "GOAL", "NEEDED"])
+        self.full_prog_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.full_prog_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.full_prog_tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.full_prog_tree.header().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.full_prog_tree.header().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.full_prog_tree.setStyleSheet("""
+            QTreeWidget {
+                background-color: #030712;
+                color: #f8fafc;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QHeaderView::section {
+                background-color: #0f172a;
+                color: #94a3b8;
+                font-size: 11px;
+                font-weight: 800;
+                padding: 6px;
+                border: 1px solid #1e293b;
+            }
+            QTreeWidget::item {
+                padding: 4px 2px;
+            }
+            QTreeWidget::item:selected {
+                background-color: #1e293b;
+                color: #38bdf8;
+            }
+        """)
+        card_layout.addWidget(self.full_prog_tree, 1)
+
+        page_layout.addWidget(card_frame, 1)
+        return page
+
+    def save_knowledge_cache(self):
+        """Persists knowledge cache to JSON settings file."""
         try:
-            with open("settings/m59_filters.json", "w") as f:
-                json.dump(self.filter_data, f, indent=2)
+            os.makedirs("settings", exist_ok=True)
+            if self.char_name and self.char_name != "--":
+                sn = get_safe_name(self.char_name)
+                with open(f"settings/{sn}_knowledge.json", "w", encoding="utf-8") as f:
+                    json.dump(self.knowledge_cache, f, indent=2)
+            with open("settings/last_knowledge.json", "w", encoding="utf-8") as f:
+                json.dump(self.knowledge_cache, f, indent=2)
         except Exception as e:
-            logger.error(f"Failed to save filters: {e}")
+            print(f"[M59-PROG] Error saving knowledge cache: {e}", flush=True)
 
-    def is_line_filtered(self, line):
-        """Returns True if the line should be shown based on inclusive OR logic + Search."""
-        if not self.filters_enabled.get():
-            return False
-
-        line_lower = line.lower()
-        
-        # 1. Check Search Bar (Global constraint)
-        search_term = self.search_var.get().lower()
-        if search_term and search_term not in line_lower:
-            return False
-
-        # 2. Check "Show All" override
-        if self.filter_vars.get("Show All") and self.filter_vars["Show All"].get():
-            return True
-        
-        # 3. Check active categories (Inclusive OR)
-        for cat, var in self.filter_vars.items():
-            if cat == "Show All": continue
-            if var.get():
-                keywords = self.filter_data.get(cat, [])
-                for kw in keywords:
-                    kw_lower = kw.lower()
-                    if "{*}" in kw_lower:
-                        # Convert wildcard to regex: escape specials, then replace {*} with .*?
-                        pattern = re.escape(kw_lower).replace(r"\{\*\}", ".*?")
-                        if re.search(pattern, line_lower):
-                            return True
-                    elif kw_lower in line_lower:
-                        # Fast literal match
-                        return True
-        
-        return False
-
-    def refresh_comms_view(self):
-        """Instant UI re-render triggered by filter toggles. High-performance batch insertion."""
-        # Determine target file
-        if self.comms_mode == "live":
-            if self.char_name == "Unknown": return
-            safe_n = get_safe_name(self.char_name)
-            path = os.path.join("settings", f"{safe_n}_chat.log")
-        else:
-            selection = self.log_file_list.curselection()
-            if not selection: return
-            path = os.path.join("settings", self.log_file_list.get(selection[0]))
-
-        if not os.path.exists(path): return
-
-        try:
-            # Optimized read: grab last ~2000 lines for instant feedback
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                # Read large block from end for speed
-                f.seek(0, os.SEEK_END)
-                size = f.tell()
-                # Read up to 256KB or entire file
-                read_size = min(size, 256 * 1024)
-                f.seek(size - read_size)
-                lines = f.readlines()
-                # If we read a partial first line, drop it
-                if len(lines) > 1 and size > read_size:
-                    lines = lines[1:]
-
-            # Filter lines in memory
-            to_insert = [l for l in lines if self.is_line_filtered(l)]
-
-            # Batch update UI
-            self.comms_view.config(state="normal")
-            self.comms_view.delete("1.0", tk.END)
-            self.comms_view.insert(tk.END, "".join(to_insert))
-            self.comms_view.see(tk.END)
-            self.comms_view.config(state="disabled")
-            
-            # Reset the live pointer to the end of the file so tailing continues correctly
-            if self.comms_mode == "live":
-                self._log_ptr = size
-
-        except Exception as e:
-            logger.error(f"Refresh Error: {e}")
-    def is_combat_line(self, line):
-        """Internal helper for combat tracking; separate from UI filtering."""
-        l = line.lower()
-        
-        # 1. Explicit Kill Check (Highest Priority)
-        if l.startswith("you killed "):
-            return True
-            
-        # 2. Verb-based combat detection
-        for verb in self.combat_verbs:
-            if f" {verb} " in l or l.endswith(f" {verb}."):
-                return True
-        
-        # 3. Defensive/Miss detection
-        if l.startswith("you ") and any(v in l for v in ["block", "dodge", "parry", "avoid", "resist", "evade"]):
-            return True
-        
-        # 4. Incoming hit/miss pattern support
-        if " you with " in l or "'s attack" in l:
-            return True
-            
-        return False
-
-    def load_settings(self):
-        if os.path.exists(SETTINGS_FILE):
-            try:
-                with open(SETTINGS_FILE, "r") as f:
-                    s = json.load(f)
-                    if s.get("geometry"):
-                        self.geometry(s["geometry"])
-                    self.pk_alert_enabled.set(s.get("pk_alert_enabled", True))
-                    self.pk_sound_enabled.set(s.get("pk_sound_enabled", True))
-                    self.pk_frame_enabled.set(s.get("pk_frame_enabled", True))
-                    self.pk_sound_path.set(s.get("pk_sound_path", "sound/alert.wav"))
-                    self.tell_sound_enabled.set(s.get("tell_sound_enabled", True))
-                    self.tell_sound_path.set(s.get("tell_sound_path", "sound/dm_chime.mp3"))
-                    self.elusion_phrase.set(s.get("elusion_phrase", 'say "I wish to travel to {loc}."'))
-                    self.elusion_geometry.set(s.get("elusion_geometry", "320x35+100+100"))
-                    self.guildhall_name.set(s.get("guildhall_name", ""))
-                    self.custom_elusion_phrases = s.get("custom_elusion_phrases", [])
-                    self.debug_enabled.set(s.get("debug_enabled", False))
-                    self.who_list_side.set(s.get("who_list_side", "Right"))
-                    self.who_list_width.set(s.get("who_list_width", 250))
-                    self.game_time_mode_24h.set(s.get("game_time_mode_24h", True))
-                    
-                    # Force Who List to be in-app on startup (don't remember desktop dock)
-                    self.who_list_docked.set(False)
-                    
-                    # Restore Filters Enabled State
-                    self.filters_enabled.set(s.get("filters_enabled", True))
-                    
-                    # Restore Filter Category States
-                    fs = s.get("filter_states", {})
-                    for cat, val in fs.items():
-                        if cat in self.filter_vars:
-                            self.filter_vars[cat].set(val)
-            except Exception as e:
-                logger.error(f"Failed to load settings: {e}")
-
-    def save_settings(self):
-        try:
-            # Prepare filter states for JSON
-            fs_save = {cat: var.get() for cat, var in self.filter_vars.items()}
-            
-            with open(SETTINGS_FILE, "w") as f:
-                json.dump({
-                    "geometry": self.geometry(),
-                    "pk_alert_enabled": self.pk_alert_enabled.get(),
-                    "pk_sound_enabled": self.pk_sound_enabled.get(),
-                    "pk_frame_enabled": self.pk_frame_enabled.get(),
-                    "pk_sound_path": self.pk_sound_path.get(),
-                    "tell_sound_enabled": self.tell_sound_enabled.get(),
-                    "tell_sound_path": self.tell_sound_path.get(),
-                    "elusion_phrase": self.elusion_phrase.get(),
-                    "elusion_geometry": self.elusion_geometry.get(),
-                    "guildhall_name": self.guildhall_name.get(),
-                    "custom_elusion_phrases": self.custom_elusion_phrases,
-                    "debug_enabled": self.debug_enabled.get(),
-                    "who_list_docked": self.who_list_docked.get(),
-                    "who_list_side": self.who_list_side.get(),
-                    "game_time_mode_24h": self.game_time_mode_24h.get(),
-                    "filters_enabled": self.filters_enabled.get(),
-                    "filter_states": fs_save
-                }, f)
-        except Exception as e:
-            logger.error(f"Failed to save settings: {e}")
-
-    def debug_log(self, category, message):
-        """Wrapper for centralized logging, keeping the legacy category-based signature."""
-        logger.debug(f"[{category}] {message}")
-
-    def gps_log(self, message):
-        if self.debug_enabled.get():
-            self.debug_log("GPS", message)
-
-    def setup_who_list_panel(self, parent=None):
-        # Cleanup existing panel if it exists
-        self.hide_tooltip()
-        if hasattr(self, "who_list_panel") and self.who_list_panel:
-            try: self.who_list_panel.destroy()
-            except: pass
-
-        # Use main_container if no parent is provided
-        target_parent = parent if parent else self.main_container
-        
-        # Outer container to hold the resize handle and the content
-        self.who_list_outer = tk.Frame(target_parent, bg="#1e1f22", bd=0)
-        if parent:
-            self.who_list_outer.pack(fill="both", expand=True)
-
-        # RESIZE HANDLE (Draggable line)
-        if self.who_list_docked.get():
-            self.resize_handle = tk.Frame(self.who_list_outer, bg="#323338", width=4, cursor="sb_h_double_arrow")
-            self.resize_handle.pack(side="left", fill="y")
-            
-            def start_resize(event):
-                self._drag_start_x = event.x_root
-                self._start_width = self.who_list_width.get()
-
-            def perform_resize(event):
-                dx = self._drag_start_x - event.x_root
-                new_w = self._start_width + dx
-                new_w = max(180, min(600, new_w)) # Hard limits
-                self.who_list_width.set(new_w)
-                self.update_appbar_pos(new_w)
-                
-            self.resize_handle.bind("<Button-1>", start_resize)
-            self.resize_handle.bind("<B1-Motion>", perform_resize)
-            self.resize_handle.bind("<ButtonRelease-1>", lambda e: self.save_settings())
-
-        # Premium dark slate themed container
-        self.who_list_panel = tk.Frame(self.who_list_outer, bg="#2b2d31", bd=1, relief=tk.SOLID)
-        self.who_list_panel.pack(side="left", fill="both", expand=True)
-        
-        # Polished Title Header
-        self.who_list_header = tk.Frame(self.who_list_panel, bg="#1e1f22")
-        self.who_list_header.pack(fill="x", side="top")
-        
-        tk.Label(
-            self.who_list_header, text="M59 Companion", font=("Segoe UI", 10, "bold"), 
-            bg="#1e1f22", fg="#4CAF50", pady=7, bd=0
-        ).pack(side="left", padx=10)
-        
-        # Game Time Row
-        self.time_frame = tk.Frame(self.who_list_panel, bg="#1e1f22")
-        self.time_frame.pack(fill="x", side="top")
-        
-        self.game_time_lbl = tk.Label(
-            self.time_frame, text="Game Time: --:--:--", font=("Segoe UI", 9),
-            bg="#1e1f22", fg="#e0e0e0"
-        )
-        self.game_time_lbl.pack(side="left", padx=10, pady=2)
-        
-        self.game_time_toggle_btn = tk.Button(
-            self.time_frame, text="12/24", font=("Segoe UI", 8, "bold"),
-            bg="#323338", fg="#fff", activebackground="#2b2d31", activeforeground="#fff",
-            bd=0, padx=5, pady=1, cursor="hand2", command=self.toggle_game_time_mode
-        )
-        self.game_time_toggle_btn.pack(side="right", padx=10, pady=2)
-
-        # Separator under Game Time
-        tk.Frame(self.who_list_panel, height=1, bg="#323338").pack(fill="x", side="top")
-
-        # Who's Online Label
-        tk.Label(
-            self.who_list_panel, text="[Who's Online]", font=("Segoe UI", 9, "bold"),
-            bg="#2b2d31", fg="#888", anchor="w"
-        ).pack(fill="x", side="top", padx=10, pady=(5, 0))
-        
-        # Dock/Toggle Button
-        dock_text = "↙" if self.who_list_docked.get() else "↗"
-        self.who_dock_btn = tk.Button(
-            self.who_list_header, text=dock_text, font=("Segoe UI", 12, "bold"),
-            bg="#1e1f22", fg="#888", activebackground="#323338", activeforeground="#fff",
-            bd=0, padx=10, cursor="hand2", command=self.toggle_who_list_dock
-        )
-        self.who_dock_btn.pack(side="right")
-        self.who_dock_btn.bind("<Enter>", lambda e: self.who_dock_btn.config(bg="#323338", fg="#fff"), add="+")
-        self.who_dock_btn.bind("<Leave>", lambda e: self.who_dock_btn.config(bg="#1e1f22", fg="#888"), add="+")
-        
-        tip_text = "Return to Application" if self.who_list_docked.get() else "Pop out to Desktop Dock"
-        self.set_tooltip(self.who_dock_btn, tip_text)
-
-        # 1. BOTTOM SECTION (Pack these first to pin to bottom)
-        self.who_list_count_lbl = tk.Label(
-            self.who_list_panel, text="0 Online", font=("Segoe UI", 9, "bold"), 
-            bg="#1e1f22", fg="#888", pady=5, bd=0
-        )
-        self.who_list_count_lbl.pack(side="bottom", fill="x")
-
-        # Separator above dynamic player count
-        tk.Frame(self.who_list_panel, height=1, bg="#323338").pack(side="bottom", fill="x")
-
-        # Status Footer
-        footer_bg = "#1e1f22"
-        self.who_footer = tk.Frame(self.who_list_panel, bg=footer_bg, bd=0)
-        self.who_footer.pack(side="bottom", fill="x")
-        
-        # 1. GPS Header Row (Centered)
-        gps_header = tk.Label(
-            self.who_footer, text="🧭 GPS NAVIGATION", font=("Segoe UI", 8, "bold"), 
-            bg=footer_bg, fg="#888", pady=5
-        )
-        gps_header.pack(fill="x")
-        
-        wrap = self.who_list_width.get() - self.scale_px(40)
-
-        # 2. CURRENT LOCATION (Dynamic)
-        self.gps_who_loc_lbl = tk.Label(
-            self.who_footer, text="Unknown Location", font=("Segoe UI", 9, "bold"),
-            bg=footer_bg, fg="#4CAF50", wraplength=wrap, justify="center"
-        )
-        self.gps_who_loc_lbl.pack(fill="x", pady=(0, 2))
-        
-
-        # 3. PVP Status Icons Placeholder
-        self.pvp_status_frame = tk.Frame(self.who_footer, bg=footer_bg)
-        self.pvp_status_frame.pack(fill="x", pady=(0, 5))
-        
-        self.pvp_icon_1 = tk.Label(self.pvp_status_frame, bg=footer_bg)
-        self.pvp_icon_2 = tk.Label(self.pvp_status_frame, bg=footer_bg)
-        
-        self.pvp_icon_1.pack(side="left", expand=True, anchor="e", padx=(0, 2))
-        self.pvp_icon_2.pack(side="left", expand=True, anchor="w", padx=(2, 0))
-
-        
-        # 4. GPS Route instruction (No active route)
-        self.gps_dock_lbl = tk.Label(
-            self.who_footer, text="No active route", font=("Segoe UI", 8, "bold"), 
-            bg=footer_bg, fg="#fff", wraplength=wrap, justify="center"
-        )
-        self.gps_dock_lbl.pack(fill="x", padx=10, pady=(0, 5))
-        self.who_footer_labels["gps"] = self.gps_dock_lbl
-        
-        # Subtle Divider
-        tk.Frame(self.who_footer, height=1, bg="#323338").pack(fill="x", pady=5)
-
-        # Helper to add remaining status rows
-        def add_status_row(parent, label_text, key, icon="", justify="right"):
-            row = tk.Frame(parent, bg=footer_bg)
-            row.pack(fill="x", padx=10, pady=2)
-            tk.Label(row, text=f"{icon} {label_text}", font=("Segoe UI", 8), bg=footer_bg, fg="#888").pack(side="left")
-            
-            # Use current width for initial wrap
-            wrap = self.who_list_width.get() - self.scale_px(80)
-            val = tk.Label(row, text="---", font=("Segoe UI", 8, "bold"), bg=footer_bg, fg="#fff", wraplength=wrap, justify=justify)
-            val.pack(side="right" if justify == "right" else "left", padx=(10 if justify == "left" else 0))
-            self.who_footer_labels[key] = val
-
-        add_status_row(self.who_footer, "IMPROVES:", "improves", "📈")
-        add_status_row(self.who_footer, "BANK (M):", "bank_m", "💰")
-        add_status_row(self.who_footer, "BANK (I):", "bank_i", "🌴")
-        
-        # Subtle Divider
-        tk.Frame(self.who_footer, height=1, bg="#323338").pack(fill="x", pady=5)
-
-        # 4. Inventory Saturation Row (Most Bottom)
-        inv_row = tk.Frame(self.who_footer, bg=footer_bg)
-        inv_row.pack(fill="x", padx=10, pady=(2, 10))
-        tk.Label(inv_row, text="🎒 BAG SPACE:", font=("Segoe UI", 8), bg=footer_bg, fg="#888").pack(side="left")
-        
-        self.dock_inv_lbl = tk.Label(inv_row, text="0%", font=("Segoe UI", 8, "bold"), bg=footer_bg, fg="#fff")
-        self.dock_inv_lbl.pack(side="right")
-        self.who_footer_labels["bag"] = self.dock_inv_lbl
-
-        self.dock_inv_canvas = tk.Canvas(self.who_footer, height=self.scale_px(4), bg="#323338", highlightthickness=0)
-        self.dock_inv_canvas.pack(fill="x", padx=10, pady=(0, 10))
-        
-        tk.Frame(self.who_list_panel, height=1, bg="#323338").pack(side="bottom", fill="x")
-
-        # 2. MIDDLE SECTION (Scrollable list container)
-        list_frame = tk.Frame(self.who_list_panel, bg="#2b2d31")
-        list_frame.pack(side="top", fill="both", expand=True)
-
-        self.who_list_text = tk.Text(
-            list_frame, bg="#2b2d31", fg="#e0e0e0", 
-            font=("Consolas", 10), state="disabled", 
-            width=25, bd=0, padx=8, pady=5, wrap="none"
-        )
-        self.who_list_text.pack(side="left", fill="both", expand=True)
-        
-        sb = ttk.Scrollbar(list_frame, orient="vertical", command=self.who_list_text.yview)
-        sb.pack(side="right", fill="y")
-        self.who_list_text.config(yscrollcommand=sb.set)
-        
-        # High-legibility foreground tags
-        self.who_list_text.tag_config("INNOCENT", foreground="#e0e0e0")
-        self.who_list_text.tag_config("OUTLAW", foreground="#ff9f43")
-        self.who_list_text.tag_config("MURDERER", foreground="#ff6b6b")
-        self.who_list_text.tag_config("STAFF", foreground="#48dbfb")
-        self.who_list_text.tag_config("CREATOR", foreground="#ffd32a")
-        
-        if self.who_list_players:
-            self.refresh_who_list_ui()
-        else:
-            # Even if no players, ensure the footer is updated (for GPS and PVP icons)
-            self.refresh_who_footer()
-
-    def update_who_list_visibility(self):
-        if hasattr(self, "who_list_outer"):
-            self.who_list_outer.pack_forget()
-        self.notebook.pack_forget()
-        
-        # If docked, it shouldn't be in the main window at all
-        if self.who_list_docked.get():
-            self.notebook.pack(side="left", fill="both", expand=True, padx=5, pady=5)
-            return
-
-        if hasattr(self, "who_list_outer"):
-            side = self.who_list_side.get().lower()
-            self.who_list_outer.pack(side=side, fill="y", padx=2)
-            if self.target_pid:
-                self.start_who_list_monitor()
-        self.notebook.pack(side="left", fill="both", expand=True, padx=5, pady=5)
-
-    def toggle_who_list_dock(self):
-        """Toggles the Who List between an integrated panel and a desktop-docked AppBar."""
-        self.hide_tooltip()
-        if self.who_list_docked.get():
-            # Undock
-            self.unregister_appbar()
-            self.who_list_docked.set(False)
-            self.setup_who_list_panel() # Rebuild in main container
-            self.update_who_list_visibility()
-        else:
-            # Dock
-            self.who_list_docked.set(True)
-            self.update_who_list_visibility() # Remove from main window
-            self.register_appbar()
-
-    def register_appbar(self):
-        """Creates a Toplevel window and registers it as a Windows AppBar."""
-        if self.who_dock_window:
-            return
-
-        logger.info("AppBar: Registering Who List as Desktop Dock...")
-        
-        # 1. Create the Dock Window
-        dock = tk.Toplevel(self)
-        dock.title("M59 Who List Dock")
-        dock.overrideredirect(True)
-        dock.attributes("-topmost", True)
-        dock.config(bg="#2b2d31") # Match the dark theme
-        self.who_dock_window = dock
-        
-        # 2. Add Content
-        self.setup_who_list_panel(parent=dock)
-        
-        # 3. Ensure the window is mapped and has a valid HWND
-        dock.update()
-        
-        # 4. Windows API Registration
-        hwnd = dock.winfo_id()
-        abd = APPBARDATA()
-        abd.cbSize = ctypes.sizeof(APPBARDATA)
-        abd.hWnd = hwnd
-        abd.uCallbackMessage = win32con.WM_USER + 101 # Custom callback
-        
-        # ABM_NEW: Register the AppBar
-        Shell32.SHAppBarMessage(ABM_NEW, ctypes.byref(abd))
-        
-        # ABM_QUERYPOS & ABM_SETPOS: Reserve space
-        # Use win32api to get physical screen size, adjusted for potential scaling issues
-        screen_w = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
-        screen_h = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
-        
-        dock_w = self.who_list_width.get()
-        
-        abd.uEdge = ABE_RIGHT
-        abd.rc.left = screen_w - dock_w
-        abd.rc.right = screen_w
-        abd.rc.top = 0
-        abd.rc.bottom = screen_h
-        
-        logger.debug(f"AppBar: Requesting Right edge: L={abd.rc.left}, R={abd.rc.right}, T={abd.rc.top}, B={abd.rc.bottom} (Screen: {screen_w}x{screen_h})")
-
-        # Ask Windows for the position
-        Shell32.SHAppBarMessage(ABM_QUERYPOS, ctypes.byref(abd))
-        
-        # Actually set the position
-        Shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
-        
-        # Apply the final geometry to the Tkinter window
-        final_w = abd.rc.right - abd.rc.left
-        final_h = abd.rc.bottom - abd.rc.top
-        
-        # Log the final values Windows gave us
-        logger.info(f"AppBar: System Reserved: L={abd.rc.left}, R={abd.rc.right}, T={abd.rc.top}, B={abd.rc.bottom} (W={final_w})")
-        
-        dock.geometry(f"{final_w}x{final_h}+{abd.rc.left}+{abd.rc.top}")
-        
-        # Force a refresh of the UI inside the dock
-        self.refresh_who_list_ui()
-
-    def unregister_appbar(self):
-        """Unregisters the AppBar and cleans up the dock window."""
-        if not self.who_dock_window:
-            return
-            
-        logger.info("AppBar: Unregistering Desktop Dock...")
-        hwnd = self.who_dock_window.winfo_id()
-        abd = APPBARDATA()
-        abd.cbSize = ctypes.sizeof(APPBARDATA)
-        abd.hWnd = hwnd
-        
-        # ABM_REMOVE: Release desktop space
-        Shell32.SHAppBarMessage(ABM_REMOVE, ctypes.byref(abd))
-        
-        self.who_dock_window.destroy()
-        self.who_dock_window = None
-
-    def safe_refresh_who_list(self):
-        """Sends a /who command to the game safely using Windows messages."""
-        if not self.main_hwnd:
-            return
-            
-        logger.debug("WhoList: Triggering safe refresh via /who command.")
-        edit_hwnd = find_nested_control(self.main_hwnd, 1001)
-        if not edit_hwnd:
-            logger.debug("WhoList: Chat edit control (1001) not found.")
-            return
-        
-        cmd = "/who\r"
-        for char in cmd:
-            win32gui.SendMessage(edit_hwnd, win32con.WM_CHAR, ord(char), 0)
-
-    def start_who_list_monitor(self):
-        """Initializes WhoList monitor using the modular WhoListMonitor class."""
-        if not self.target_pid:
-            return
-            
-        if self.who_list_monitor:
-            return 
-            
-        self.who_list_monitor = WhoListMonitor(
-            target_pid=self.target_pid,
-            on_update_callback=self.on_who_list_update
-        )
-        self.who_list_monitor.start()
-        
-        # Trigger an update after a short delay to populate initial list
-        if self.char_name != "Unknown":
-            self.after(1500, self.trigger_silent_who_update)
-
-    def on_who_list_update(self, players):
-        """Callback from WhoListMonitor when player list changes."""
-        self.who_list_players = players
-        self.after(0, self.refresh_who_list_ui)
-
-    def trigger_silent_who_update(self):
-        """Triggers the silent population update via the monitor's RPC wrapper."""
-        if getattr(self, "sync_in_progress", False):
-            logger.info("WhoList: Tab Dance Sync is running, deferring silent population update...")
-            self.after(1500, self.trigger_silent_who_update)
-            return
-            
-        if self.who_list_monitor:
-            self.who_list_monitor.trigger_silent_update()
-
-    def refresh_who_list_ui(self):
-        self.who_list_text.config(state="normal")
-        self.who_list_text.delete("1.0", tk.END)
-        
-        # Sort alphabetically case-insensitively
-        sorted_names = sorted(self.who_list_players.keys(), key=str.lower)
-        
-        # 1. Text UI Update
-        for name in sorted_names:
-            status = self.who_list_players[name]
-            self.who_list_text.insert(tk.END, f" {name}\n", status)
-        self.who_list_text.config(state="disabled")
-        
-        # 2. Update Footer & Wraplength
-        # Use current static width for wraplength
-        current_w = self.who_list_width.get()
-        for lbl in self.who_footer_labels.values():
-            lbl.config(wraplength=current_w - self.scale_px(40))
-        if hasattr(self, "gps_who_loc_lbl") and self.gps_who_loc_lbl:
-            self.gps_who_loc_lbl.config(wraplength=current_w - self.scale_px(40))
-            
-        self.refresh_who_footer()
-
-        # Update dynamic player count at the bottom
-        count = len(sorted_names)
-        self.who_list_count_lbl.config(text=f"{count} Online", fg="#4CAF50" if count > 0 else "#888")
-
-    def refresh_who_footer(self):
-        """Updates the status footer labels with the latest session data."""
-        if not self.who_footer_labels:
-            return
-
-        if hasattr(self, "gps_who_loc_lbl") and hasattr(self, "gps_current_loc_lbl"):
-            loc_val = self.gps_current_loc_lbl.cget("text")
-            self.gps_who_loc_lbl.config(text=loc_val)
-            
-            if hasattr(self, "pvp_status_frame"):
-                if loc_val == "Unknown Location":
-                    self.pvp_icon_1.config(image='', text="Unknown Location", fg="#555555")
-                    self.pvp_icon_2.config(image='', text="")
-                    self.set_tooltip(self.pvp_icon_1, "Location not known")
-                    self.set_tooltip(self.pvp_icon_2, "")
-                else:
-                    rid = self.gps_manager.resolve_name_to_rid(loc_val)
-                    pvp_status = self.gps_manager.dataset.get(rid, {}).get("pvp_status", "Standard PVP") if rid else "Standard PVP"
-                    
-                    if pvp_status == "Safe (No PVP)":
-                        color = "#4CAF50" # green
-                    elif pvp_status == "Arena (No Death Penalty)":
-                        color = "#FF9800" # orange
-                    else:
-                        color = "#f44336" # red
-                        
-                    raw_flags = self.gps_manager.dataset.get(rid, {}).get("raw_flags", "") if rid else ""
-                    
-                    if hasattr(self, "pvp_icons") and self.pvp_icons:
-                        # use icons
-                        icon_1 = self.pvp_icons.get(pvp_status, self.pvp_icons.get("Standard PVP"))
-                        self.pvp_icon_1.config(image=icon_1, text="", bg="#1e1f22")
-                        self.set_tooltip(self.pvp_icon_1, f"{pvp_status}")
-                        
-                        if "ROOM_SAFELOGOFF" in raw_flags:
-                            icon_2 = self.pvp_icons.get("Safe Logoff")
-                            if icon_2:
-                                self.pvp_icon_2.config(image=icon_2, text="", bg="#1e1f22")
-                                self.set_tooltip(self.pvp_icon_2, "Safe to Logoff")
-                            else:
-                                self.pvp_icon_2.config(image='', text="")
-                        else:
-                            self.pvp_icon_2.config(image='', text="")
-                    else:
-                        # fallback to text
-                        if "ROOM_SAFELOGOFF" in raw_flags:
-                            display_text = f"{pvp_status} (Safe Logoff)"
-                        else:
-                            display_text = f"{pvp_status} (Unsafe Logoff)"
-                        self.pvp_icon_1.config(image='', text=display_text, fg=color)
-                        self.pvp_icon_2.config(image='', text="")
-                        self.set_tooltip(self.pvp_icon_1, f"Flags: {raw_flags}" if raw_flags else pvp_status)
-
-        # GPS Status
-        gps_text = "No active route"
-        if self.gps_manager.current_path and self.gps_manager.current_destination_rid:
-            step_idx = self.gps_manager.current_step_index
-            total_steps = len(self.gps_manager.current_path)
-            if step_idx < total_steps:
-                from_rid, exit_info = self.gps_manager.current_path[step_idx]
-                
-                # Get the arrival point for THIS room to calculate relative direction
-                arrival_pos = None
-                if step_idx == 0:
-                    # First room, use its teleport point as baseline
-                    arrival_pos = self.gps_manager.dataset.get(from_rid, {}).get('teleport')
-                else:
-                    # Previous step's destination is our current entry point
-                    prev_rid, prev_exit = self.gps_manager.current_path[step_idx-1]
-                    arrival_pos = prev_exit.get('to_pos')
-
-                gps_text = self.gps_manager.get_friendly_instruction(
-                    from_rid, exit_info, step=step_idx+1, total=total_steps, arrival_pos=arrival_pos
-                )
-        
-        self.who_footer_labels["gps"].config(text=gps_text)
-        self.who_footer_labels["improves"].config(text=str(self.total_improves))
-        
-        # Bank Balances (Direct from BankManager)
-        m = self.bank_manager.balances['mainland']
-        i = self.bank_manager.balances['island']
-        self.who_footer_labels["bank_m"].config(text=f"{m:,}s")
-        self.who_footer_labels["bank_i"].config(text=f"{i:,}s")
-
-    def update_appbar_pos(self, new_width):
-        """Resizes the AppBar reservation and the dock window."""
-        if not self.who_dock_window: return
-        
-        hwnd = self.who_dock_window.winfo_id()
-        abd = APPBARDATA()
-        abd.cbSize = ctypes.sizeof(APPBARDATA)
-        abd.hWnd = hwnd
-        
-        screen_w = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
-        screen_h = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
-        
-        abd.uEdge = ABE_RIGHT
-        abd.rc.left = screen_w - new_width
-        abd.rc.right = screen_w
-        abd.rc.top = 0
-        abd.rc.bottom = screen_h
-        
-        # Query and Set
-        Shell32.SHAppBarMessage(ABM_QUERYPOS, ctypes.byref(abd))
-        Shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
-        
-        final_w = abd.rc.right - abd.rc.left
-        final_h = abd.rc.bottom - abd.rc.top
-        self.who_dock_window.geometry(f"{final_w}x{final_h}+{abd.rc.left}+{abd.rc.top}")
-
-    def return_to_live(self):
-        self.comms_mode = "live"
-        self.comms_header_lbl.config(text="🟢 LIVE STREAM", fg="#2E7D32")
-        self.live_feed_btn.config(bg="#E8F5E9") # Subtle green
-        self.comms_view.config(state="normal")
-        self.comms_view.delete("1.0", tk.END)
-        self.comms_view.config(state="disabled")
-        # Polling loop will pick up and fill current log content
-
-    def poll_chat_log(self):
-        """High-performance tail of the current chat log file."""
-        if not self.is_running: return
-        
-        if self.comms_mode == "live" and self.char_name != "Unknown":
-            safe_n = get_safe_name(self.char_name)
-            log_p = os.path.join("settings", f"{safe_n}_chat.log")
-            
-            if os.path.exists(log_p):
+    def load_knowledge_cache(self, char_name=None):
+        """Loads persistent knowledge cache from JSON settings file or defaults to sample."""
+        loaded = False
+        name_to_check = char_name or (self.char_name if self.char_name != "--" else None)
+        if name_to_check:
+            sn = get_safe_name(name_to_check)
+            p = f"settings/{sn}_knowledge.json"
+            if os.path.exists(p):
                 try:
-                    # Initialize pointer if not set
-                    if not hasattr(self, "_log_ptr"):
-                        self._log_ptr = 0
-                        self._last_log_p = ""
-
-                    # Reset pointer if file changed or shrunk
-                    file_size = os.path.getsize(log_p)
-                    if log_p != self._last_log_p or file_size < self._log_ptr:
-                        self._log_ptr = 0
-                        self._last_log_p = log_p
-                        self.comms_view.config(state="normal")
-                        self.comms_view.delete("1.0", tk.END)
-                        self.comms_view.config(state="disabled")
-
-                    if file_size > self._log_ptr:
-                        with open(log_p, "r", encoding="utf-8", errors="replace") as f:
-                            f.seek(self._log_ptr)
-                            new_data = f.read()
-                            if new_data:
-                                self.comms_view.config(state="normal")
-                                for line in new_data.splitlines():
-                                    if self.is_line_filtered(line):
-                                        self.comms_view.insert(tk.END, line + "\n")
-                                        
-                                    # Trigger alert for incoming DMs
-                                    if self.tell_sound_enabled.get():
-                                        if ' tells you, "' in line or ' sends, "' in line:
-                                            self.play_tell_alert()
-                                            
-                                self.comms_view.see(tk.END)
-                                self.comms_view.config(state="disabled")
-                                self._log_ptr = f.tell()
+                    with open(p, "r", encoding="utf-8") as f:
+                        d = json.load(f)
+                        if isinstance(d, dict) and d:
+                            self.knowledge_cache = d
+                            loaded = True
                 except Exception as e:
-                    logger.debug(f"Tail error: {e}")
-        
-        # Poll every 250ms for near-instant updates
-        self.after(250, self.poll_chat_log)
+                    print(f"[M59-PROG] Error loading character knowledge: {e}", flush=True)
 
-    def load_historical_log(self, event=None):
-        selection = self.log_file_list.curselection()
-        if not selection: return
-        
-        fn = self.log_file_list.get(selection[0])
-        self.comms_mode = "history"
-        self.comms_header_lbl.config(text=f"📂 HISTORY: {fn}", fg="#1565C0")
-        self.live_feed_btn.config(bg="#f0f0f0") # Dim the live button
-        
-        path = os.path.join("settings", fn)
+        if not loaded and os.path.exists("settings/last_knowledge.json"):
+            try:
+                with open("settings/last_knowledge.json", "r", encoding="utf-8") as f:
+                    d = json.load(f)
+                    if isinstance(d, dict) and d:
+                        self.knowledge_cache = d
+                        loaded = True
+            except Exception as e:
+                print(f"[M59-PROG] Error loading last knowledge: {e}", flush=True)
+
+        if not loaded and not self.knowledge_cache:
+            self.load_sample_knowledge()
+        else:
+            self.update_progression_ui()
+
+    def load_sample_knowledge(self):
+        """Loads realistic Meridian 59 skill and spell knowledge data for instant calculation."""
+        self.knowledge_cache = {
+            "axe wielding": 52, "blink": 9, "block": 99, "brawling": 42,
+            "dodge": 99, "fencing": 19, "glow": 19, "hammer wielding": 34,
+            "mace fighting": 65, "punch": 73, "short sword fighting": 43,
+            "slash": 65, "super strength": 29
+        }
+        self.save_knowledge_cache()
+        self.update_progression_ui()
+
+    def clear_knowledge_cache(self):
+        """Clears knowledge cache."""
+        self.knowledge_cache = {}
+        self.save_knowledge_cache()
+        self.update_progression_ui()
+
+    def update_progression_ui(self, knowledge=None):
+        """Calculates and refreshes the progression tree widgets in both the dashboard tile and the full progression section."""
+        if knowledge is not None:
+            self.knowledge_cache = knowledge
+            self.save_knowledge_cache()
+
+        if not hasattr(self, 'calculator') or not self.calculator:
+            self.calculator = SchoolCalculator()
+
+        # Determine Intellect
+        intellect = 25
+        if hasattr(self, 'prog_intellect_spin') and self.prog_intellect_spin:
+            intellect = self.prog_intellect_spin.value()
+        elif hasattr(self, 'attributes') and self.attributes.get("Intellect") not in (None, "--", ""):
+            try:
+                intellect = int(self.attributes["Intellect"])
+                if hasattr(self, 'prog_intellect_spin') and self.prog_intellect_spin:
+                    self.prog_intellect_spin.blockSignals(True)
+                    self.prog_intellect_spin.setValue(intellect)
+                    self.prog_intellect_spin.blockSignals(False)
+            except:
+                intellect = 25
+
         try:
-            self.comms_view.config(state="normal")
-            self.comms_view.delete("1.0", tk.END)
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if self.is_line_filtered(line):
-                        self.comms_view.insert(tk.END, line)
-            self.comms_view.see(tk.END)
-            self.comms_view.config(state="disabled")
+            results_list = self.calculator.calculate_progression(self.knowledge_cache, intellect)
         except Exception as e:
-            logger.error(f"Failed to load historical log {fn}: {e}")
+            print(f"[M59-PROG] Error calculating progression: {e}", flush=True)
+            results_list = []
 
-    def append_comms_line(self, line):
-        """Legacy helper for tracking; UI updates are now handled by poll_chat_log."""
-        ts = f"[{datetime.now().strftime('%H:%M:%S')}]"
-        if self.debug_enabled.get():
-            logger.debug(f"Comms: {line[:60]}...")
-        # Tracker/PKAlert still use the synchronous feed provided by the chat monitor
+        filter_txt = self.prog_search_input.text().lower().strip() if hasattr(self, 'prog_search_input') else ""
 
-    def refresh_log_list(self):
+        trees_to_update = []
+        if hasattr(self, 'full_prog_tree') and self.full_prog_tree:
+            trees_to_update.append(self.full_prog_tree)
+        if hasattr(self, 'dash_prog_tree') and self.dash_prog_tree:
+            trees_to_update.append(self.dash_prog_tree)
+
+        active_count = len(results_list) if isinstance(results_list, list) else 0
+        total_known_abilities = len(self.knowledge_cache)
+
+        for tree in trees_to_update:
+            # Capture currently expanded schools
+            expanded_schools = set()
+            for idx in range(tree.topLevelItemCount()):
+                item = tree.topLevelItem(idx)
+                if item and item.isExpanded():
+                    # Extract plain school name from text
+                    raw_text = item.text(0).strip()
+                    for s_name in self.calculator.schools.keys():
+                        if s_name in raw_text:
+                            expanded_schools.add(s_name)
+
+            tree.clear()
+
+            for r in results_list:
+                name = r['name']
+                sd = self.calculator.schools.get(name, {})
+
+                # Filter text check
+                school_matches = (not filter_txt) or (filter_txt in name.lower())
+                spells_match = False
+                if filter_txt:
+                    for l in range(1, 7):
+                        for s in sd.get(f"Level_{l}", []):
+                            if s.lower() in self.knowledge_cache and filter_txt in s.lower():
+                                spells_match = True
+                                break
+
+                if filter_txt and not school_matches and not spells_match:
+                    continue
+
+                # Top-level school item matching original dashboard format
+                school_item = QTreeWidgetItem(tree)
+                school_item.setText(0, name)
+                school_item.setFont(0, QFont("Segoe UI", 10, QFont.Bold))
+                school_item.setForeground(0, QColor("#38bdf8"))
+
+                if r.get('mastered'):
+                    school_item.setText(1, "Level 6")
+                    school_item.setText(2, "MASTERED")
+                    school_item.setText(3, "---")
+                    school_item.setText(4, "---")
+                    school_item.setForeground(2, QColor("#c084fc"))
+                    school_item.setForeground(4, QColor("#c084fc"))
+                elif r.get('needed', 0) == 0:
+                    school_item.setText(1, f"Level {r['current_lvl']}")
+                    school_item.setText(2, f"{r['current_sum']}%")
+                    school_item.setText(3, f"{r['target_sum']}%")
+                    school_item.setText(4, "YOU QUALIFY!")
+                    school_item.setForeground(4, QColor("#10b981"))
+                else:
+                    school_item.setText(1, f"Level {r['current_lvl']}")
+                    school_item.setText(2, f"{r['current_sum']}%")
+                    school_item.setText(3, f"{r['target_sum']}%")
+                    school_item.setText(4, f"{r['needed']}%")
+                    school_item.setForeground(4, QColor("#f59e0b"))
+
+                # Add only known abilities in this school, matching original format:
+                # text=f"  {s}", values=(f"L{l}", f"{knowledge_cache[s.lower()]}%", "", "")
+                for l in range(1, 7):
+                    lk = f"Level_{l}"
+                    if lk in sd:
+                        for s in sd[lk]:
+                            s_lower = s.lower()
+                            if s_lower in self.knowledge_cache:
+                                if filter_txt and (filter_txt not in s_lower) and not school_matches:
+                                    continue
+                                spell_pct = self.knowledge_cache[s_lower]
+                                spell_item = QTreeWidgetItem(school_item)
+                                spell_item.setText(0, f"  {s}")
+                                spell_item.setText(1, f"L{l}")
+                                spell_item.setText(2, f"{spell_pct}%")
+                                spell_item.setText(3, "")
+                                spell_item.setText(4, "")
+                                spell_item.setForeground(0, QColor("#f8fafc"))
+                                spell_item.setForeground(1, QColor("#94a3b8"))
+                                spell_item.setForeground(2, QColor("#cbd5e1"))
+
+                # Expand by default or if previously expanded
+                if not expanded_schools or name in expanded_schools or filter_txt:
+                    school_item.setExpanded(True)
+
+        summary_text = f"{active_count} Active Schools"
+        if hasattr(self, 'dash_prog_summary_badge'):
+            self.dash_prog_summary_badge.setText(summary_text)
+        if hasattr(self, 'full_prog_active_badge'):
+            self.full_prog_active_badge.setText(summary_text)
+        if hasattr(self, 'full_prog_known_badge'):
+            self.full_prog_known_badge.setText(f"{total_known_abilities} Known Abilities")
+
+    # ==================================================================
+    # SECTION 4: SETTINGS & FONT SIZE PREFERENCES
+    # ==================================================================
+    def build_settings_page(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(18)
+
+        # Header Card
+        hdr_card = QFrame()
+        hdr_card.setProperty("class", "WebCard")
+        hc_layout = QHBoxLayout(hdr_card)
+        hc_layout.setContentsMargins(16, 14, 16, 14)
+
+        title_box = QVBoxLayout()
+        t_lbl = QLabel("⚙️ Interface Typography & Font Preferences")
+        t_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc;")
+        s_lbl = QLabel("Customize text font sizing across logical UI element groups in real-time.")
+        s_lbl.setStyleSheet("font-size: 12px; color: #64748b;")
+        title_box.addWidget(t_lbl)
+        title_box.addWidget(s_lbl)
+        hc_layout.addLayout(title_box)
+        hc_layout.addStretch()
+
+        reset_btn = QPushButton("↺ Reset All Sizes")
+        reset_btn.setProperty("class", "WebBtnSecondary")
+        reset_btn.setToolTip("Reset all font size groups to default values")
+        reset_btn.clicked.connect(self.reset_font_settings)
+        hc_layout.addWidget(reset_btn)
+
+        layout.addWidget(hdr_card)
+
+        # Helper to construct Font Group Setting Cards
+        def make_group_card(group_key, title_text, icon_str, desc_text, min_fs, max_fs, preview_type):
+            card = QFrame()
+            card.setProperty("class", "WebCard")
+            c_layout = QVBoxLayout(card)
+            c_layout.setContentsMargins(16, 16, 16, 16)
+            c_layout.setSpacing(10)
+
+            # Title Row
+            tr = QHBoxLayout()
+            g_title = QLabel(f"{icon_str}  {title_text}")
+            g_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #94a3b8;")
+            tr.addWidget(g_title)
+            tr.addStretch()
+
+            # Controls: Slider + SpinBox
+            current_val = self.font_settings.get(group_key, 13)
+
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(min_fs, max_fs)
+            slider.setValue(current_val)
+            slider.setStyleSheet("""
+                QSlider::groove:horizontal {
+                    height: 6px;
+                    background: #1e293b;
+                    border-radius: 3px;
+                }
+                QSlider::sub-page:horizontal {
+                    background: #64748b;
+                    border-radius: 3px;
+                }
+                QSlider::handle:horizontal {
+                    background: #f8fafc;
+                    border: 2px solid #64748b;
+                    width: 16px;
+                    margin-top: -5px;
+                    margin-bottom: -5px;
+                    border-radius: 8px;
+                }
+            """)
+
+            spin = QSpinBox()
+            spin.setRange(min_fs, max_fs)
+            spin.setValue(current_val)
+            spin.setSuffix(" px")
+            spin.setStyleSheet("""
+                QSpinBox {
+                    background-color: #030712;
+                    border: 1px solid #334155;
+                    border-radius: 6px;
+                    padding: 4px 8px;
+                    color: #f8fafc;
+                    font-weight: 700;
+                    min-width: 65px;
+                }
+            """)
+
+            tr.addWidget(QLabel("Font Size:"))
+            tr.addWidget(slider, 1)
+            tr.addWidget(spin)
+            c_layout.addLayout(tr)
+
+            # Description
+            d_lbl = QLabel(desc_text)
+            d_lbl.setStyleSheet("font-size: 11px; color: #94a3b8;")
+            c_layout.addWidget(d_lbl)
+
+            # Live Preview Panel
+            prev_box = QFrame()
+            prev_box.setStyleSheet("background-color: #030712; border: 1px solid #1e293b; border-radius: 8px; padding: 10px;")
+            pb_layout = QVBoxLayout(prev_box)
+            pb_layout.setContentsMargins(10, 8, 10, 8)
+
+            prev_lbl = QLabel()
+            if preview_type == "player_list":
+                prev_lbl.setText("• Zaphod (CREATOR)   • Elric (MURDERER)   • Balthazar (OUTLAW)   • Kaelen (INNOCENT)")
+                prev_lbl.setStyleSheet(f"font-size: {current_val}px; font-weight: 700; color: #e0e0e0;")
+            elif preview_type == "chat_logger":
+                prev_lbl.setText("[14:20:05] [SAY] Zaphod says, \"Hail traveler, welcome to Meridian 59!\"\n[14:20:12] [IMPROVE] You have improved in Swordplay to 78%!")
+                prev_lbl.setStyleSheet(f"font-size: {current_val}px; color: #e2e8f0; font-family: 'Consolas', monospace;")
+            elif preview_type == "dashboard":
+                prev_lbl.setText("Might: 50   Intellect: 45   Stamina: 50   Agility: 40   Mysticism: 30")
+                prev_lbl.setStyleSheet(f"font-size: {current_val}px; font-weight: 800; color: #94a3b8;")
+            elif preview_type == "clock":
+                prev_lbl.setText("14:35:10 - Meridian 59 World Time")
+                prev_lbl.setStyleSheet(f"font-size: {current_val}px; font-weight: 900; color: #f8fafc; font-family: 'Consolas', monospace;")
+            elif preview_type == "sidebar":
+                prev_lbl.setText("  Dashboard (Main)      Shortcuts (Macros)      Chat Logger (Comms)      Settings (Preferences)")
+                prev_lbl.setStyleSheet(f"font-size: {current_val}px; font-weight: 700; color: #94a3b8;")
+
+            pb_layout.addWidget(prev_lbl)
+            c_layout.addWidget(prev_box)
+
+            # Value Change Listener
+            def on_val_change(val):
+                slider.blockSignals(True)
+                spin.blockSignals(True)
+                slider.setValue(val)
+                spin.setValue(val)
+                slider.blockSignals(False)
+                spin.blockSignals(False)
+
+                self.font_settings[group_key] = val
+
+                # Local Preview Update
+                if preview_type == "player_list":
+                    prev_lbl.setStyleSheet(f"font-size: {val}px; font-weight: 700; color: #e0e0e0;")
+                elif preview_type == "chat_logger":
+                    prev_lbl.setStyleSheet(f"font-size: {val}px; color: #e2e8f0; font-family: 'Consolas', monospace;")
+                elif preview_type == "dashboard":
+                    prev_lbl.setStyleSheet(f"font-size: {val}px; font-weight: 800; color: #94a3b8;")
+                elif preview_type == "clock":
+                    prev_lbl.setStyleSheet(f"font-size: {val}px; font-weight: 900; color: #f8fafc; font-family: 'Consolas', monospace;")
+                elif preview_type == "sidebar":
+                    prev_lbl.setStyleSheet(f"font-size: {val}px; font-weight: 700; color: #94a3b8;")
+
+                # Live Update Across Entire App
+                self.apply_font_settings()
+
+            slider.valueChanged.connect(on_val_change)
+            spin.valueChanged.connect(on_val_change)
+
+            return card
+
+        # 1. Player List Group
+        layout.addWidget(make_group_card(
+            "player_list",
+            "Player List (Who's Online)",
+            "👥",
+            "Controls font size for online player names and alignment statuses in the Who List widget.",
+            10, 24, "player_list"
+        ))
+
+        # 2. Chat Logger Group
+        layout.addWidget(make_group_card(
+            "chat_logger",
+            "Chat Logger & Comms Log",
+            "💬",
+            "Controls text size for incoming game chat messages, communication logs, and timestamps.",
+            10, 24, "chat_logger"
+        ))
+
+        # 3. Dashboard Stats Group
+        layout.addWidget(make_group_card(
+            "dashboard_cards",
+            "Dashboard Stats & Attributes",
+            "📊",
+            "Controls font size for character attributes (Might, Intellect, etc.), vitals labels, and ledger entries.",
+            10, 22, "dashboard"
+        ))
+
+        # 4. Clock & Panel Group
+        layout.addWidget(make_group_card(
+            "clock_panel",
+            "World Clock & Dock Panel",
+            "⏰",
+            "Controls text sizing for the Meridian 59 game world time clock and dock section headers.",
+            12, 32, "clock"
+        ))
+
+        # 5. Sidebar Nav Group
+        layout.addWidget(make_group_card(
+            "sidebar_nav",
+            "Sidebar Navigation Menu",
+            "🧭",
+            "Controls font size for left sidebar menu items and navigation section titles.",
+            10, 20, "sidebar"
+        ))
+
+        # 6. Audio & Sound Alert Preferences Group
+        sound_card = QFrame()
+        sound_card.setProperty("class", "WebCard")
+        sc_layout = QVBoxLayout(sound_card)
+        sc_layout.setContentsMargins(16, 16, 16, 16)
+        sc_layout.setSpacing(14)
+
+        sc_title = QLabel("🔊 Audio & Sound Alert Preferences")
+        sc_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #f8fafc;")
+        sc_desc = QLabel("Configure audible alerts for incoming PK player attacks and Private messages (tells).")
+        sc_desc.setStyleSheet("font-size: 12px; color: #64748b;")
+        sc_layout.addWidget(sc_title)
+        sc_layout.addWidget(sc_desc)
+
+        # 1. PK Alert Audio Row
+        pk_row = QHBoxLayout()
+        pk_row.setSpacing(10)
+        self.pk_chk = QCheckBox("Enable PK Audio Alerts")
+        self.pk_chk.setChecked(getattr(self, 'pk_alert_enabled', True))
+        self.pk_chk.setStyleSheet("color: #f8fafc; font-weight: 700; font-size: 13px;")
+
+        self.pk_sound_combo = QComboBox()
+        self.pk_sound_combo.setEditable(True)
+        self.pk_sound_combo.setFixedWidth(220)
+        sound_options = ["sound/alert.wav", "SystemExclamation", "SystemAsterisk", "SystemHand", "SystemQuestion"]
+        cur_pk_s = getattr(self, 'pk_sound_path', "sound/alert.wav")
+        if cur_pk_s not in sound_options:
+            sound_options.insert(0, cur_pk_s)
+        self.pk_sound_combo.addItems(sound_options)
+        self.pk_sound_combo.setCurrentText(cur_pk_s)
+
+        pk_browse_btn = QPushButton("Browse...")
+        pk_browse_btn.setProperty("class", "WebBtnSecondary")
+        def browse_pk():
+            fn, _ = QFileDialog.getOpenFileName(self, "Select PK Alert Sound", "sound", "Audio Files (*.wav *.mp3);;All Files (*)")
+            if fn:
+                self.pk_sound_combo.setCurrentText(fn)
+                self.save_sound_settings()
+        pk_browse_btn.clicked.connect(browse_pk)
+
+        pk_test_btn = QPushButton("▶ Test PK Sound")
+        pk_test_btn.setProperty("class", "WebBtnPrimary")
+        pk_test_btn.clicked.connect(lambda: play_audio_file(self.pk_sound_combo.currentText()))
+
+        pk_row.addWidget(self.pk_chk)
+        pk_row.addWidget(self.pk_sound_combo)
+        pk_row.addWidget(pk_browse_btn)
+        pk_row.addWidget(pk_test_btn)
+        pk_row.addStretch()
+        sc_layout.addLayout(pk_row)
+
+        # 2. Private Message Audio Row
+        tell_row = QHBoxLayout()
+        tell_row.setSpacing(10)
+        self.tell_chk = QCheckBox("Enable Private Message Audio Alerts")
+        self.tell_chk.setChecked(getattr(self, 'tell_sound_enabled', True))
+        self.tell_chk.setStyleSheet("color: #f8fafc; font-weight: 700; font-size: 13px;")
+
+        self.tell_sound_combo = QComboBox()
+        self.tell_sound_combo.setEditable(True)
+        self.tell_sound_combo.setFixedWidth(220)
+        tell_options = ["sound/dm_chime.wav", "sound/dm_chime.mp3", "SystemAsterisk", "SystemExclamation", "SystemHand"]
+        cur_tell_s = getattr(self, 'tell_sound_path', "sound/dm_chime.wav")
+        if cur_tell_s not in tell_options:
+            tell_options.insert(0, cur_tell_s)
+        self.tell_sound_combo.addItems(tell_options)
+        self.tell_sound_combo.setCurrentText(cur_tell_s)
+
+        tell_browse_btn = QPushButton("Browse...")
+        tell_browse_btn.setProperty("class", "WebBtnSecondary")
+        def browse_tell():
+            fn, _ = QFileDialog.getOpenFileName(self, "Select Private Message Sound", "sound", "Audio Files (*.wav *.mp3);;All Files (*)")
+            if fn:
+                self.tell_sound_combo.setCurrentText(fn)
+                self.save_sound_settings()
+        tell_browse_btn.clicked.connect(browse_tell)
+
+        tell_test_btn = QPushButton("▶ Test Private Sound")
+        tell_test_btn.setProperty("class", "WebBtnPrimary")
+        tell_test_btn.clicked.connect(lambda: play_audio_file(self.tell_sound_combo.currentText()))
+
+        tell_row.addWidget(self.tell_chk)
+        tell_row.addWidget(self.tell_sound_combo)
+        tell_row.addWidget(tell_browse_btn)
+        tell_row.addWidget(tell_test_btn)
+        tell_row.addStretch()
+        sc_layout.addLayout(tell_row)
+
+        # 3. PK Red Box Visual Overlay Row
+        redbox_row = QHBoxLayout()
+        redbox_row.setSpacing(10)
+        self.pk_redbox_chk = QCheckBox("Enable Visual Red Box Overlay Alert around Game Window")
+        self.pk_redbox_chk.setChecked(getattr(self, 'pk_frame_enabled', True))
+        self.pk_redbox_chk.setStyleSheet("color: #ef4444; font-weight: 700; font-size: 13px;")
+
+        def test_redbox():
+            if getattr(self, 'pk_frame', None):
+                self.pk_frame.flash(5)
+        pk_redbox_test_btn = QPushButton("🟥 Test Red Box Overlay (5s)")
+        pk_redbox_test_btn.setProperty("class", "WebBtnSecondary")
+        pk_redbox_test_btn.clicked.connect(test_redbox)
+
+        redbox_row.addWidget(self.pk_redbox_chk)
+        redbox_row.addWidget(pk_redbox_test_btn)
+        redbox_row.addStretch()
+        sc_layout.addLayout(redbox_row)
+
+        def on_sound_config_changed():
+            self.save_sound_settings()
+
+        self.pk_chk.stateChanged.connect(on_sound_config_changed)
+        self.pk_sound_combo.currentTextChanged.connect(on_sound_config_changed)
+        self.tell_chk.stateChanged.connect(on_sound_config_changed)
+        self.tell_sound_combo.currentTextChanged.connect(on_sound_config_changed)
+        self.pk_redbox_chk.stateChanged.connect(on_sound_config_changed)
+
+        layout.addWidget(sound_card)
+
+        layout.addStretch()
+        scroll.setWidget(page)
+        return scroll
+
+    def reset_font_settings(self):
+        """Resets all font size groups to default values."""
+        defaults = {
+            "player_list": 13,
+            "chat_logger": 13,
+            "dashboard_cards": 13,
+            "clock_panel": 20,
+            "sidebar_nav": 13,
+        }
+        self.font_settings.update(defaults)
+        self.apply_font_settings()
+        if hasattr(self, 'stacked_widget') and hasattr(self, 'page_settings'):
+            current_idx = self.stacked_widget.indexOf(self.page_settings)
+            new_page = self.build_settings_page()
+            self.stacked_widget.removeWidget(self.page_settings)
+            self.page_settings = new_page
+            self.stacked_widget.insertWidget(current_idx, self.page_settings)
+            self.stacked_widget.setCurrentIndex(current_idx)
+
+    def apply_font_settings(self):
+        """Applies font size changes across all functional UI components in real-time."""
+        # 1. Player List (Who List)
+        if hasattr(self, 'wholist_data'):
+            self.update_wholist_gui(self.wholist_data)
+
+        # 2. Chat Logger Text Stream
+        if hasattr(self, 'chat_stream_view') and self.chat_stream_view:
+            self.filter_chat_stream()
+
+        # 3. Sidebar Navigation Menu
+        if hasattr(self, 'nav_list') and self.nav_list:
+            fs = self.font_settings.get("sidebar_nav", 13)
+            nav_font = QFont("Segoe UI", fs)
+            nav_font.setWeight(QFont.Bold)
+            self.nav_list.setFont(nav_font)
+            for i in range(self.nav_list.count()):
+                item = self.nav_list.item(i)
+                if item:
+                    item.setFont(nav_font)
+            self.nav_list.setStyleSheet(f"""
+                QListWidget#NavList {{
+                    background-color: transparent;
+                    border: none;
+                    outline: none;
+                }}
+                QListWidget#NavList::item {{
+                    background-color: transparent;
+                    color: #94a3b8;
+                    border-radius: 8px;
+                    padding: 10px 12px;
+                    font-size: {fs}px;
+                    font-weight: 700;
+                    margin-bottom: 4px;
+                }}
+                QListWidget#NavList::item:selected {{
+                    background-color: rgba(16, 185, 129, 0.15);
+                    color: #94a3b8;
+                    border: 1px solid rgba(16, 185, 129, 0.3);
+                }}
+                QListWidget#NavList::item:hover:!selected {{
+                    background-color: #111827;
+                    color: #f8fafc;
+                }}
+            """)
+
+        # 4. Dock World Clock
+        if hasattr(self, 'dock_game_time_lbl') and self.dock_game_time_lbl:
+            fs = self.font_settings.get("clock_panel", 20)
+            self.dock_game_time_lbl.setStyleSheet(f"""
+                font-size: {fs}px;
+                font-weight: 900;
+                color: #f8fafc;
+                font-family: 'Consolas', monospace;
+                background-color: #030712;
+                border: 1px solid #334155;
+                border-radius: 8px;
+                padding: 10px;
+            """)
+
+        # 5. Dashboard Attribute Labels & Character Title
+        if hasattr(self, 'attr_labels') and self.attr_labels:
+            fs = self.font_settings.get("dashboard_cards", 13)
+            for key, lbl in self.attr_labels.items():
+                lbl.setStyleSheet(f"font-size: {fs + 3}px; font-weight: 900; color: #f1f5f9; margin-top: 2px;")
+
+    def show_splash_overlay(self, mode="searching", title=None, msg=None):
+        """Displays or updates the frameless splash screen overlay with status messages."""
+        if not self.splash_screen:
+            self.splash_screen = M59SplashScreen()
+        self.splash_screen.set_status(mode, title, msg)
+        self.splash_screen.show()
+        self.splash_screen.raise_()
+
+    def hide_splash_overlay(self):
+        """Closes and releases the splash screen overlay once initialized."""
+        if self.splash_screen:
+            try:
+                self.splash_screen.close()
+            except Exception:
+                pass
+            self.splash_screen = None
+
+    # ------------------------------------------------------------------
+    # Backend Engine Initialization & Attachment
+    # ------------------------------------------------------------------
+    def init_lifecycle_engine(self):
+        """Starts InstanceManager to search and auto-attach to meridian.exe."""
+        print("[M59-ENGINE] Initializing InstanceManager game attachment loop...", flush=True)
+        if InstanceManager is not None:
+            def _on_conn(pm, pid):
+                print(f"\n[M59-ENGINE] >>> Game Connected Signal Triggered for PID {pid} <<<", flush=True)
+                self.signals.game_connected.emit(pm, pid)
+
+            def _on_disc(pid):
+                print(f"\n[M59-ENGINE] >>> Game Disconnected Signal Triggered for PID {pid} <<<", flush=True)
+                self.signals.game_disconnected.emit(pid)
+
+            def _on_multi(instances):
+                print(f"[M59-ENGINE] Multiple instances found ({len(instances)}). Auto-selecting active process...", flush=True)
+                selected_pid = instances[0]['pid']
+                for inst in instances:
+                    if " --- " in inst.get("title", ""):
+                        selected_pid = inst['pid']
+                        break
+                print(f"[M59-ENGINE] Auto-assigning PID {selected_pid}", flush=True)
+                self.lifecycle.assign_instance(selected_pid)
+
+            self.lifecycle = InstanceManager(
+                target_name=GAME_EXE,
+                on_connect_cb=_on_conn,
+                on_disconnect_cb=_on_disc,
+                on_multiple_found=_on_multi
+            )
+            self.lifecycle.start()
+            print(f"[M59-ENGINE] InstanceManager started monitoring for '{GAME_EXE}'", flush=True)
+        else:
+            print("[M59-ENGINE] InstanceManager module not found! Engine offline.", flush=True)
+            self.status_txt.setText("⚪ Engine Offline (Standalone)")
+            self.status_txt.setStyleSheet("font-size: 11px; font-weight: 700; color: #94a3b8;")
+
+    def on_game_connected(self, pm, pid):
+        self.pm_obj = pm
+        self.target_pid = pid
+        print(f"[M59-ATTACH] Attached to process PID: {pid}", flush=True)
+
+        self.main_hwnd = find_game_hwnd(pid)
+        print(f"[M59-ATTACH] Located main window HWND: {self.main_hwnd}", flush=True)
+        if getattr(self, 'pk_frame', None):
+            self.pk_frame.set_target_hwnd(self.main_hwnd)
+
+        self.status_txt.setText(f"🟢 Attached: meridian.exe (PID: {pid})")
+        self.status_txt.setStyleSheet("font-size: 11px; font-weight: 700; color: #94a3b8;")
+
+        # Update Splash Screen Status
+        self.show_splash_overlay("login", "↻ WAITING FOR CHARACTER LOGIN", "Process attached. Please select a character in Meridian 59.")
+
+        # Start WhoList Monitor
+        if WhoListMonitor and pid:
+            if self.wholist_monitor:
+                try: self.wholist_monitor.stop()
+                except: pass
+            def _on_who(players):
+                self.signals.wholist_updated.emit(players)
+            self.wholist_monitor = WhoListMonitor(pid, _on_who)
+            self.wholist_monitor.start()
+            print("[M59-ATTACH] Started WhoListMonitor background thread.", flush=True)
+
+        # Initialize Inventory Scraper
+        if InventoryScraper and pm:
+            try:
+                self.inventory_scraper = InventoryScraper(pm)
+                print("[M59-ATTACH] InventoryScraper initialized for active process.", flush=True)
+            except Exception as e:
+                print(f"[M59-ATTACH] InventoryScraper init error: {e}", flush=True)
+
+        QTimer.singleShot(1000, self.poll_inventory)
+
+        # Re-detect installation resource directory if attached to process
+        try:
+            from m59_map import detect_installation
+            rooms_dir, _, _ = detect_installation()
+            if rooms_dir and getattr(self, "bgf_manager", None):
+                self.bgf_manager.resource_dir = rooms_dir
+        except Exception:
+            pass
+
+        # Start login check loop
+        self.check_for_login()
+
+    def on_identity_found(self, cid):
+        if cid and cid != "--" and cid != self.char_name:
+            print(f"[M59-LOGIN] Background identity resolved: '{cid}'", flush=True)
+            prev_char = self.char_name
+            self.char_name = cid
+            self.char_name_lbl.setText(f"CHARACTER: {self.char_name}")
+            self.char_sub_lbl.setText(f"ATTACHED & SYNCED | PID: {self.target_pid} | HWND: {self.main_hwnd}")
+            self.combat_monitor = CombatMonitor(self.char_name)
+            self.load_kill_book()
+            self.bank_manager.load_balances(self.char_name)
+            self.load_vault_cache()
+            self.load_knowledge_cache(self.char_name)
+
+            if not getattr(self, '_initial_sync_started', False):
+                self._initial_sync_started = True
+                self.show_splash_overlay("initializing", "↻ INITIALIZING GAME STATE", f"Synchronizing memory state for {self.char_name}...")
+                self.trigger_manual_sync(is_initial=True)
+
+    def check_for_login(self):
+        """Continuously polls window title to detect character login, logoff, and timeout states."""
+        if win32gui and self.target_pid:
+            # Re-verify window handle if lost or recreated
+            if not self.main_hwnd or not win32gui.IsWindow(self.main_hwnd):
+                self.main_hwnd = find_game_hwnd(self.target_pid)
+                if getattr(self, 'pk_frame', None):
+                    self.pk_frame.set_target_hwnd(self.main_hwnd)
+
+            if self.main_hwnd and win32gui.IsWindow(self.main_hwnd):
+                try:
+                    title = win32gui.GetWindowText(self.main_hwnd)
+                    title_clean = title.strip()
+                    title_lower = title_clean.lower()
+
+                    # Exact titles or keywords indicating logged off / character selection screen
+                    logged_off_keywords = [
+                        "select character", "character selection", "login", "server select"
+                    ]
+                    is_bare_m59 = title_lower in ["meridian 59", "meridian59", ""]
+                    is_logged_off = is_bare_m59 or any(kw in title_lower for kw in logged_off_keywords)
+
+                    if not is_logged_off:
+                        # Character is logged into the game!
+                        scraped_char = "--"
+
+                        # 1. Try parsing character name & room from " --- " title format
+                        if " --- " in title:
+                            parts = title.split(" --- ")
+                            if len(parts) >= 2:
+                                sub_parts = parts[0].split(" - ")
+                                if len(sub_parts) >= 2:
+                                    cand = sub_parts[-1].strip()
+                                    if cand and cand.lower() not in ["--", "meridian 59", "meridian59"]:
+                                        scraped_char = cand
+                                room_candidate = parts[1].strip()
+                                if room_candidate and room_candidate != getattr(self, 'current_room_name', None):
+                                    self.signals.room_changed.emit(room_candidate)
+
+                        # 2. Try parsing character name from " - " title format if not found yet
+                        if scraped_char == "--" and " - " in title:
+                            sub_parts = title.split(" - ")
+                            if len(sub_parts) >= 2:
+                                cand = sub_parts[1].strip()
+                                if cand and cand.lower() not in ["--", "meridian 59", "meridian59", "login", "select character", "main screen"]:
+                                    scraped_char = cand
+
+                        # 3. If character name was already known and logged in, keep it
+                        if scraped_char == "--" and self.char_name != "--":
+                            scraped_char = self.char_name
+
+                        # 4. If name still unknown, perform async background identity capture (5s retry cooldown)
+                        if (scraped_char == "--" or self.char_name == "--") and capture_identity and not getattr(self, '_is_capturing_identity', False):
+                            now = time.time()
+                            last_try = getattr(self, '_last_identity_capture_time', 0)
+                            if now - last_try > 5:
+                                self._last_identity_capture_time = now
+                                self._is_capturing_identity = True
+                                def bio_worker():
+                                    try:
+                                        print("[M59-LOGIN] Non-blocking identity capture started...", flush=True)
+                                        cid = capture_identity(self.main_hwnd, self.target_pid)
+                                        if cid and cid != "--":
+                                            self.signals.identity_found.emit(cid)
+                                    except Exception as ex:
+                                        print(f"[M59-LOGIN] Background bio capture exception: {ex}", flush=True)
+                                    finally:
+                                        self._is_capturing_identity = False
+                                threading.Thread(target=bio_worker, daemon=True).start()
+
+                        # 5. Handle character name update / login transition
+                        if scraped_char != "--" and self.char_name != scraped_char:
+                            prev_char = self.char_name
+                            self.char_name = scraped_char
+                            print(f"[M59-LOGIN] Character login detected: '{self.char_name}' (was '{prev_char}')", flush=True)
+
+                            self.char_name_lbl.setText(f"CHARACTER: {self.char_name}")
+                            self.char_sub_lbl.setText(f"ATTACHED & SYNCED | PID: {self.target_pid} | HWND: {self.main_hwnd}")
+                            self.combat_monitor = CombatMonitor(self.char_name)
+                            self.load_kill_book()
+                            self.bank_manager.load_balances(self.char_name)
+                            self.load_vault_cache()
+                            self.load_knowledge_cache(self.char_name)
+
+                            # Show splash overlay initializing state & trigger initial memory scrape
+                            self.show_splash_overlay("initializing", "↻ INITIALIZING GAME STATE", f"Synchronizing memory state for {self.char_name}...")
+                            self.trigger_manual_sync(is_initial=True)
+                            self._initial_sync_started = True
+
+                        # 6. CRITICAL FALLBACK: If game is logged in, but char_name is still "--" and initial sync hasn't run yet, start sync!
+                        elif self.char_name == "--" and not getattr(self, '_initial_sync_started', False):
+                            self._initial_sync_started = True
+                            print("[M59-LOGIN] Active game session detected. Starting initial sync cycle while identity resolves...", flush=True)
+                            self.char_sub_lbl.setText(f"ATTACHED & SYNCING | PID: {self.target_pid} | HWND: {self.main_hwnd}")
+                            self.show_splash_overlay("initializing", "↻ INITIALIZING GAME STATE", "Synchronizing memory state...")
+                            self.trigger_manual_sync(is_initial=True)
+
+                    else:
+                        # Character is NOT logged in (timed out or back at character select / login screen)
+                        self._initial_sync_started = False
+                        if self.char_name != "--":
+                            print(f"[M59-LOGIN] Timeout / logoff detected! Resetting state from '{self.char_name}' to '--'.", flush=True)
+                            self.char_name = "--"
+                            self.char_name_lbl.setText("CHARACTER: --")
+                            self.char_sub_lbl.setText(f"ATTACHMENT: Waiting for character login | PID: {self.target_pid}")
+
+                            # Show splash overlay for login wait
+                            self.show_splash_overlay("login", "↻ WAITING FOR CHARACTER LOGIN", "Session timed out or logged off. Please select a character in Meridian 59.")
+                except Exception as e:
+                    print(f"[M59-LOGIN] Error checking login status: {e}", flush=True)
+
+        # Schedule continuous loop re-check every 1.5 seconds
+        QTimer.singleShot(1500, self.check_for_login)
+
+    def on_game_disconnected(self, pid):
+        print(f"[M59-DISC] Game process PID {pid} disconnected.", flush=True)
+        self.status_txt.setText("🟡 Searching for meridian.exe...")
+        self.status_txt.setStyleSheet("font-size: 11px; font-weight: 700; color: #f59e0b;")
+
+        self.char_name = "--"
+        self.target_pid = None
+        self.pm_obj = None
+        self.main_hwnd = None
+        if getattr(self, 'pk_frame', None):
+            self.pk_frame.set_target_hwnd(None)
+        self.inventory_scraper = None
+
+        self.char_name_lbl.setText("CHARACTER: --")
+        self.char_sub_lbl.setText("ATTACHMENT: Waiting for active Meridian 59 game process...")
+
+        if self.wholist_monitor:
+            try: self.wholist_monitor.stop()
+            except: pass
+            self.wholist_monitor = None
+
+        self.update_inventory_ui(0, 0, 0.0, 0.0, 1700, [])
+
+        self.show_splash_overlay("searching", "↻ SCANNING FOR GAME PROCESS", "Please launch Meridian 59 (meridian.exe) to continue...")
+
+    # ------------------------------------------------------------------
+    # Manual & Automatic Memory Sync Engine
+    # ------------------------------------------------------------------
+    def trigger_manual_sync(self, is_initial=False):
+        print("[M59-SYNC] Manual Memory Scrape Cycle Triggered.", flush=True)
+        if not self.pm_obj or not self.main_hwnd:
+            print("[M59-SYNC] Memory scrape skipped: Game process not attached.", flush=True)
+            return
+
+        self._is_initial_sync = is_initial
+        self.sync_btn.setEnabled(False)
+        self.sync_btn.setText("⏳ Scraping Memory...")
+
+        def scrape_worker():
+            try:
+                if cycle_tabs_and_scrape and MemoryReader:
+                    mr = MemoryReader(self.pm_obj)
+                    kn, st = cycle_tabs_and_scrape(self.main_hwnd, mr)
+                    if st:
+                        print(f"[M59-SYNC] Memory Scrape Success! Received stats: {st}", flush=True)
+                        self.signals.sync_stats_received.emit(st)
+                    if kn:
+                        print(f"[M59-SYNC] Memory Scrape Success! Received knowledge dict ({len(kn)} entries): {kn}", flush=True)
+                        self.signals.knowledge_updated.emit(kn)
+                    if not st and not kn:
+                        print("[M59-SYNC] Memory scrape yielded no stats (UI tab transition needed).", flush=True)
+            except Exception as e:
+                print(f"[M59-SYNC] Error during memory scrape: {e}", flush=True)
+            finally:
+                self.signals.scrape_finished.emit()
+
+        threading.Thread(target=scrape_worker, daemon=True).start()
+
+    def on_scrape_finished(self):
+        """Qt Slot called on main GUI thread when memory scrape cycle finishes."""
+        self.sync_btn.setEnabled(True)
+        self.sync_btn.setText("🔄 Scrape Memory Stats")
+
+        if getattr(self, "_is_initial_sync", False):
+            self._is_initial_sync = False
+            self.show_splash_overlay("connected", f"🟢 CONNECTED: {self.char_name.upper()}", "Game state & memory synchronized successfully!")
+            QTimer.singleShot(1200, self.hide_splash_overlay)
+
+    def update_gui_stats(self, stats):
+        print(f"[M59-GUI] Updating GUI with real scraped stats: {stats}", flush=True)
+
+        # Update Vitals
+        if "HP" in stats:
+            self.hp_current = stats["HP"]
+            if self.hp_max == 0 or self.hp_current > self.hp_max:
+                self.hp_max = max(self.hp_current, 150)
+            pct = int((self.hp_current / self.hp_max) * 100) if self.hp_max > 0 else 0
+            self.hp_bar_widget['v_lbl'].setText(f"{self.hp_current} / {self.hp_max}")
+            self.hp_bar_widget['pbar'].setValue(pct)
+
+        if "MP" in stats:
+            self.mp_current = stats["MP"]
+            if self.mp_max == 0 or self.mp_current > self.mp_max:
+                self.mp_max = max(self.mp_current, 250)
+            pct = int((self.mp_current / self.mp_max) * 100) if self.mp_max > 0 else 0
+            self.mp_bar_widget['v_lbl'].setText(f"{self.mp_current} / {self.mp_max}")
+            self.mp_bar_widget['pbar'].setValue(pct)
+
+        if "VG" in stats:
+            self.vg_current = stats["VG"]
+            if self.vg_max == 0 or self.vg_current > self.vg_max:
+                self.vg_max = max(self.vg_current, 200)
+            pct = int((self.vg_current / self.vg_max) * 100) if self.vg_max > 0 else 0
+            self.vg_bar_widget['v_lbl'].setText(f"{self.vg_current} / {self.vg_max}")
+            self.vg_bar_widget['pbar'].setValue(pct)
+
+        # Update Attributes
+        attr_keys = ["Might", "Intellect", "Stamina", "Agility", "Mysticism", "Aim", "Karma"]
+        for k in attr_keys:
+            if k in stats:
+                self.attributes[k] = stats[k]
+                if k in self.attr_labels:
+                    self.attr_labels[k].setText(str(stats[k]))
+
+        if "Intellect" in stats:
+            self.update_progression_ui()
+
+        if "Might" in stats:
+            self.poll_inventory()
+
+    def update_wholist_gui(self, players):
+        self.wholist_data = players or {}
+        self.who_list_widget.clear()
+
+        query = self.who_search_input.text().lower().strip()
+        filtered_count = 0
+
+        status_colors = {
+            "INNOCENT": "#e0e0e0",
+            "WHITE": "#e0e0e0",
+            "OUTLAW": "#ff9f43",
+            "ORANGE": "#ff9f43",
+            "MURDERER": "#ff6b6b",
+            "RED": "#ff6b6b",
+            "STAFF": "#48dbfb",
+            "BLUE": "#48dbfb",
+            "CREATOR": "#ffd32a",
+            "YELLOW": "#ffd32a"
+        }
+
+        def player_sort_key(item):
+            name, status = item
+            s = str(status).upper() if status else "INNOCENT"
+            if s in ("MURDERER", "RED"):
+                group = 0
+            elif s in ("OUTLAW", "ORANGE"):
+                group = 1
+            elif s in ("INNOCENT", "WHITE"):
+                group = 3
+            else:
+                # Other colors (CREATOR / YELLOW, STAFF / BLUE, etc.)
+                group = 2
+            return (group, str(name).lower())
+
+        fs = getattr(self, 'font_settings', {}).get("player_list", 13)
+
+        sorted_players = sorted(self.wholist_data.items(), key=player_sort_key)
+
+        for name, status in sorted_players:
+            if query and query not in str(name).lower():
+                continue
+
+            filtered_count += 1
+            color = status_colors.get(str(status).upper(), "#e0e0e0")
+
+            item_widget = QWidget()
+            item_layout = QHBoxLayout(item_widget)
+            item_layout.setContentsMargins(10, 4, 10, 4)
+            item_layout.setSpacing(6)
+
+            name_lbl = QLabel(name)
+            name_lbl.setStyleSheet(f"font-size: {fs}px; font-weight: 700; color: {color}; background: transparent;")
+            item_layout.addWidget(name_lbl)
+            item_layout.addStretch()
+
+            list_item = QListWidgetItem()
+            list_item.setSizeHint(QSize(0, max(32, fs + 16)))
+            self.who_list_widget.addItem(list_item)
+            self.who_list_widget.setItemWidget(list_item, item_widget)
+
+        self.who_count_badge.setText(f"{len(self.wholist_data)} Online")
+
+    # ------------------------------------------------------------------
+    # Clock & Timer Tick Handler
+    # ------------------------------------------------------------------
+    def on_clock_tick(self):
+        self.session_seconds += 1
+        # Update World Clock
+        info = get_game_time()
+        time_str = format_game_time(info, use_24h=self.use_24h_clock)
+        self.dock_game_time_lbl.setText(time_str)
+
+    # ------------------------------------------------------------------
+    # Log Processing & Parsing Engine
+    # ------------------------------------------------------------------
+    def start_chat_monitor(self):
+        """Monitors game HWND 1005 (Chat edit control) directly in real-time."""
+        print("[M59-CHAT] Starting live HWND chat control monitor...", flush=True)
+
+        def monitor_task():
+            last_lines = []
+            ch_hwnd = None
+
+            while True:
+                time.sleep(0.4)
+                if not self.main_hwnd or not win32gui:
+                    ch_hwnd = None
+                    continue
+
+                try:
+                    if win32gui.IsWindow(self.main_hwnd):
+                        ch_hwnd = win32gui.GetDlgItem(self.main_hwnd, 1005)
+
+                    if ch_hwnd and win32gui.IsWindow(ch_hwnd) and get_text_from_hwnd:
+                        raw_text = get_text_from_hwnd(ch_hwnd)
+                        if raw_text:
+                            cur_lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+                            if cur_lines:
+                                if not last_lines:
+                                    last_lines = cur_lines[-50:]
+                                else:
+                                    new_lines = []
+                                    found = -1
+                                    tail = list(last_lines)
+                                    while tail:
+                                        tl = len(tail)
+                                        search = cur_lines[-100-tl:] if len(cur_lines) > 100 else cur_lines
+                                        off = len(cur_lines) - len(search)
+                                        for i in range(len(search) - tl, -1, -1):
+                                            if search[i:i+tl] == tail:
+                                                found = off + i + tl
+                                                break
+                                        if found != -1:
+                                            break
+                                        tail.pop(0)
+
+                                    if found != -1:
+                                        new_lines = cur_lines[found:]
+                                    else:
+                                        new_lines = cur_lines
+
+                                    if new_lines:
+                                        safe_n = get_safe_name(self.char_name if self.char_name and self.char_name != "--" else "game")
+                                        log_p = os.path.join("settings", f"{safe_n}_chat.log")
+                                        os.makedirs("settings", exist_ok=True)
+                                        ts = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+
+                                        try:
+                                            with open(log_p, "a", encoding="utf-8") as f:
+                                                for line in new_lines:
+                                                    f.write(f"{ts} {line}\n")
+                                                    self.signals.log_line_received.emit(line)
+                                                f.flush()
+                                        except Exception:
+                                            for line in new_lines:
+                                                self.signals.log_line_received.emit(line)
+
+                                        last_lines = cur_lines[-50:]
+                except Exception:
+                    pass
+
+        threading.Thread(target=monitor_task, daemon=True).start()
+
+    def start_log_tail_loop(self):
+        """Periodically tails active character's or most recent chat log file."""
+        print("[M59-TAIL] Log tailing loop initialized.", flush=True)
+
+        def tail_task():
+            last_pos = 0
+            last_file = ""
+            while True:
+                time.sleep(0.4)
+                log_p = None
+                if self.char_name and self.char_name != "--":
+                    safe_n = get_safe_name(self.char_name)
+                    log_p = os.path.join("settings", f"{safe_n}_chat.log")
+
+                if not log_p or not os.path.exists(log_p):
+                    if os.path.exists("settings"):
+                        log_files = [os.path.join("settings", f) for f in os.listdir("settings") if f.endswith(".log") and "debug" not in f.lower()]
+                        if log_files:
+                            log_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                            log_p = log_files[0]
+
+                if log_p and os.path.exists(log_p):
+                    try:
+                        curr_size = os.path.getsize(log_p)
+                        if log_p != last_file or curr_size < last_pos:
+                            last_file = log_p
+                            last_pos = curr_size
+                            print(f"[M59-TAIL] Tailing active chat log file: {log_p}", flush=True)
+
+                        if curr_size > last_pos:
+                            with open(log_p, "r", encoding="utf-8", errors="ignore") as f:
+                                f.seek(last_pos)
+                                lines = f.readlines()
+                                for l in lines:
+                                    if l.strip():
+                                        self.signals.log_line_received.emit(l.strip())
+                                last_pos = f.tell()
+                    except Exception as e:
+                        print(f"[M59-TAIL] Error reading log file {log_p}: {e}", flush=True)
+
+        threading.Thread(target=tail_task, daemon=True).start()
+
+    def process_log_line(self, line):
+        if not line or not line.strip():
+            return
+
+        raw_line = line.strip()
+
+        # Ignore terminal/system internal debug output lines if any slip in
+        if any(raw_line.startswith(prefix) for prefix in [
+            "[M59-", "DEBUG:", "INFO:", "WARNING:", "ERROR:", "Traceback", "File \"", "[PySide6]"
+        ]):
+            return
+
+        # Extract timestamp if line has [YYYY-MM-DD HH:MM:SS] or [HH:MM:SS] or [HH:MM]
+        ts_match = re.match(r"^\[(?:\d{4}-\d{2}-\d{2}\s+)?(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.*)$", raw_line)
+        if ts_match:
+            msg_ts = ts_match.group(1)
+            msg_text = ts_match.group(2).strip()
+        else:
+            msg_ts = datetime.now().strftime("%H:%M:%S")
+            msg_text = raw_line
+
+        if not msg_text:
+            return
+
+        # Prevent duplicate entries (within short timeframe or identical timestamp+text)
+        dedup_key = (msg_ts, msg_text)
+        now_time = time.time()
+        if hasattr(self, 'recent_log_fingerprints'):
+            for stored_key, stored_time in list(self.recent_log_fingerprints):
+                if stored_key == dedup_key and (now_time - stored_time) < 3.0:
+                    return
+                if stored_key[1] == msg_text and (now_time - stored_time) < 1.0:
+                    return
+            self.recent_log_fingerprints.append((dedup_key, now_time))
+        else:
+            self.recent_log_fingerprints = deque([(dedup_key, now_time)], maxlen=250)
+
+        # 0. Check Bank updates
+        if hasattr(self, 'bank_manager') and self.bank_manager.process_line(msg_text):
+            self.update_bank_ui()
+
+        # 1. Check SessionTracker for Improves
+        gain = self.tracker.process_line(msg_text)
+        if gain:
+            found_row = -1
+            for r in range(self.imp_table.rowCount()):
+                item = self.imp_table.item(r, 0)
+                if item and item.text().lower() == gain['name'].lower():
+                    found_row = r
+                    break
+
+            if found_row != -1:
+                self.imp_table.setItem(found_row, 1, QTableWidgetItem(str(gain['count'])))
+                self.imp_table.setItem(found_row, 2, QTableWidgetItem(gain['delta']))
+                self.imp_table.setItem(found_row, 3, QTableWidgetItem(msg_ts))
+            else:
+                row = self.imp_table.rowCount()
+                self.imp_table.insertRow(row)
+                self.imp_table.setItem(row, 0, QTableWidgetItem(gain['name']))
+                self.imp_table.setItem(row, 1, QTableWidgetItem(str(gain['count'])))
+                self.imp_table.setItem(row, 2, QTableWidgetItem(gain['delta']))
+                self.imp_table.setItem(row, 3, QTableWidgetItem(msg_ts))
+
+            self.improves_history.append(msg_text)
+            self.imp_count_badge.setText(f"{len(self.improves_history)} Gains")
+            self.add_log_entry(msg_ts, "improves", msg_text)
+
+            # Update progression knowledge cache
+            skill_k = gain['name'].lower()
+            if skill_k != "hit points":
+                cur_val = self.knowledge_cache.get(skill_k, 0)
+                self.knowledge_cache[skill_k] = min(99, max(cur_val + 1, 1))
+                self.save_knowledge_cache()
+                self.update_progression_ui()
+            return
+
+        # 2. Check CombatMonitor for Kills / PK Alerts
+        kill = self.combat_monitor.process_line(msg_text)
+        if kill:
+            if kill.get("type") == "PK_ALERT":
+                self.trigger_pk_alert()
+            elif kill.get("type") == "KILL":
+                category = kill['category']
+                victim = kill['name']
+
+                if category not in self.session_kills:
+                    self.session_kills[category] = {}
+                self.session_kills[category][victim] = self.session_kills[category].get(victim, 0) + 1
+                session_count = self.session_kills[category][victim]
+
+                found_row = -1
+                for r in range(self.kill_table.rowCount()):
+                    item = self.kill_table.item(r, 0)
+                    if item and item.text().lower() == victim.lower():
+                        found_row = r
+                        break
+
+                if found_row != -1:
+                    self.kill_table.setItem(found_row, 1, QTableWidgetItem(category.capitalize()))
+                    self.kill_table.setItem(found_row, 2, QTableWidgetItem(str(session_count)))
+                    self.kill_table.setItem(found_row, 3, QTableWidgetItem(msg_ts))
+                else:
+                    row = self.kill_table.rowCount()
+                    self.kill_table.insertRow(row)
+                    self.kill_table.setItem(row, 0, QTableWidgetItem(victim))
+                    self.kill_table.setItem(row, 1, QTableWidgetItem(category.capitalize()))
+                    self.kill_table.setItem(row, 2, QTableWidgetItem(str(session_count)))
+                    self.kill_table.setItem(row, 3, QTableWidgetItem(msg_ts))
+
+                self.kills_history.append(msg_text)
+                total_session_kills = sum(sum(c.values()) for c in self.session_kills.values())
+                self.kill_count_badge.setText(f"{total_session_kills} Kills")
+                self.add_log_entry(msg_ts, "combat", msg_text)
+
+                if hasattr(self, 'update_killbook_ui'):
+                    self.update_killbook_ui()
+                return
+
+        # 3. Channel Categorization
+        channel = "system"
+        lower = msg_text.lower()
+        if "tells you" in lower or "you tell " in lower or msg_text.startswith("[Tell]") or msg_text.startswith("[Private]") or msg_text.startswith("Tell:") or msg_text.startswith("Private:"):
+            channel = "private"
+        elif "says," in lower or msg_text.startswith("[Say]"):
+            channel = "chat"
+        elif msg_text.startswith("[Guild]"):
+            channel = "guild"
+        elif "killed" in lower or "fatal blow" in lower or "collapses" in lower:
+            channel = "combat"
+        elif "improved" in lower or "tougher" in lower:
+            channel = "improves"
+
+        self.add_log_entry(msg_ts, channel, msg_text)
+
+    def add_log_entry(self, timestamp, channel, text):
+        entry = {"ts": timestamp, "channel": channel, "text": text}
+        self.chat_logs.append(entry)
+        if channel == "private":
+            self.play_tell_alert()
+            if getattr(self, 'active_channel', 'all') != 'private':
+                self.unread_private_count = getattr(self, 'unread_private_count', 0) + 1
+                if hasattr(self, 'channel_btns') and 'private' in self.channel_btns:
+                    self.channel_btns['private'].setText(f"Private ({self.unread_private_count})")
+        self.render_chat_line(entry)
+        if hasattr(self, 'active_floating_chat') and self.active_floating_chat:
+            try:
+                self.active_floating_chat.append_entry(entry)
+            except Exception:
+                pass
+
+    def render_chat_line(self, entry):
+        color = "#e2e8f0"
+        if entry['channel'] == "improves":
+            color = "#34d399"
+        elif entry['channel'] == "combat":
+            color = "#f87171"
+        elif entry['channel'] == "private":
+            color = "#a855f7"
+        elif entry['channel'] == "guild":
+            color = "#c084fc"
+        elif entry['channel'] == "chat":
+            color = "#60a5fa"
+        elif entry['channel'] == "system":
+            color = "#fbbf24"
+
+        fs = getattr(self, 'font_settings', {}).get("chat_logger", 13)
+        ts_fs = max(9, fs - 2)
+        raw_text = entry.get('text', '')
+        text_escaped = raw_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        line_html = f"<div style='margin-bottom: 4px;'><span style='color: #64748b; font-size: {ts_fs}px;'>[{entry['ts']}]</span> <span style='color: {color}; font-weight: 600; font-size: {fs}px;'>{text_escaped}</span></div>"
+
+        if self.active_channel == "all" or self.active_channel == entry['channel']:
+            query = self.chat_search.text().lower()
+            if not query or query in raw_text.lower():
+                self.chat_stream_view.append(line_html)
+                self.chat_stream_view.moveCursor(QTextCursor.End)
+
+    def set_chat_channel_filter(self, channel_id):
+        self.active_channel = channel_id
+        if channel_id == "private":
+            self.unread_private_count = 0
+            if hasattr(self, 'channel_btns') and 'private' in self.channel_btns:
+                self.channel_btns['private'].setText("Private")
+        for cid, btn in self.channel_btns.items():
+            btn.setProperty("active", "true" if cid == channel_id else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        self.filter_chat_stream()
+
+    def filter_chat_stream(self):
+        self.chat_stream_view.clear()
+        query = self.chat_search.text().lower()
+        for entry in self.chat_logs:
+            if self.active_channel == "all" or self.active_channel == entry['channel']:
+                if not query or query in entry['text'].lower():
+                    self.render_chat_line(entry)
+
+    def parse_chat_input(self):
+        text = self.chat_input.text().strip()
+        if not text:
+            return
+        self.process_log_line(text)
+        self.chat_input.clear()
+
+    # ------------------------------------------------------------------
+    # Historical Log Files Loader & Importer
+    # ------------------------------------------------------------------
+    def refresh_historical_logs_list(self):
+        self.hist_log_list.clear()
         if not os.path.exists("settings"):
             os.makedirs("settings", exist_ok=True)
+
         files = [f for f in os.listdir("settings") if f.endswith(".log") and "debug" not in f.lower()]
         files.sort(key=lambda x: os.path.getmtime(os.path.join("settings", x)), reverse=True)
-        
-        self.log_file_list.delete(0, tk.END)
+
         for f in files:
-            self.log_file_list.insert(tk.END, f)
+            self.hist_log_list.addItem(f)
 
-    def setup_tab_gps(self):
-        """Creates the enhanced GPS Navigation & Discovery tab."""
-        # Main container with two columns
-        main_cont = tk.Frame(self.tab_gps, bg="#f0f0f0")
-        main_cont.pack(fill="both", expand=True)
+    def load_selected_historical_log(self, item):
+        filename = item.text()
+        file_path = os.path.join("settings", filename)
+        if os.path.exists(file_path):
+            self.comms_mode = "history"
+            self.mode_btn.setText(f"📂 HISTORY: {filename[:12]}..")
+            self.mode_btn.setStyleSheet("color: #60a5fa; font-weight: 800;")
+            self.chat_logs.clear()
+            self.chat_stream_view.clear()
 
-        # --- LEFT COLUMN: Destination & Search ---
-        left_col = tk.Frame(main_cont, bg="#f0f0f0", width=300)
-        left_col.pack(side="left", fill="both", padx=10, pady=10)
-        left_col.pack_propagate(False)
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if line.strip():
+                        self.process_log_line(line.strip())
 
-        tk.Label(left_col, text="🔍 Destination", font=("Arial", 11, "bold"), bg="#f0f0f0").pack(anchor="w")
-        
-        self.gps_search_var = tk.StringVar()
-        self.gps_search_var.trace_add("write", lambda *a: self.filter_gps_destinations())
-        search_ent = tk.Entry(left_col, textvariable=self.gps_search_var, font=("Arial", 10))
-        search_ent.pack(fill="x", pady=5)
-        search_ent.bind("<Return>", lambda e: self.start_navigation())
-        
-        # Current Location Display
-        self.gps_loc_f = tk.Frame(left_col, bg="#E3F2FD", padx=5, pady=5, bd=1, relief=tk.SOLID)
-        self.gps_loc_f.pack(fill="x", pady=(5, 10))
-        tk.Label(self.gps_loc_f, text="📍 YOU ARE HERE:", font=("Arial", 8, "bold"), bg="#E3F2FD", fg="#1976D2").pack(anchor="w")
-        self.gps_current_loc_lbl = tk.Label(self.gps_loc_f, text="Unknown", font=("Arial", 10, "bold"), bg="#E3F2FD", fg="#0D47A1", wraplength=250)
-        self.gps_current_loc_lbl.pack(anchor="w")
-        self.gps_loc_f.bind("<Configure>", self.on_gps_loc_resize)
+    def return_to_live_stream(self):
+        self.comms_mode = "live"
+        self.mode_btn.setText("🟢 LIVE STREAM")
+        self.mode_btn.setStyleSheet("color: #94a3b8; font-weight: 800;")
+        self.chat_logs.clear()
+        self.chat_stream_view.clear()
+        if hasattr(self, 'active_floating_chat') and self.active_floating_chat:
+            try:
+                self.active_floating_chat.filter_chat()
+            except Exception:
+                pass
 
-        # Results List
-        self.gps_dest_list = tk.Listbox(left_col, font=("Arial", 9), bg="white", selectmode="single")
-        self.gps_dest_list.pack(fill="both", expand=True, pady=5)
-        self.gps_dest_list.bind("<<ListboxSelect>>", self.on_gps_dest_select)
-        
-        btn_f = tk.Frame(left_col, bg="#f0f0f0")
-        btn_f.pack(fill="x")
-        
-        self.gps_start_btn = tk.Button(btn_f, text="START GPS", bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), 
-                                       command=self.start_navigation, state="disabled")
-        self.gps_start_btn.pack(side="left", fill="x", expand=True, padx=(0,2))
-        
-        self.gps_stop_btn = tk.Button(btn_f, text="STOP", bg="#f44336", fg="white", font=("Arial", 10, "bold"), 
-                                      command=self.stop_navigation, state="disabled")
-        self.gps_stop_btn.pack(side="left", fill="x", expand=True, padx=(2,0))
+    def import_log_file_dialog(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import Meridian 59 Log File", "", "Log Files (*.log *.txt)")
+        if file_path and os.path.exists(file_path):
+            self.comms_mode = "history"
+            self.mode_btn.setText("📂 IMPORTED")
+            self.mode_btn.setStyleSheet("color: #c084fc; font-weight: 800;")
+            self.chat_logs.clear()
+            self.chat_stream_view.clear()
 
-        # --- RIGHT COLUMN: Directions & Map ---
-        right_col = tk.Frame(main_cont, bg="#f0f0f0")
-        right_col.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if line.strip():
+                        self.process_log_line(line.strip())
 
-        # Current Step Banner
-        step_f = tk.LabelFrame(right_col, text=" NEXT STEP ", bg="#f0f0f0", font=("Arial", 10, "bold"), fg="#1565C0")
-        step_f.pack(fill="x", pady=(0, 10))
-        
-        self.gps_instruction_lbl = tk.Label(step_f, text="Select a destination to begin...", 
-                                            font=("Arial", 14, "bold"), fg="#212121", bg="white", 
-                                            wraplength=600, justify="center", height=3)
-        self.gps_instruction_lbl.pack(fill="x", padx=10, pady=10)
+    # ----------------------------------------------------------------------
+    # GPS Navigation Engine & UI Handlers
+    # ----------------------------------------------------------------------
+    def create_room_completer(self, parent_widget):
+        if not hasattr(self, 'gps_manager') or not self.gps_manager:
+            return None
+        options = self.gps_manager.get_room_options()
+        self.gps_room_options = options
+        display_names = [opt['display'] for opt in options]
 
-        # Route Preview
-        route_f = tk.LabelFrame(right_col, text=" Route Preview ", bg="#f0f0f0", font=("Arial", 10, "bold"))
-        route_f.pack(fill="both", expand=True)
-        
-        self.gps_route_view = scrolledtext.ScrolledText(route_f, font=("Consolas", 10), bg="#1e1e1e", fg="#00FF00")
-        self.gps_route_view.pack(fill="both", expand=True, padx=5, pady=5)
+        completer = QCompleter(display_names, parent_widget)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setMaxVisibleItems(8)
 
-        # --- FOOTER: Beta Disclaimer ---
-        footer = tk.Frame(self.tab_gps, bg="#FFF9C4", bd=1, relief=tk.SOLID)
-        footer.pack(fill="x", side="bottom", padx=10, pady=5)
-        
-        tk.Label(footer, text=" ⚠ BETA: GPS Navigation is under development. Map data may be incomplete.", 
-                 font=("Arial", 9, "bold"), bg="#FFF9C4", fg="#F57F17").pack(side="left", padx=10, pady=5)
-        
-        import webbrowser
-        btn = tk.Button(footer, text="Report Issue on GitHub", font=("Arial", 8, "underline"), 
-                        fg="#1565C0", bg="#FFF9C4", bd=0, cursor="hand2",
-                        command=lambda: webbrowser.open("https://github.com/subvhome/m59-companion/issues/new"))
-        btn.pack(side="right", padx=10)
+        popup = completer.popup()
+        popup.setStyleSheet("""
+            QAbstractItemView {
+                background-color: #0b1120;
+                color: #f8fafc;
+                border: 1px solid #334155;
+                selection-background-color: #2563eb;
+                selection-color: #ffffff;
+                font-size: 11px;
+                padding: 3px;
+            }
+        """)
+        return completer
 
-        # Initial data load
-        self.gps_all_options = self.gps_manager.get_room_options()
-        self.filter_gps_destinations()
+    def get_target_rid_from_text(self, text):
+        text = (text or "").strip()
+        if not text or not hasattr(self, 'gps_room_options'):
+            return None
+        for opt in self.gps_room_options:
+            if opt['display'].lower() == text.lower():
+                return opt['rid']
+        for opt in self.gps_room_options:
+            if opt['name'].lower() == text.lower():
+                return opt['rid']
+        for opt in self.gps_room_options:
+            if text.lower() in opt['display'].lower():
+                return opt['rid']
+        return self.gps_manager.resolve_name_to_rid(text)
 
-    def filter_gps_destinations(self):
-        """Updates the destination listbox based on search query."""
-        query = self.gps_search_var.get().lower()
-        self.gps_dest_list.delete(0, tk.END)
-        self.gps_current_matches = []
-        
-        for opt in self.gps_all_options:
-            if query in opt['display'].lower():
-                self.gps_dest_list.insert(tk.END, opt['display'])
-                self.gps_current_matches.append(opt)
+    def refresh_dock_layouts(self):
+        if hasattr(self, 'dock_sub_grid') and self.dock_sub_grid:
+            self.dock_sub_grid.refresh_layout()
+        if hasattr(self, 'dock_grid') and self.dock_grid:
+            self.dock_grid.refresh_layout()
 
-    def on_gps_dest_select(self, event):
-        """Handles selection of a destination from the list."""
-        idx = self.gps_dest_list.curselection()
-        if idx:
-            self.gps_start_btn.config(state="normal")
+    def start_navigation(self, target_rid=None, source_text=None):
+        if target_rid is None and source_text:
+            target_rid = self.get_target_rid_from_text(source_text)
 
-    def start_navigation(self, target_rid=None):
-        """Calculates and starts a new navigation route."""
-        if target_rid is None:
-            idx = self.gps_dest_list.curselection()
-            if not idx: return
-            target = self.gps_current_matches[idx[0]]
-            target_rid = target['rid']
-        
-        self.gps_manager.current_destination_rid = target_rid
-        
-        # Resolve current location RID
-        cur_name = self.get_current_room()
-        start_rid = self.gps_manager.resolve_name_to_rid(cur_name)
-        
-        if not start_rid:
-            self.gps_log(f"Error: Cannot resolve current location RID for '{cur_name}'")
+        if target_rid is None and hasattr(self, 'gps_main_search'):
+            target_rid = self.get_target_rid_from_text(self.gps_main_search.text())
+
+        if target_rid is None and hasattr(self, 'dock_gps_search'):
+            target_rid = self.get_target_rid_from_text(self.dock_gps_search.text())
+
+        if not target_rid:
+            if hasattr(self, 'gps_instruction_lbl'):
+                self.gps_instruction_lbl.setText("Please enter or select a valid destination.")
+            if hasattr(self, 'dock_gps_dir_lbl'):
+                self.dock_gps_dir_lbl.setText("INVALID DESTINATION")
+                self.dock_gps_dir_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #ef4444;")
+            if hasattr(self, 'dock_gps_detail_lbl'):
+                self.dock_gps_detail_lbl.setText("Room not found in GPS dataset!")
+                self.dock_gps_detail_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #f87171;")
+            if hasattr(self, 'dock_gps_status_lbl'):
+                self.dock_gps_status_lbl.setText("ERROR")
+            self.refresh_dock_layouts()
             return
-            
+
+        cur_room = getattr(self, 'current_room_name', 'Unknown Location')
+        start_rid = self.gps_manager.resolve_name_to_rid(cur_room)
+
+        if not start_rid:
+            if hasattr(self, 'gps_instruction_lbl'):
+                self.gps_instruction_lbl.setText(f"Cannot resolve current location ({cur_room})")
+            if hasattr(self, 'dock_gps_dir_lbl'):
+                self.dock_gps_dir_lbl.setText("UNKNOWN LOCATION")
+                self.dock_gps_dir_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #f59e0b;")
+            if hasattr(self, 'dock_gps_detail_lbl'):
+                self.dock_gps_detail_lbl.setText(f"Location: {cur_room}")
+                self.dock_gps_detail_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #fbbf24;")
+            if hasattr(self, 'dock_gps_status_lbl'):
+                self.dock_gps_status_lbl.setText("ERROR")
+            self.refresh_dock_layouts()
+            return
+
         path = self.gps_manager.find_path(start_rid, target_rid)
         if path is not None:
             self.gps_manager.current_path = path
             self.gps_manager.current_step_index = 0
-            self.gps_start_btn.config(text="START GPS", state="disabled")
-            self.gps_stop_btn.config(state="normal")
+            self.gps_manager.current_destination_rid = target_rid
+
+            target_name = self.gps_manager.dataset.get(target_rid, {}).get('name', 'Target')
+            if hasattr(self, 'gps_main_target_lbl'):
+                self.gps_main_target_lbl.setText(f"🏁 TARGET: {target_name}")
+            if hasattr(self, 'dock_gps_target_lbl'):
+                self.dock_gps_target_lbl.setText(target_name)
+
             self.update_gps_navigation_ui()
-            logger.info(f"GPS: Started navigation to RID {target_rid}")
         else:
-            self.gps_instruction_lbl.config(text="NO PATH FOUND", fg="#f44336")
-            logger.error(f"GPS: No path found from {start_rid} to {target_rid}")
+            if hasattr(self, 'gps_instruction_lbl'):
+                self.gps_instruction_lbl.setText("NO PATH FOUND in dataset!")
+            if hasattr(self, 'dock_gps_dir_lbl'):
+                self.dock_gps_dir_lbl.setText("NO PATH FOUND")
+                self.dock_gps_dir_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #ef4444;")
+            if hasattr(self, 'dock_gps_detail_lbl'):
+                self.dock_gps_detail_lbl.setText("Destination not reachable")
+                self.dock_gps_detail_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #f87171;")
+            if hasattr(self, 'dock_gps_status_lbl'):
+                self.dock_gps_status_lbl.setText("NO PATH")
+            self.refresh_dock_layouts()
 
     def stop_navigation(self):
-        """Clears navigation state."""
-        self.gps_manager.current_destination_rid = None
-        self.gps_manager.current_path = []
-        self.gps_instruction_lbl.config(text="Select a destination to begin...", fg="#212121")
-        self.gps_route_view.config(state="normal")
-        self.gps_route_view.delete("1.0", tk.END)
-        self.gps_route_view.config(state="disabled")
-        self.gps_stop_btn.config(state="disabled")
-        self.gps_start_btn.config(text="START GPS", state="normal")
+        if hasattr(self, 'gps_manager') and self.gps_manager:
+            self.gps_manager.current_destination_rid = None
+            self.gps_manager.current_path = []
+
+        if hasattr(self, 'gps_instruction_lbl'):
+            self.gps_instruction_lbl.setText("Select a destination to begin navigation...")
+            self.gps_instruction_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #f1f5f9;")
+        if hasattr(self, 'gps_main_target_lbl'):
+            self.gps_main_target_lbl.setText("🏁 TARGET: None")
+        if hasattr(self, 'dock_gps_target_lbl'):
+            self.dock_gps_target_lbl.setText("No Target")
+        if hasattr(self, 'dock_gps_dir_lbl'):
+            self.dock_gps_dir_lbl.setText("SELECT DESTINATION")
+            self.dock_gps_dir_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #38bdf8;")
+        if hasattr(self, 'dock_gps_detail_lbl'):
+            self.dock_gps_detail_lbl.setText("Enter room name & press GO")
+            self.dock_gps_detail_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #94a3b8;")
+        if hasattr(self, 'dock_gps_status_lbl'):
+            self.dock_gps_status_lbl.setText("READY")
+        if hasattr(self, 'gps_route_list'):
+            self.gps_route_list.clear()
+
+        self.refresh_dock_layouts()
 
     def update_gps_navigation_ui(self):
-        """Updates the labels and path preview for active navigation."""
-        path = self.gps_manager.current_path
-        step_idx = self.gps_manager.current_step_index
-        
-        self.gps_route_view.config(state="normal")
-        self.gps_route_view.delete("1.0", tk.END)
-        
-        if not path:
-            msg = "ARRIVED!\nYou have reached your destination."
-            self.gps_instruction_lbl.config(text=msg, fg="#4CAF50")
-            self.gps_route_view.insert(tk.END, "--- Destination Reached ---")
-            self.gps_route_view.config(state="disabled")
-            
-            # Reset button state
-            self.gps_start_btn.config(text="START GPS", state="normal")
-            self.gps_stop_btn.config(state="disabled")
-            
-            # Update Dock with success message
-            if "gps" in self.who_footer_labels:
-                self.who_footer_labels["gps"].config(text="🏁 ARRIVED!", fg="#4CAF50")
+        if not hasattr(self, 'gps_manager') or not self.gps_manager:
             return
 
-        # Reset button if it was in 'Recalculating' mode
-        self.gps_start_btn.config(text="START GPS", state="disabled")
-        self.gps_stop_btn.config(state="normal")
-        if "gps" in self.who_footer_labels:
-            self.who_footer_labels["gps"].config(fg="#fff") # Restore normal color
+        path = self.gps_manager.current_path
+        step_idx = self.gps_manager.current_step_index
 
-        # Current instruction
+        if hasattr(self, 'gps_route_list'):
+            self.gps_route_list.clear()
+
+        if not path:
+            msg = "ARRIVED! You have reached your destination."
+            if hasattr(self, 'gps_instruction_lbl'):
+                self.gps_instruction_lbl.setText(msg)
+                self.gps_instruction_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #4ade80;")
+            if hasattr(self, 'dock_gps_dir_lbl'):
+                self.dock_gps_dir_lbl.setText("🏁 ARRIVED!")
+                self.dock_gps_dir_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #4ade80;")
+            if hasattr(self, 'dock_gps_detail_lbl'):
+                self.dock_gps_detail_lbl.setText("Destination reached.")
+                self.dock_gps_detail_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #86efac;")
+            if hasattr(self, 'dock_gps_status_lbl'):
+                self.dock_gps_status_lbl.setText("ARRIVED")
+            self.refresh_dock_layouts()
+            return
+
+        if step_idx >= len(path):
+            self.gps_manager.current_path = []
+            self.update_gps_navigation_ui()
+            return
+
         from_rid, exit_info = path[step_idx]
         total_steps = len(path)
-        
-        # Calculate relative arrival_pos for the instruction label
+
         arrival_pos = None
         if step_idx == 0:
             arrival_pos = self.gps_manager.dataset.get(from_rid, {}).get('teleport')
@@ -1797,66 +7536,91 @@ class M59Dashboard(tk.Tk):
         instr = self.gps_manager.get_friendly_instruction(
             from_rid, exit_info, step=step_idx+1, total=total_steps, arrival_pos=arrival_pos
         )
-        self.gps_instruction_lbl.config(text=instr, fg="#1565C0")
-        
-        # Full path preview
-        for i, (rid, info) in enumerate(path):
-            prefix = " >> " if i == step_idx else "    "
-            room_name = self.gps_manager.dataset.get(rid, {}).get('name', 'Unknown')
-            dest_name = self.gps_manager.dataset.get(info['to_rid'], {}).get('name', 'Unknown')
-            self.gps_route_view.insert(tk.END, f"{prefix}{i+1}. {room_name} -> {dest_name}\n")
-            
-        self.gps_route_view.config(state="disabled")
-        self.refresh_who_footer()
+
+        lines = [line.strip() for line in instr.split("\n") if line.strip()]
+        step_tag = lines[0] if len(lines) > 0 else f"[{step_idx+1}/{total_steps}]"
+        dir_str = lines[1] if len(lines) > 1 else lines[0]
+        action_str = lines[2] if len(lines) > 2 else ""
+
+        if hasattr(self, 'gps_instruction_lbl'):
+            self.gps_instruction_lbl.setText(instr)
+            self.gps_instruction_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #38bdf8;")
+
+        if hasattr(self, 'dock_gps_dir_lbl'):
+            self.dock_gps_dir_lbl.setText(f"{dir_str}  {step_tag}")
+            self.dock_gps_dir_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #38bdf8;")
+
+        if hasattr(self, 'dock_gps_detail_lbl'):
+            self.dock_gps_detail_lbl.setText(action_str if action_str else "Proceed to exit")
+            self.dock_gps_detail_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #f1f5f9;")
+
+        if hasattr(self, 'dock_gps_status_lbl'):
+            self.dock_gps_status_lbl.setText(f"STEP {step_idx+1}/{total_steps}")
+
+        self.refresh_dock_layouts()
+
+        if hasattr(self, 'gps_route_list'):
+            for i, (rid, info) in enumerate(path):
+                prefix = ">> " if i == step_idx else "   "
+                room_name = self.gps_manager.dataset.get(rid, {}).get('name', 'Unknown')
+                dest_name = self.gps_manager.dataset.get(info['to_rid'], {}).get('name', 'Unknown')
+                item_txt = f"{prefix}{i+1}. {room_name} -> {dest_name}"
+                item = QListWidgetItem(item_txt)
+                if i == step_idx:
+                    item.setForeground(QColor("#38bdf8"))
+                self.gps_route_list.addItem(item)
+
+    def update_gps_room(self, room_name):
+        if not room_name or room_name == "Unknown Location":
+            return
+        self.current_room_name = room_name
+
+        if hasattr(self, 'gps_main_loc_lbl'):
+            self.gps_main_loc_lbl.setText(f"📍 CURRENT: {room_name}")
+        if hasattr(self, 'dock_gps_loc_lbl'):
+            self.dock_gps_loc_lbl.setText(f"📍 {room_name}")
+
+        if hasattr(self, 'gps_manager') and self.gps_manager:
+            was_t, msg = self.gps_manager.process_room_update(room_name)
+            self.monitor_gps_navigation(room_name)
 
     def monitor_gps_navigation(self, current_room_name):
-        """Handles path advancement and automatic recalculation."""
-        # Update current location display
-        self.gps_current_loc_lbl.config(text=current_room_name)
-        
-        if not self.gps_manager.current_destination_rid:
+        if not hasattr(self, 'gps_manager') or not self.gps_manager or not self.gps_manager.current_destination_rid:
             return
 
-        # If we reached the destination (path is empty) and move to a DIFFERENT room, clear the state
         if not self.gps_manager.current_path:
             dest_rid = self.gps_manager.current_destination_rid
             dest_name = self.gps_manager.dataset.get(dest_rid, {}).get('name', '')
             if current_room_name.lower() != dest_name.lower():
-                logger.info("GPS: Moved away from destination, clearing state.")
                 self.stop_navigation()
             return
 
-        # Always update RID tracking
-
         path = self.gps_manager.current_path
         step_idx = self.gps_manager.current_step_index
-        
-        # Check if we arrived at the NEXT room in the sequence
-        next_room_rid = path[step_idx][1]['to_rid']
-        next_room_name = self.gps_manager.dataset.get(next_room_rid, {}).get('name')
-        
-        if current_room_name.lower() == next_room_name.lower():
-            # Advance step
-            self.gps_manager.current_step_index += 1
-            if self.gps_manager.current_step_index >= len(path):
-                # Arrived!
-                self.gps_manager.current_path = []
-                logger.info("GPS: Arrived at destination.")
-            else:
-                logger.info(f"GPS: Advanced to step {self.gps_manager.current_step_index + 1}")
+
+        if step_idx >= len(path):
+            self.gps_manager.current_path = []
             self.update_gps_navigation_ui()
             return
 
-        # Check if we moved to a room that IS in the current room list (the 'from' of this step)
-        curr_step_from_rid = path[step_idx][0]
-        curr_step_from_name = self.gps_manager.dataset.get(curr_step_from_rid, {}).get('name')
-        
-        if current_room_name.lower() == curr_step_from_name.lower():
-            # We are still in the correct starting room for this step
+        # Check if we moved into next room in route
+        next_room_rid = path[step_idx][1]['to_rid']
+        next_room_name = self.gps_manager.dataset.get(next_room_rid, {}).get('name', '')
+
+        if current_room_name.lower() == next_room_name.lower():
+            self.gps_manager.current_step_index += 1
+            if self.gps_manager.current_step_index >= len(path):
+                self.gps_manager.current_path = []
+            self.update_gps_navigation_ui()
             return
 
-        # If we are in a room that is neither the current step's 'from' nor 'to', we might be off-track
-        # Check if we jumped ahead in the path (shortcuts)
+        # Check if still in from_room
+        curr_step_from_rid = path[step_idx][0]
+        curr_step_from_name = self.gps_manager.dataset.get(curr_step_from_rid, {}).get('name', '')
+        if current_room_name.lower() == curr_step_from_name.lower():
+            return
+
+        # Check for skipped steps or shortcuts taken
         for i in range(step_idx + 1, len(path)):
             check_rid = path[i][1]['to_rid']
             if current_room_name.lower() == self.gps_manager.dataset.get(check_rid, {}).get('name', '').lower():
@@ -1864,1689 +7628,36 @@ class M59Dashboard(tk.Tk):
                 if self.gps_manager.current_step_index >= len(path):
                     self.gps_manager.current_path = []
                 self.update_gps_navigation_ui()
-                logger.info(f"GPS: Detected shortcut to step {i+1}")
                 return
 
-        # Truly off-track. Wait 2 seconds before recalculating to avoid noise
-        if not hasattr(self, 'gps_off_track_time'):
-            self.gps_off_track_time = time.time()
-            
-        if time.time() - self.gps_off_track_time > 2.0:
-            logger.info(f"GPS: Off-track detected ({current_room_name}). Recalculating...")
-            self.start_navigation(target_rid=self.gps_manager.current_destination_rid)
-            delattr(self, 'gps_off_track_time')
-
-    def setup_tab_dashboard(self):
-        # ... (rest of dashboard setup)
-        # --- 1. Top HUD (Vitals) ---
-        top = tk.Frame(self.tab_dash, bg="#f0f0f0")
-        top.pack(side="top", fill="x", padx=10, pady=5)
-        self.hud_values = {}
-        for s in ["HP", "MP", "VG"]:
-            f = tk.Frame(top, bg="#f0f0f0")
-            f.pack(side="left", padx=20)
-            tk.Label(f, text=f"{s}:", font=("Arial", 12, "bold"), bg="#f0f0f0").pack(side="left")
-            val = tk.Label(f, text="---", font=("Arial", 12), bg="#f0f0f0", width=4, anchor="w")
-            val.pack(side="left", padx=5)
-            self.hud_values[s] = val
-        self.countdown_lbl = tk.Label(top, text="10s", font=("Arial", 8), bg="#f0f0f0", fg="gray")
-        self.countdown_lbl.pack(side="right", padx=10)
-        
-        # --- 2. Bottom Sync Section (Pack first to keep pinned) ---
-        sync_f = tk.Frame(self.tab_dash, bg="#f0f0f0")
-        sync_f.pack(side="bottom", fill="x", padx=10, pady=10)
-        self.manual_sync_btn = tk.Button(
-            sync_f, text=" ↻ FULL SYNC ", 
-            command=self.trigger_manual_sync, 
-            state="disabled", font=("Arial", 13, "bold"), pady=10
-        )
-        self.manual_sync_btn.pack(fill="x")
-
-        # --- 3. Expanding Middle Grid ---
-        grid = tk.Frame(self.tab_dash, bg="#f0f0f0")
-        grid.pack(side="top", fill="both", expand=True, padx=10, pady=5)
-        grid.columnconfigure(1, weight=1) # Gains list
-        grid.columnconfigure(2, weight=1) # Kills list
-        grid.rowconfigure(0, weight=1)    # Vertical expansion
-        
-        attr_col = tk.LabelFrame(grid, text=" Attributes ", bg="#f0f0f0", font=("Arial", 10, "bold"))
-        attr_col.grid(row=0, column=0, sticky="nsw", padx=5)
-        self.attr_labels = {}
-        for a in ["Might", "Intellect", "Stamina", "Agility", "Mysticism", "Aim", "Karma"]:
-            f = tk.Frame(attr_col, bg="#f0f0f0")
-            f.pack(fill="x", pady=4, padx=5)
-            tk.Label(f, text=f"{a}:", font=("Arial", 10), bg="#f0f0f0", width=10, anchor="w").pack(side="left")
-            v = tk.Label(f, text="--", font=("Arial", 10, "bold"), bg="#f0f0f0", width=5, anchor="e")
-            v.pack(side="right")
-            self.attr_labels[a] = v
-
-        gains_col = tk.LabelFrame(grid, text=" Session Improves ", bg="#f0f0f0", font=("Arial", 10, "bold"))
-        gains_col.grid(row=0, column=1, sticky="nsew", padx=5)
-        self.gains_tree = ttk.Treeview(gains_col, columns=("Name", "Count", "Delta"), show="headings", height=5)
-        for c, w in [("Name", self.scale_px(120)), ("Count", self.scale_px(50)), ("Delta", self.scale_px(80))]:
-            self.gains_tree.heading(c, text=c)
-            self.gains_tree.column(c, width=w, anchor="w" if c=="Name" else "center")
-        self.gains_tree.pack(fill="both", expand=True)
-        
-        kills_col = tk.LabelFrame(grid, text=" Session Kills ", bg="#f0f0f0", font=("Arial", 10, "bold"))
-        kills_col.grid(row=0, column=2, sticky="nsew", padx=5)
-        self.kills_tree = ttk.Treeview(kills_col, columns=("Name", "Count"), show="headings", height=5)
-        for c, w in [("Name", self.scale_px(120)), ("Count", self.scale_px(60))]:
-            self.kills_tree.heading(c, text=c)
-            self.kills_tree.column(c, width=w, anchor="w" if c=="Name" else "center")
-        self.kills_tree.pack(fill="both", expand=True)
-
-    def launch_elusion_menu(self):
-        try:
-            from m59_elude import ElusionMenu
-            if hasattr(self, 'elusion_menu') and self.elusion_menu.winfo_exists():
-                self.elusion_menu.focus_set()
-                return
-            hwnd = self.main_hwnd if hasattr(self, 'main_hwnd') and self.main_hwnd else None
-            self.elusion_menu = ElusionMenu(self, target_hwnd=hwnd)
-        except Exception as e:
-            logger.error(f"Failed to launch Elusion menu: {e}")
-
-    def on_gps_loc_resize(self, event):
-        """Dynamically adjusts text wrapping for the current location label."""
-        self.gps_current_loc_lbl.config(wraplength=event.width - 20)
-
-    def setup_tab_progression(self):
-        ctrl = tk.Frame(self.tab_prog, bg="#f0f0f0")
-        ctrl.pack(fill="x", padx=10, pady=10)
-        tk.Label(ctrl, text="Real-time School Progression Goals", font=("Arial", 12, "bold"), bg="#f0f0f0").pack(side="left")
-        self.sync_btn = tk.Button(ctrl, text="Sync All (Tab Dance)", command=self.trigger_sync, bg="#2196F3", fg="white", font=("Arial", 10, "bold"), padx=15)
-        self.sync_btn.pack(side="right")
-        self.prog_tree = ttk.Treeview(self.tab_prog, columns=("Level", "Sum", "Goal", "Needed"), show="tree headings")
-        self.prog_tree.heading("#0", text="School / Ability")
-        self.prog_tree.column("#0", width=self.scale_px(220))
-        for c, w in [("Level", self.scale_px(80)), ("Sum", self.scale_px(100)), ("Goal", self.scale_px(100)), ("Needed", self.scale_px(100))]:
-            self.prog_tree.heading(c, text=c)
-            self.prog_tree.column(c, width=w, anchor="center")
-        self.prog_tree.pack(fill="both", expand=True, padx=10, pady=5)
-
-    def update_vault_ui(self):
-        """Updates the bank balance displays in the Vault tab."""
-        if hasattr(self, 'bank_currency_lbl'):
-            m = self.bank_manager.balances['mainland']
-            i = self.bank_manager.balances['island']
-            self.bank_currency_lbl.config(text=f" Mainland: {m:,}s   |   Island: {i:,}s ")
-
-    def setup_tab_vault(self):
-        cont = tk.Frame(self.tab_vault, bg="#f0f0f0")
-        cont.pack(fill="both", expand=True, padx=5, pady=5)
-        
-        # --- Bank Accounts Header ---
-        bank_f = tk.Frame(cont, bg="#E8F5E9", bd=1, relief=tk.SOLID)
-        bank_f.pack(fill="x", padx=5, pady=(0, 10))
-        tk.Label(bank_f, text="💰 BANK ACCOUNTS:", font=("Arial", 9, "bold"), bg="#E8F5E9", fg="#2E7D32").pack(side="left", padx=10, pady=10)
-        self.bank_currency_lbl = tk.Label(bank_f, text=" Mainland: 0s   |   Island: 0s ", font=("Consolas", 11, "bold"), bg="#E8F5E9", fg="#1B5E20")
-        self.bank_currency_lbl.pack(side="left", padx=10)
-        
-        vaults_cont = tk.Frame(cont, bg="#f0f0f0")
-        vaults_cont.pack(fill="both", expand=True)
-
-        self.vault_widgets = {}
-        for vt in ["barloque", "hungry"]:
-            f = tk.LabelFrame(vaults_cont, text=f" {vt.title()} Vault ", bg="#f0f0f0", font=("Arial", 10, "bold"))
-            f.pack(side="left", fill="both", expand=True, padx=5)
-            row = tk.Frame(f, bg="#f0f0f0")
-            row.pack(fill="x", padx=5, pady=5)
-            tk.Label(row, text="Filter:", bg="#f0f0f0", font=("Arial", 8)).pack(side="left")
-            fv = tk.StringVar()
-            fv.trace_add("write", lambda *a, v=vt: self.update_vault_tree(v))
-            tk.Entry(row, textvariable=fv, width=15).pack(side="left", padx=2)
-            btn = tk.Button(row, text="Scan Vault", command=lambda v=vt: self.trigger_vault_scan(v), bg="#2E7D32" if vt=="barloque" else "#1565C0", fg="white", font=("Arial", 8, "bold"), padx=10)
-            btn.pack(side="right")
-            tr = ttk.Treeview(f, columns=("Name", "Qty"), show="headings", height=15)
-            tr.heading("Name", text="Item")
-            tr.heading("Qty", text="Qty")
-            tr.column("Name", width=self.scale_px(150))
-            tr.column("Qty", width=self.scale_px(50), anchor="center")
-            tr.pack(fill="both", expand=True, padx=5, pady=2)
-            sl = tk.Label(f, text="No scan data", font=("Arial", 7, "italic"), bg="#f0f0f0", fg="gray")
-            sl.pack(side="bottom", fill="x")
-            self.vault_widgets[vt] = {"tree": tr, "filter_var": fv, "status_lbl": sl, "sync_btn": btn}
-        
-        self.update_vault_ui()
-
-    def setup_tab_book(self):
-        # Main vertical paned window or frames
-        main_pane = tk.PanedWindow(self.tab_book, orient=tk.VERTICAL, bg="#e0e0e0", sashwidth=4, sashrelief=tk.RAISED)
-        main_pane.pack(fill="both", expand=True, padx=5, pady=5)
-        
-        # Top Frame (Lists)
-        top_frame = tk.Frame(main_pane, bg="#f0f0f0")
-        main_pane.add(top_frame, stretch="always", minsize=150)
-        
-        # Bottom Frame (Image)
-        bottom_frame = tk.Frame(main_pane, bg="#333333")
-        main_pane.add(bottom_frame, stretch="always", minsize=150)
-        
-        # --- Top Half: Lists ---
-        self.book_widgets = {}
-        for kt in ["monsters", "players"]:
-            f = tk.LabelFrame(top_frame, text=f" {kt.title()} ", bg="#f0f0f0", font=("Arial", 10, "bold"))
-            f.pack(side="left", fill="both", expand=True, padx=5)
-            
-            row = tk.Frame(f, bg="#f0f0f0")
-            row.pack(fill="x", padx=5, pady=5)
-            
-            fv = tk.StringVar()
-            fv.trace_add("write", lambda *a, k=kt: self.update_book_tree(k))
-            
-            tk.Label(row, text="Filter:", bg="#f0f0f0", font=("Arial", 8)).pack(side="left")
-            tk.Entry(row, textvariable=fv, width=15).pack(side="left", padx=2)
-            
-            tr = ttk.Treeview(f, columns=("Name", "AllTime", "Session"), show="headings", height=8)
-            tr.heading("Name", text="Victim")
-            tr.heading("AllTime", text="Total")
-            tr.heading("Session", text="Session")
-            tr.column("Name", width=self.scale_px(150))
-            tr.column("AllTime", width=self.scale_px(60), anchor="center")
-            tr.column("Session", width=self.scale_px(60), anchor="center")
-            tr.pack(fill="both", expand=True, padx=5, pady=2)
-            
-            self.book_widgets[kt] = {"tree": tr, "filter_var": fv}
-            
-            # Bind selection for Monsters to update image
-            if kt == "monsters":
-                tr.bind("<<TreeviewSelect>>", self.on_monster_select)
-
-        # --- Bottom Half: Image Viewer ---
-        # Sliders for Angle and Pose (Pack FIRST at bottom)
-        sliders_frame = tk.Frame(bottom_frame, bg="#333333")
-        sliders_frame.pack(side="bottom", fill="x", padx=20, pady=5)
-        
-        tk.Label(sliders_frame, text="Pose:", bg="#333333", fg="white").pack(side="left")
-        self.bgf_pose_slider = tk.Scale(sliders_frame, from_=0, to=0, orient=tk.HORIZONTAL, bg="#333333", fg="white", highlightthickness=0, command=self.on_bgf_slider_move)
-        self.bgf_pose_slider.pack(side="left", fill="x", expand=True, padx=(5, 10))
-        
-        tk.Label(sliders_frame, text="Angle:", bg="#333333", fg="white").pack(side="left")
-        self.bgf_angle_slider = tk.Scale(sliders_frame, from_=0, to=5, orient=tk.HORIZONTAL, bg="#333333", fg="white", highlightthickness=0, command=self.on_bgf_slider_move)
-        self.bgf_angle_slider.pack(side="left", fill="x", expand=True, padx=(5, 0))
-
-        # Canvas (Pack SECOND to fill remaining top space)
-        self.bgf_canvas = tk.Canvas(bottom_frame, bg="#333333", highlightthickness=0)
-        self.bgf_canvas.pack(side="top", fill="both", expand=True, pady=(5,0))
-        
-        self.current_bgf_frames = []
-        self.current_bgf_image_on_canvas = None
-        self.bgf_empty_text = self.bgf_canvas.create_text(
-            self.winfo_width()//2, 100, text="Select a monster to view", fill="gray", font=("Arial", 12, "italic")
-        )
-        # Handle canvas resize
-        self.bgf_canvas.bind("<Configure>", self.center_bgf_image)
-
-    def center_bgf_image(self, event=None):
-        if self.bgf_empty_text:
-            self.bgf_canvas.coords(self.bgf_empty_text, self.bgf_canvas.winfo_width()//2, self.bgf_canvas.winfo_height()//2)
-        if getattr(self, "current_bgf_frames", None) and self.current_bgf_image_on_canvas:
-            pose = int(self.bgf_pose_slider.get())
-            angle = int(self.bgf_angle_slider.get())
-            index = pose * 6 + angle
-            self.show_bgf_frame(index)
-
-    def on_monster_select(self, event):
-        selection = event.widget.selection()
-        if not selection: return
-        item = event.widget.item(selection[0])
-        monster_name = item['values'][0]
-        
-        logger.info(f"Killbook: Monster selected: {monster_name}")
-        
-        self.bgf_canvas.delete("all")
-        self.current_bgf_frames = []
-        self.bgf_pose_slider.config(to=0, state="disabled")
-        self.bgf_angle_slider.config(state="disabled")
-        
-        if getattr(self, "bgf_manager", None):
-            cleaned_sel = ''.join(c for c in monster_name.lower() if c.isalnum() or c.isspace() or c == "'" or c == "-")
-            internal_name = self.bgf_manager.mob_mapping.get(cleaned_sel)
-            if not internal_name:
-                internal_name = self.bgf_manager.mob_mapping.get(cleaned_sel.replace(" ", ""))
-            if not internal_name:
-                internal_name = self.bgf_manager.mob_mapping.get(monster_name.lower())
-                
-            logger.info(f"Killbook: Internal name for '{monster_name.lower()}' is '{internal_name}'")
-            if internal_name:
-                bgf_path = self.bgf_manager.find_bgf_for_monster(internal_name)
-                logger.info(f"Killbook: Found BGF path: {bgf_path}")
-                if bgf_path:
-                    frames = self.bgf_manager.load_bgf_frames(bgf_path)
-                    logger.info(f"Killbook: Loaded {len(frames) if frames else 0} frames")
-                    if frames:
-                        self.current_bgf_frames = frames
-                        max_pose = max(0, (len(frames) // 6) - 1) if len(frames) >= 6 else max(0, len(frames)-1)
-                        self.bgf_pose_slider.config(to=max_pose, state="normal")
-                        self.bgf_pose_slider.set(0)
-                        self.bgf_angle_slider.config(to=5 if len(frames) >= 6 else 0, state="normal")
-                        self.bgf_angle_slider.set(0)
-                        self.show_bgf_frame(0)
-                        return
-            else:
-                logger.warning(f"Killbook: No internal name mapping found for '{monster_name.lower()}'")
-                        
-        self.bgf_empty_text = self.bgf_canvas.create_text(
-            self.bgf_canvas.winfo_width()//2, self.bgf_canvas.winfo_height()//2, 
-            text="No image available", fill="gray", font=("Arial", 12, "italic")
-        )
-        self.current_bgf_image_on_canvas = None
-
-    def on_bgf_slider_move(self, val=None):
-        pose = int(self.bgf_pose_slider.get())
-        angle = int(self.bgf_angle_slider.get())
-        index = pose * 6 + angle
-        self.show_bgf_frame(index)
-        
-    def show_bgf_frame(self, index):
-        if not self.current_bgf_frames: return
-        if index < 0 or index >= len(self.current_bgf_frames): return
-        
-        from PIL import ImageTk, Image
-        raw_img = self.current_bgf_frames[index]
-        
-        cw = max(10, self.bgf_canvas.winfo_width())
-        ch = max(10, self.bgf_canvas.winfo_height())
-        
-        # Calculate scale to fit
-        iw, ih = raw_img.size
-        scale = min(cw/iw, ch/ih) * 0.9 # 90% of canvas
-        if scale > 0:
-            new_w, new_h = int(iw * scale), int(ih * scale)
-            # Crop bounding box of non-transparent area? For now just resize the whole 400x400
-            resized = raw_img.resize((new_w, new_h), Image.LANCZOS)
-        else:
-            resized = raw_img
-            
-        self._current_tk_bgf = ImageTk.PhotoImage(resized)
-        
-        self.bgf_canvas.delete("all")
-        self.bgf_empty_text = None
-        
-        self.current_bgf_image_on_canvas = self.bgf_canvas.create_image(
-            cw//2, ch//2, 
-            image=self._current_tk_bgf, anchor="center"
-        )
-    def setup_tab_settings(self):
-        c = tk.Frame(self.tab_settings, bg="#f0f0f0")
-        c.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        tk.Label(c, text="Companion Settings", font=("Arial", 14, "bold"), bg="#f0f0f0").pack(anchor="w", pady=(0, 20))
-        
-        pg = tk.LabelFrame(c, text=" Alerts ", bg="#f0f0f0", font=("Arial", 10, "bold"), padx=15, pady=15)
-        pg.pack(fill="x")
-        
-        # PK Alerts
-        pk_frame = tk.Frame(pg, bg="#f0f0f0")
-        pk_frame.pack(fill="x", pady=(0, 5))
-        tk.Checkbutton(pk_frame, text="Enable PK Alerts", variable=self.pk_alert_enabled, bg="#f0f0f0").pack(side="left")
-        tk.Label(pk_frame, text="Sound:", bg="#f0f0f0").pack(side="left", padx=(10, 2))
-        ttk.Combobox(pk_frame, textvariable=self.pk_sound_path, values=["sound/alert.wav", "SystemExclamation", "SystemAsterisk", "SystemHand", "SystemQuestion"], width=20).pack(side="left")
-        tk.Button(pk_frame, text="Browse...", command=self.browse_pk_sound, padx=5).pack(side="left", padx=5)
-        tk.Button(pk_frame, text="Test", command=self.test_pk_sound, padx=5).pack(side="left")
-        
-        # Tell Alerts
-        tell_frame = tk.Frame(pg, bg="#f0f0f0")
-        tell_frame.pack(fill="x")
-        tk.Checkbutton(tell_frame, text="Enable Direct Message (Tell) Alerts", variable=self.tell_sound_enabled, bg="#f0f0f0").pack(side="left")
-        tk.Label(tell_frame, text="Sound:", bg="#f0f0f0").pack(side="left", padx=(10, 2))
-        ttk.Combobox(tell_frame, textvariable=self.tell_sound_path, values=["sound/dm_chime.mp3", "SystemAsterisk", "SystemExclamation", "SystemHand", "SystemQuestion"], width=20).pack(side="left")
-        tk.Button(tell_frame, text="Browse...", command=self.browse_tell_sound, padx=5).pack(side="left", padx=5)
-        tk.Button(tell_frame, text="Test", command=self.test_tell_sound, padx=5).pack(side="left")
-        
-        elude_g = tk.LabelFrame(c, text=" Elusion Settings ", bg="#f0f0f0", font=("Arial", 10, "bold"), padx=15, pady=15)
-        elude_g.pack(fill="x", pady=10)
-        
-        gh_frame = tk.Frame(elude_g, bg="#f0f0f0")
-        gh_frame.pack(fill="x", pady=(0, 10))
-        tk.Label(gh_frame, text="Your Guildhall Name:", bg="#f0f0f0").pack(side="left")
-        ttk.Entry(gh_frame, textvariable=self.guildhall_name, width=40).pack(side="left", padx=5)
-
-        tk.Label(elude_g, text="Elusion Phrase (Start with 'say' or 'emote', use {loc} for location):", bg="#f0f0f0").pack(anchor="w")
-        
-        base_phrases = [
-            'say "I wish to travel to {loc}."',
-            'say "By the grace of the High Council, I demand passage to {loc}!"',
-            "emote separates the earths and forms a path to {loc}",
-            "emote traces a rune in the air, opening a rift to {loc}",
-            "emote bends the fabric of space with Riija's chaotic magic, stepping towards {loc}"
-        ]
-        
-        all_phrases = list(dict.fromkeys(base_phrases + self.custom_elusion_phrases))
-        
-        phrase_frame = tk.Frame(elude_g, bg="#f0f0f0")
-        phrase_frame.pack(fill="x", pady=5)
-        
-        phrase_combo = ttk.Combobox(phrase_frame, textvariable=self.elusion_phrase, values=all_phrases, width=60)
-        phrase_combo.pack(side="left")
-        
-        def add_phrase():
-            current = self.elusion_phrase.get()
-            if current and current not in all_phrases:
-                self.custom_elusion_phrases.append(current)
-                all_phrases.append(current)
-                phrase_combo.configure(values=all_phrases)
-                self.save_settings()
-                
-        tk.Button(phrase_frame, text="Add", command=add_phrase, bg="#4CAF50", fg="white", relief="flat", padx=10).pack(side="left", padx=5)
-        
-        wr_g = tk.LabelFrame(c, text=" Status Dock Side Panel ", bg="#f0f0f0", font=("Arial", 10, "bold"), padx=15, pady=15)
-        wr_g.pack(fill="x", pady=10)
-        
-        side_f = tk.Frame(wr_g, bg="#f0f0f0")
-        side_f.pack(fill="x", pady=5)
-        tk.Label(side_f, text="Panel Side:", bg="#f0f0f0").pack(side="left")
-        tk.Radiobutton(side_f, text="Left", variable=self.who_list_side, value="Left",
-                        command=self.update_who_list_visibility, bg="#f0f0f0").pack(side="left", padx=10)
-        tk.Radiobutton(side_f, text="Right", variable=self.who_list_side, value="Right",
-                        command=self.update_who_list_visibility, bg="#f0f0f0").pack(side="left")
-        
-        dg = tk.LabelFrame(c, text=" Diagnostics ", bg="#f0f0f0", font=("Arial", 10, "bold"), padx=15, pady=15)
-        dg.pack(fill="x")
-        tk.Checkbutton(dg, text="Verbose Debug Mode", variable=self.debug_enabled, bg="#f0f0f0").pack(anchor="w")
-        
-        map_g = tk.LabelFrame(c, text=" Game.map Tools ", bg="#f0f0f0", font=("Arial", 10, "bold"), padx=15, pady=15)
-        map_g.pack(fill="x", pady=10)
-        
-        def restore_map():
-            import m59_map
-            import shutil
-            import os
-            
-            def show_styled_msg(title, msg, icon="✅"):
-                pop = tk.Toplevel(self)
-                pop.title("M59 Companion")
-                pop.overrideredirect(True)
-                pop.attributes("-topmost", True)
-                try: pop.attributes("-alpha", 0.95)
-                except: pass
-                pop.configure(bg="#0F0F0F")
-                inner_pop = tk.Frame(pop, bg="#181818", highlightthickness=1, highlightbackground="#333333")
-                inner_pop.pack(expand=True, fill="both", padx=2, pady=2)
-                
-                color = "#FF5252" if "Error" in title else "#81C784" if "Success" in title else "#FFCA28"
-                tk.Label(inner_pop, text=f" {icon}  {title.upper()} ", font=("Consolas", 14, "bold"), fg=color, bg="#181818").pack(pady=(30, 10))
-                tk.Label(inner_pop, text=msg, font=("Arial", 11), fg="#FFFFFF", bg="#181818", justify="center", wraplength=540).pack(pady=(10, 20))
-                tk.Button(inner_pop, text=" OK ", bg="#424242", fg="white", font=("Arial", 10, "bold"), command=pop.destroy).pack(pady=(0, 20))
-
-                pop.update_idletasks()
-                w = 580
-                h = max(260, pop.winfo_reqheight())
-                pop.geometry(f"{w}x{h}+{int(self.winfo_screenwidth()/2 - w/2)}+{int(self.winfo_screenheight()/2 - h/2)}")
-
-            rooms_dir, map_file, is_running = m59_map.detect_installation()
-            if map_file and os.path.exists(map_file + ".backup"):
-                try:
-                    shutil.copy2(map_file + ".backup", map_file)
-                    show_styled_msg("Success", "Restored game.map from backup!", "✅")
-                except Exception as e:
-                    show_styled_msg("Error", f"Failed to restore: {e}", "❌")
-            else:
-                show_styled_msg("Not Found", "No backup found.", "⚠️")
-
-        tk.Button(map_g, text="Restore game.map from Backup", command=restore_map, font=("Arial", 9)).pack(anchor="w")
-        
-        tk.Button(c, text="Save Settings", command=self.save_settings, bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), pady=10).pack(side="bottom", fill="x")
-
-
-    def trigger_pk_alert(self):
-        if not self.pk_alert_enabled.get():
-            return
-        self.alert_active = True
-        self.debug_log("ALERT", "PVP Alert Triggered!")
-        if self.pk_sound_enabled.get():
-            self.play_audio_file(self.pk_sound_path.get())
-        if self.pk_frame_enabled.get() and self.pk_frame:
-            self.pk_frame.flash()
-        self.after(5000, self.reset_pk_alert)
-
-
-    def play_tell_alert(self):
-        if not self.tell_sound_enabled.get(): return
-        self.play_audio_file(self.tell_sound_path.get())
-
-    def reset_pk_alert(self):
-        self.alert_active = False
-
-
-
-
-    def map_initialization_check(self, pid, callback):
-        import m59_map
-        import os
-        import threading
-        import subprocess
-        import time
-        from tkinter import messagebox
-        
-        rooms_dir, map_file, is_running = m59_map.detect_installation()
-        if not rooms_dir or not map_file or not os.path.isdir(rooms_dir):
-            callback()
-            return
-
-        unique_rooms = m59_map.get_unique_rooms(rooms_dir)
-        if not unique_rooms:
-            callback()
-            return
-            
-        percent = m59_map.analyze_map(map_file, unique_rooms)
-        if percent >= 100.0:
-            callback()
-            return
-
-        def show_styled_map_prompt():
-            overlay = tk.Toplevel(self)
-            overlay.title("M59 Companion - Map Update")
-            
-            # Center the splash screen on the screen
-            window_width = 580
-            window_height = 260
-            screen_width = self.winfo_screenwidth()
-            screen_height = self.winfo_screenheight()
-            center_x = int(screen_width/2 - window_width / 2)
-            center_y = int(screen_height/2 - window_height / 2)
-            
-            overlay.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
-            overlay.resizable(False, False)
-            overlay.overrideredirect(True)
-            overlay.attributes("-topmost", True)
-            try: overlay.attributes("-alpha", 0.95)
-            except: pass
-            
-            overlay.configure(bg="#0F0F0F")
-            
-            inner = tk.Frame(overlay, bg="#181818", highlightthickness=1, highlightbackground="#333333")
-            inner.pack(expand=True, fill="both", padx=2, pady=2)
-            
-            tk.Label(inner, text=" 🗺️  MAP UPDATE AVAILABLE ", font=("Consolas", 14, "bold"), fg="#FFCA28", bg="#181818").pack(pady=(20, 10))
-            tk.Label(inner, text=f"Your game.map file is {percent:.1f}% complete.", font=("Arial", 11), fg="#FFFFFF", bg="#181818").pack()
-            tk.Label(inner, text="Do you want to update and unlock your map to 100%?", font=("Arial", 10), fg="#CCCCCC", bg="#181818").pack(pady=(5, 15))
-            
-            def on_no():
-                overlay.destroy()
-                callback()
-                
-            def on_yes():
-                for widget in inner.winfo_children():
-                    widget.destroy()
-                    
-                tk.Label(inner, text=" 📍  AUTO-ANNOTATIONS ", font=("Consolas", 14, "bold"), fg="#64B5F6", bg="#181818").pack(pady=(20, 10))
-                tk.Label(inner, text="Automatically add map annotations for all exits/doors?", font=("Arial", 10), fg="#FFFFFF", bg="#181818").pack()
-                tk.Label(inner, text="Warning: YES overwrites custom annotations.\nNO preserves your existing custom annotations.", font=("Arial", 9, "italic"), fg="#FF5252", bg="#181818", justify="center", wraplength=550).pack(pady=(10, 15))
-                
-                def proceed_with_update(anno_choice):
-                    overlay.destroy()
-
-                    def do_map_update():
-                        try:
-                            def _ui_closing():
-                                if self.waiting_overlay and self.waiting_overlay.winfo_exists():
-                                    self.waiting_title_lbl.config(text=" 🗺️  UPDATING MAP ", fg="#FFCA28")
-                                    self.waiting_msg_lbl.config(text="Closing game to release file locks...")
-                                self.status_var.set("Closing game for map update...")
-                            self.after(0, _ui_closing)
-                            
-                            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
-                            time.sleep(1)
-
-                            def _ui_updating():
-                                if self.waiting_overlay and self.waiting_overlay.winfo_exists():
-                                    self.waiting_msg_lbl.config(text="Generating game.map file...")
-                                self.status_var.set("Updating game.map...")
-                            self.after(0, _ui_updating)
-                            
-                            existing_annos = {}
-                            if not anno_choice:
-                                existing_annos = m59_map.extract_existing_annotations(map_file, unique_rooms)
-                            
-                            m59_map.generate_map(map_file, unique_rooms, debug=False, preserve_annotations=not anno_choice, existing_annotations=existing_annos)
-                            
-                            def show_success():
-                                pop = tk.Toplevel(self)
-                                pop.title("M59 Companion")
-                                pop.overrideredirect(True)
-                                pop.attributes("-topmost", True)
-                                try: pop.attributes("-alpha", 0.95)
-                                except: pass
-                                pop.configure(bg="#0F0F0F")
-                                inner_pop = tk.Frame(pop, bg="#181818", highlightthickness=1, highlightbackground="#333333")
-                                inner_pop.pack(expand=True, fill="both", padx=2, pady=2)
-                                tk.Label(inner_pop, text=" ✅  MAP UPDATED ", font=("Consolas", 14, "bold"), fg="#81C784", bg="#181818").pack(pady=(30, 10))
-                                tk.Label(inner_pop, text="Map update complete! A backup was saved in your mail folder.\nYou can safely restart Meridian 59 now.", font=("Arial", 11), fg="#FFFFFF", bg="#181818", justify="center", wraplength=540).pack(pady=(10, 20))
-                                tk.Button(inner_pop, text=" OK ", bg="#2e7d32", fg="white", font=("Arial", 10, "bold"), command=pop.destroy).pack(pady=(0, 20))
-                                
-                                pop.update_idletasks()
-                                w = 580
-                                h = max(260, pop.winfo_reqheight())
-                                pop.geometry(f"{w}x{h}+{int(self.winfo_screenwidth()/2 - w/2)}+{int(self.winfo_screenheight()/2 - h/2)}")
-                                
-                            self.after(0, show_success)
-                        except Exception as e:
-                            def show_error(err=e):
-                                pop = tk.Toplevel(self)
-                                pop.title("M59 Companion")
-                                pop.overrideredirect(True)
-                                pop.attributes("-topmost", True)
-                                try: pop.attributes("-alpha", 0.95)
-                                except: pass
-                                pop.configure(bg="#0F0F0F")
-                                inner_pop = tk.Frame(pop, bg="#181818", highlightthickness=1, highlightbackground="#333333")
-                                inner_pop.pack(expand=True, fill="both", padx=2, pady=2)
-                                tk.Label(inner_pop, text=" ❌  MAP ERROR ", font=("Consolas", 14, "bold"), fg="#FF5252", bg="#181818").pack(pady=(30, 10))
-                                tk.Label(inner_pop, text=f"Failed to update map: {err}", font=("Arial", 11), fg="#FFFFFF", bg="#181818", justify="center", wraplength=550).pack(pady=(10, 20))
-                                tk.Button(inner_pop, text=" OK ", bg="#424242", fg="white", font=("Arial", 10, "bold"), command=pop.destroy).pack(pady=(0, 20))
-                                
-                                pop.update_idletasks()
-                                w = 580
-                                h = max(260, pop.winfo_reqheight())
-                                pop.geometry(f"{w}x{h}+{int(self.winfo_screenwidth()/2 - w/2)}+{int(self.winfo_screenheight()/2 - h/2)}")
-                            self.after(0, show_error)
-                        finally:
-                            def _ui_waiting():
-                                if self.waiting_overlay and self.waiting_overlay.winfo_exists():
-                                    self.waiting_title_lbl.config(text=" ↻  SCANNING FOR GAME ", fg="#81C784")
-                                    self.waiting_msg_lbl.config(text="Please launch Meridian 59 to continue")
-                                self.status_var.set("Waiting for Game...")
-                            self.after(0, _ui_waiting)
-
-                    def show_close_prompt():
-                        close_overlay = tk.Toplevel(self)
-                        close_overlay.title("M59 Companion")
-                        
-                        close_overlay.resizable(False, False)
-                        close_overlay.overrideredirect(True)
-                        close_overlay.attributes("-topmost", True)
-                        try: close_overlay.attributes("-alpha", 0.95)
-                        except: pass
-                        close_overlay.configure(bg="#0F0F0F")
-                        
-                        inner_close = tk.Frame(close_overlay, bg="#181818", highlightthickness=1, highlightbackground="#333333")
-                        inner_close.pack(expand=True, fill="both", padx=2, pady=2)
-                        
-                        tk.Label(inner_close, text=" ⚠️  CLOSE GAME REQUIRED ", font=("Consolas", 14, "bold"), fg="#FFCA28", bg="#181818").pack(pady=(30, 10))
-                        tk.Label(inner_close, text="Meridian 59 must be closed to safely update the map file.\n\nClick YES to automatically close the game and apply the update.\nYou can restart it afterwards.", font=("Arial", 11), fg="#FFFFFF", bg="#181818", justify="center", wraplength=540).pack(pady=(10, 20))
-                        
-                        def on_close_cancel():
-                            close_overlay.destroy()
-                            callback()
-                            
-                        def on_close_ok():
-                            close_overlay.destroy()
-                            threading.Thread(target=do_map_update, daemon=True).start()
-
-                        btn_f_close = tk.Frame(inner_close, bg="#181818")
-                        btn_f_close.pack(pady=(0, 20))
-                        tk.Button(btn_f_close, text=" YES (Close Game) ", bg="#2e7d32", fg="white", font=("Arial", 10, "bold"), command=on_close_ok).pack(side="left", padx=10)
-                        tk.Button(btn_f_close, text=" CANCEL ", bg="#424242", fg="white", font=("Arial", 10, "bold"), command=on_close_cancel).pack(side="left", padx=10)
-
-                        close_overlay.update_idletasks()
-                        w = 580
-                        h = max(260, close_overlay.winfo_reqheight())
-                        close_overlay.geometry(f"{w}x{h}+{int(self.winfo_screenwidth()/2 - w/2)}+{int(self.winfo_screenheight()/2 - h/2)}")
-
-                    show_close_prompt()
-                
-                btn_f2 = tk.Frame(inner, bg="#181818")
-                btn_f2.pack(pady=10)
-                tk.Button(btn_f2, text=" YES (Overwrite) ", bg="#2e7d32", fg="white", font=("Arial", 10, "bold"), command=lambda: proceed_with_update(True)).pack(side="left", padx=10)
-                tk.Button(btn_f2, text=" NO (Preserve) ", bg="#424242", fg="white", font=("Arial", 10, "bold"), command=lambda: proceed_with_update(False)).pack(side="left", padx=10)
-
-            btn_f = tk.Frame(inner, bg="#181818")
-            btn_f.pack(pady=10)
-            tk.Button(btn_f, text=" YES ", bg="#2e7d32", fg="white", font=("Arial", 10, "bold"), command=on_yes, width=10).pack(side="left", padx=10)
-            tk.Button(btn_f, text=" NO ", bg="#424242", fg="white", font=("Arial", 10, "bold"), command=on_no, width=10).pack(side="left", padx=10)
-            
-        self.after(0, show_styled_map_prompt)
-    def establish_connection(self):
-        self.status_var.set("Scanning for game...")
-        self.debug_log("CONN", "Starting Lifecycle Monitor...")
-        self.show_waiting_overlay()
-        self.lifecycle.start()
-
-    def on_game_connect(self, pm, pid):
-        """Callback when InstanceManager attaches to a new game process."""
-        logger.info(f"LifeCycle: New Game Instance Detected (PID {pid})")
-        
-        def _continue_init():
-            self.pm_obj = pm
-            self.target_pid = pid
-
-            # Initialize Scraper
-            self.inventory_scraper = InventoryScraper(pm)
-
-            # Find the HWND for this PID
-            def _wait_for_hwnd(retries=10):
-                self.main_hwnd = find_game_hwnd(pid)
-                if not self.main_hwnd:
-                    if retries > 0:
-                        self.after(500, lambda: _wait_for_hwnd(retries - 1))
-                    else:
-                        logger.error(f"LifeCycle: Found PID {pid} but could not locate its window after waiting.")
-                    return
-
-                # Transition overlay to appropriate state based on current login status
-                try:
-                    import win32gui
-                    title = win32gui.GetWindowText(self.main_hwnd)
-                    if " --- " in title:
-                        self.show_waiting_overlay(mode="initializing")
-                    else:
-                        self.show_waiting_overlay(mode="login")
-                except:
-                    self.show_waiting_overlay(mode="login")
-                    
-                # Start Who List if enabled
-                self.start_who_list_monitor()
-                
-                if hasattr(self, 'commalias_tab'):
-                    self.commalias_tab.manager.update_float_buttons()
-                
-                # Start Inventory Polling
-                self.after(2000, self.poll_inventory)
-                self.after(500, self.check_for_login)
-
-            _wait_for_hwnd()
-
-        if not getattr(self, "has_checked_map", False):
-            self.has_checked_map = True
-            # Transition to a generic connecting overlay first
-            self.show_waiting_overlay(mode="searching")
-            self.after(500, lambda: self.map_initialization_check(pid, _continue_init))
-        else:
-            _continue_init()
-
-    def check_for_login(self):
-        """Polls the window title to detect when a character has entered the world."""
-        if not self.main_hwnd or not self.is_running:
-            return
-            
-        try:
-            title = win32gui.GetWindowText(self.main_hwnd)
-            if " --- " in title:
-                logger.info(f"LifeCycle: Login detected via title: {title}")
-                self.show_waiting_overlay(mode="initializing")
-                # overlay will be hidden after initial sync
-                
-                # Start the intelligent identity capture loop
-                logger.info("LifeCycle: Starting character identification handshake...")
-                self.after(2000, lambda: self.attempt_identity_capture(0))
-                
-                # Trigger silent who update 1.5s after character is fully active in-game
-                self.after(3500, self.trigger_silent_who_update)
-            else:
-                # Still at selection screen, check again in 1s
-                self.after(1000, self.check_for_login)
-        except Exception as e:
-            logger.debug(f"LifeCycle: Error checking for login: {e}")
-            self.after(2000, self.check_for_login)
-
-    def attempt_identity_capture(self, count):
-        """Intelligently retries character identification with adaptive delays and UI feedback."""
-        # Update status bar with progress
-        self.status_var.set(f"Finalizing Identity... (Attempt {count + 1}/10)")
-        
-        if hasattr(self, 'pre_scanned_names') and self.target_pid in self.pre_scanned_names:
-            name = self.pre_scanned_names[self.target_pid]
-            # remove it so it can be rescanned later if needed
-            del self.pre_scanned_names[self.target_pid]
-        else:
-            name = capture_identity(self.main_hwnd, self.target_pid)
-        
-        if name:
-            logger.info(f"LifeCycle: Identity verified as '{name}' on attempt {count + 1}.")
-            self.char_name = name
-            self._finalize_connection()
-            return
-
-        if count < 9: # Total 10 attempts
-            # Adaptive delay: Start fast, slow down to allow for server lag
-            delay = 1000 if count < 3 else 2000
-            logger.info(f"LifeCycle: Identity not ready (Attempt {count + 1}/10). Retrying in {delay/1000}s...")
-            self.after(delay, lambda: self.attempt_identity_capture(count + 1))
-        else:
-            logger.warn("LifeCycle: Identity capture failed after 10 attempts. Falling back to Unknown.")
-            self.char_name = "Unknown"
-            self._finalize_connection()
-
-    def trigger_manual_sync(self):
-        """Action for the manual sync button on the Dashboard."""
-        if not self.main_hwnd:
-            messagebox.showwarning("Sync", "No active game process found to sync.")
-            return
-            
-        self.manual_sync_btn.config(state="disabled", text=" ↻ SYNCING... PLEASE WAIT ")
-        self.status_var.set("Performing Manual Identity & Full Sync...")
-        
-        def run_sync():
-            try:
-                # Mark as initially synced now
-                self.initial_sync_done = True
-                
-                # 1. Identity
-                logger.info("Sync: Performing manual identity capture...")
-                new_name = capture_identity(self.main_hwnd, self.target_pid)
-                if new_name:
-                    self.char_name = new_name
-                    self.after(0, lambda: self.title(f"M59 Companion v{self.version} - {self.char_name}"))
-                
-                # 2. Bank Balances
-                self.bank_manager.load_balances(self.char_name)
-                self.after(0, self.refresh_who_footer)
-                self.after(0, self.update_vault_ui)
-
-                # 3. Tab Dance & Scrape
-                logger.info("Sync: Starting Tab Dance & Scrape...")
-                mr = MemoryReader(self.pm_obj)
-                kn, st = cycle_tabs_and_scrape(self.main_hwnd, mr)
-                if kn or st:
-                    self.after(0, lambda: self._apply_sync_results(kn, st))
-                
-                self.after(0, lambda: self.status_var.set(f"Sync Complete: {self.char_name}"))
-                logger.info("Sync: Manual sync complete.")
-            except Exception as e:
-                logger.error(f"Manual sync error: {e}")
-                self.after(0, lambda: self.status_var.set("Manual Sync Failed."))
-            finally:
-                # Disable the button and reset text until the next login/reconnect event
-                self.after(0, lambda: self.manual_sync_btn.config(state="disabled", text=" ↻ FULL SYNC "))
-        
-        threading.Thread(target=run_sync, daemon=True).start()
-
-    def _finalize_connection(self):
-        self.title(f"M59 Companion v{self.version} - {self.char_name}")
-        self.status_var.set(f"Connected: {self.char_name}")
-        self._post_connection_init()
-
-    def on_game_disconnect(self, pid):
-        """Callback when InstanceManager loses connection to a game process."""
-        logger.info(f"LifeCycle: Game Instance Lost (PID {pid}). Entering search mode...")
-        
-        # Stop WhoList Monitor
-        if self.who_list_monitor:
-            self.who_list_monitor.stop()
-            self.who_list_monitor = None
-            
-        self.who_list_players = {}
-        self.inventory_items = []
-        self.inventory_scraper = None
-        self.main_hwnd = None
-        self.pm_obj = None
-        self.target_pid = None
-        
-        if hasattr(self, 'commalias_tab'):
-            self.commalias_tab.manager.update_float_buttons()
-        
-        def safe_ui_reset():
-            self.refresh_who_list_ui()
-            # self.update_inventory_tree() # REMOVED: Fake name cause error
-            self.show_waiting_overlay()
-            self.status_var.set(f"Game Lost ({self.char_name}) - Searching...")
-            self.title(f"M59 Companion v{self.version} - Waiting...")
-            for v in self.hud_values.values():
-                v.config(text="---")
-            if self.pk_frame:
-                try: self.pk_frame.destroy()
-                except: pass
-                self.pk_frame = None
-
-        self.after(0, safe_ui_reset)
-
-    def _post_connection_init(self, passive=False):
-        if not self.is_running:
-            return
-        self.debug_log("INIT", f"Initializing profile (Passive: {passive})...")
-        try:
-            self.load_vault_cache()
-            self.load_kill_book()
-            self.refresh_log_list()
-            
-            # Initialize Bank Manager for this character
-            self.bank_manager.load_balances(self.char_name)
-            self.refresh_who_footer()
-            self.update_vault_ui()
-            
-            if not self.pk_frame:
-                self.pk_frame = PKFrame(self, self.main_hwnd)
-                
-            self.update_hud()
-            self.start_chat_monitor()
-            
-            if not passive:
-                self.debug_log("INIT", "Starting automatic startup sync...")
-                threading.Thread(target=self.perform_sync, daemon=True).start()
-        except Exception as e:
-            self.debug_log("INIT", f"Post-connection error: {e}")
-
-    def toggle_game_time_mode(self):
-        self.game_time_mode_24h.set(not self.game_time_mode_24h.get())
-        self.update_game_time()
-        self.save_settings()
-
-    def update_game_time(self):
-        if hasattr(self, "game_time_lbl") and self.game_time_lbl:
-            try:
-                info = get_game_time()
-                time_str = format_game_time(info, use_24h=self.game_time_mode_24h.get())
-                self.game_time_lbl.config(text=f"Game Time: {time_str}")
-            except Exception as e:
-                logger.debug(f"Clock update error: {e}")
-        self.after(1000, self.update_game_time)
-
-    def update_hud(self):
-        if not self.main_hwnd or not self.is_running:
-            return
-        self.refresh_counter -= 1
-        
-        # --- Title-based Login/Logout Detection ---
-        try:
-            current_title = win32gui.GetWindowText(self.main_hwnd)
-            is_logged_in = " --- " in current_title
-            
-            if not is_logged_in and self.initial_sync_done:
-                # STATE: User just logged out (window still open)
-                if "Logged Out" not in self.status_var.get():
-                    logger.info(f"Character {self.char_name} logged out (Select Screen).")
-                    self.status_var.set(f"Logged Out ({self.char_name})")
-                    self.title(f"M59 Companion v{self.version} - Logged Out")
-                    # Clear Who List on logout
-                    self.who_list_players = {}
-                    self.refresh_who_list_ui()
-                    if hasattr(self, "gps_who_loc_lbl") and self.gps_who_loc_lbl:
-                        self.gps_who_loc_lbl.config(text="Unknown Location")
-            
-            elif is_logged_in:
-                room = current_title.split(" --- ", 1)[1].strip()
-                if "Logged Out" in self.status_var.get():
-                    # STATE: User just logged back in
-                    logger.info(f"Character detected back in-game at {room}.")
-                    self.status_var.set(f"Re-connected: {self.char_name} (Ready for Manual Sync)")
-                    self.title(f"M59 Companion v{self.version} - {self.char_name}")
-                    # Enable the sync button to indicate a refresh is needed
-                    self.manual_sync_btn.config(state="normal", text=" ↻ FULL SYNC REQUIRED ")
-                
-                self.gps_current_loc_lbl.config(text=room)
-                if hasattr(self, "gps_who_loc_lbl") and self.gps_who_loc_lbl:
-                    self.gps_who_loc_lbl.config(text=room)
-                self.monitor_gps_navigation(room)
-                
-                # Refresh footer to ensure PVP status and GPS labels update correctly on room change
-                self.refresh_who_footer()
-                
-                # Always track travel times in background (Weighted Pathfinding)
-                was_t, msg = self.gps_manager.process_room_update(room)
-                if msg:
-                    # Log to console/debug only if debug is on or discovery is on
-                    if self.debug_enabled.get():
-                        self.gps_log(msg)
-
-        except Exception as e:
-            logger.debug(f"Title tracking error: {e}")
-
-        if self.refresh_counter <= 0:
-            self.refresh_counter = 10
-            try:
-                st = get_blakgraph_stats(self.main_hwnd)
-                if st:
-                    # Log raw stats in high debug
-                    self.debug_log("DATA", f"Raw stats from memory: {list(st.keys())}")
-                    for k, v in st.items():
-                        if k in self.hud_values:
-                            self.hud_values[k].config(text=str(v))
-                        if k in self.attr_labels:
-                            self.current_attributes[k] = v
-                            self.attr_labels[k].config(text=str(v))
-            except Exception as e:
-                self.debug_log("HUD", f"Update error: {e}")
-        self.countdown_lbl.config(text=f"{self.refresh_counter}s")
-        self.after(1000, self.update_hud)
-
-    def monitor_gps_discovery(self, cur):
-        if cur == "Unknown Location":
-            return
-        was_t, msg = self.gps_manager.process_room_update(cur)
-        if msg:
-            self.gps_log(msg)
-            self.update_gps_ui()
-
-    def start_chat_monitor(self):
-        def loop():
-            tr = SessionTracker()
-            co = CombatMonitor(self.char_name)
-            logger.info("ChatMonitor: Thread started.")
-            
-            # Initial handle grab - wrap in try/except to handle case where user isn't logged in yet
-            try:
-                ch = win32gui.GetDlgItem(self.main_hwnd, 1005)
-                if not ch:
-                    logger.info("ChatMonitor: Chat control (1005) not found yet.")
-                else:
-                    logger.info(f"ChatMonitor: Initialized with HWND {ch}")
-            except pywintypes.error as e:
-                if e.winerror == 1421:
-                    logger.info("ChatMonitor: Chat control (1005) not found yet. Waiting...")
-                    ch = None
-                else:
-                    raise
-
-            safe_n = get_safe_name(self.char_name)
-            log_p = os.path.join("settings", f"{safe_n}_chat.log")
-            
-            # Initial baseline
-            cur_text = get_text_from_hwnd(ch) if ch else ""
-            lines = [l.strip() for l in cur_text.splitlines() if l.strip()]
-            self.last_tail = lines[-50:] if lines else []
-            logger.info(f"ChatMonitor: Baseline set with {len(self.last_tail)} lines.")
-
-            last_heartbeat_log = 0
-
-            while self.is_running:
-                try:
-                    # 1. Process Heartbeat
-                    self.pm_obj.read_int(self.pm_obj.base_address)
-                    
-                    # Log heartbeat every 60 seconds for debugging
-                    if time.time() - last_heartbeat_log > 60:
-                        logger.debug("ChatMonitor: Heartbeat OK.")
-                        last_heartbeat_log = time.time()
-
-                    # 2. Control Handle Validation
-                    try:
-                        c_c = win32gui.GetDlgItem(self.main_hwnd, 1005)
-                        if c_c and c_c != ch:
-                            logger.info(f"ChatMonitor: Game control changed. Re-binding HWND {ch} -> {c_c}")
-                            ch = c_c
-                    except pywintypes.error as e:
-                        # Error 1421 = Control ID not found (User is likely at select screen)
-                        if e.winerror == 1421:
-                            if ch:
-                                logger.info("ChatMonitor: Chat control disappeared (Logout). Waiting...")
-                                ch = None
-                            time.sleep(2)
-                            continue
-                        raise # Re-raise other win32 errors to be caught by the outer loop
-                    
-                    if not ch:
-                        time.sleep(1)
-                        continue
-
-                    # 3. Read and Process
-                    cur_text = get_text_from_hwnd(ch)
-                    lines = [l.strip() for l in cur_text.splitlines() if l.strip()]
-                    
-                    if not lines:
-                        # Chat was likely cleared (Logout)
-                        if self.last_tail:
-                            logger.info("ChatMonitor: Chat buffer appears empty. Resetting fingerprint.")
-                            self.last_tail = []
-                        time.sleep(1)
-                        continue
-
-                    new = []
-                    found = -1
-                    tail = list(self.last_tail)
-                    
-                    while tail:
-                        tl = len(tail)
-                        search = lines[-100-tl:] if len(lines) > 100 else lines
-                        off = len(lines) - len(search)
-                        for i in range(len(search) - tl, -1, -1):
-                            if search[i:i+tl] == tail:
-                                found = off + i + tl
-                                break
-                        if found != -1:
-                            break
-                        tail.pop(0)
-
-                    if found != -1:
-                        new = lines[found:]
-                    else:
-                        # Fingerprint not found - buffer was likely cleared and refilled (Relog)
-                        if self.last_tail:
-                            logger.info(f"ChatMonitor: Fingerprint not found in {len(lines)} lines. Assuming buffer reset.")
-                        new = lines # Capture everything in the "new" buffer
-                        # Ensure combat monitor has latest name
-                        co.char_name = self.char_name
-
-                    if new:
-                        ts = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                        try:
-                            # Use char_name for logging path in case it changed
-                            current_safe_n = self.char_name.replace(" ", "_")
-                            current_log_p = os.path.join("settings", f"{current_safe_n}_chat.log")
-                            if not os.path.exists("settings"):
-                                os.makedirs("settings", exist_ok=True)
-                            
-                            with open(current_log_p, "a", encoding="utf-8") as f:
-                                for l in new:
-                                    f.write(f"{ts} {l}\n")
-                                    self.after(0, lambda ln=l: self.append_comms_line(ln))
-                                    try:
-                                        # 1. Bank Balance Tracking
-                                        if self.bank_manager.process_line(l):
-                                            self.after(0, self.refresh_who_footer)
-                                            self.after(0, self.update_vault_ui)
-
-                                        # 2. Skill Improvement Tracking
-                                        g = tr.process_line(l)
-                                        if g:
-                                            logger.info(f"ChatMonitor: Skill improvement: {g['name']}")
-                                            self.after(0, lambda gn=g: self.on_gain_detected(gn))
-                                        if self.is_combat_line(l):
-                                            r = co.process_line(l)
-                                            if r:
-                                                if r["type"] == "KILL":
-                                                    logger.info(f"ChatMonitor: Kill Detected: {r['name']}")
-                                                    self.after(0, lambda res=r: self.on_kill_detected(res))
-                                                elif r["type"] == "PK_ALERT":
-                                                    logger.info("ChatMonitor: PK ALERT TRIGGERED!")
-                                                    self.after(0, self.trigger_pk_alert)
-                                    except:
-                                        pass
-                                f.flush()
-                        except Exception as e:
-                            logger.error(f"ChatMonitor: Failed to write to log file: {e}")
-                        
-                        # Update fingerprint
-                        for l in new:
-                            self.last_tail.append(l)
-                        self.last_tail = self.last_tail[-50:]
-
-                except Exception as e:
-                    # Handle temporary access issues during login transitions
-                    if "Access is denied" in str(e) or "The handle is invalid" in str(e) or (isinstance(e, pywintypes.error) and e.winerror == 1421):
-                        logger.warn(f"ChatMonitor: Game state transition ({e}). Waiting...")
-                        time.sleep(2)
-                    else:
-                        logger.error(f"ChatMonitor: Critical loop error: {e}")
-                        break
-                
-                time.sleep(1)
-            
-            logger.info("ChatMonitor: Thread exiting.")
-            
-        threading.Thread(target=loop, daemon=True).start()
-
-    def on_gain_detected(self, g):
-        # 1. Update Dashboard List
-        if self.gains_tree.exists(g['name']):
-            self.gains_tree.item(g['name'], values=(g['name'], g['count'], g['delta']))
-        else:
-            self.gains_tree.insert("", "end", iid=g['name'], values=(g['name'], g['count'], "---"))
-            
-        # 2. Update Session-wide Stats
-        self.total_improves += 1
-        self.refresh_who_footer()
-
-    def on_kill_detected(self, r):
-        cat = r['category']
-        name = r['name']
-        self.session_kills[cat][name] = self.session_kills[cat].get(name, 0) + 1
-        count = self.session_kills[cat][name]
-        if self.kills_tree.exists(name):
-            self.kills_tree.item(name, values=(name, count))
-        else:
-            self.kills_tree.insert("", "end", iid=name, values=(name, count))
-        self.update_book_tree(cat)
-
-    def update_book_tree(self, ktype):
-        w = self.book_widgets[ktype]
-        tr = w["tree"]
-        fv = w["filter_var"]
-        ft = fv.get().lower()
-        for i in tr.get_children():
-            tr.delete(i)
-        vics = set(self.all_time_kills[ktype].keys()) | set(self.session_kills[ktype].keys())
-        for v in sorted(list(vics)):
-            if ft in v.lower():
-                at = self.all_time_kills[ktype].get(v, 0)
-                se = self.session_kills[ktype].get(v, 0)
-                
-                tr.insert("", "end", values=(v, max(at, se), f"+{se}" if se > 0 else ""))
-
-    def on_closing(self):
-        self.is_running = False
-        self.save_settings()
-        if self.who_list_docked.get():
-            self.unregister_appbar()
-        if self.who_list_monitor:
-            self.who_list_monitor.stop()
-        if self.target_pid:
-            release_pid(self.target_pid)
-        self.destroy()
-
-    def show_instance_selection_ui(self, instances):
-        """Displays a modal popup when multiple unclaimed games are found."""
-        logger.info(f"UI: Prompting user for instance selection from {len(instances)} options.")
-        
-        popup = tk.Toplevel(self)
-        popup.title("Select Game Instance")
-        
-        # Scale window geometry for DPI
-        w, h = self.scale_px(550), self.scale_px(450)
-        popup.geometry(f"{w}x{h}")
-        popup.minsize(w, h)
-        popup.attributes("-topmost", True)
-        popup.grab_set() # Modal
-        
-        tk.Label(popup, text="Multiple unclaimed games detected.", font=("Arial", 11, "bold"), pady=10).pack(side="top")
-        tk.Label(popup, text="Please select the instance you want this Companion to control:", font=("Arial", 9)).pack(side="top", pady=(0, 10))
-        
-        # Bottom Button Frame (Pack this first to pin to bottom)
-        btn_f = tk.Frame(popup)
-        btn_f.pack(side="bottom", fill="x", pady=20)
-        
-        # Center Treeview Frame (Pack last with expand=True to fill middle)
-        frame = tk.Frame(popup)
-        frame.pack(side="top", fill="both", expand=True, padx=20, pady=5)
-        
-        # Treeview for selection
-        tree = ttk.Treeview(frame, columns=("PID", "Character", "Location"), show="headings", height=8)
-        tree.heading("PID", text="PID")
-        tree.heading("Character", text="Character")
-        tree.heading("Location", text="Location")
-        tree.column("PID", width=self.scale_px(70), anchor="center")
-        tree.column("Character", width=self.scale_px(150), anchor="w")
-        tree.column("Location", width=self.scale_px(250), anchor="w")
-        tree.pack(side="left", fill="both", expand=True)
-        
-        sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
-        sb.pack(side="right", fill="y")
-        tree.configure(yscrollcommand=sb.set)
-        
-        for inst in instances:
-            # Parse location from title if possible
-            title = inst["title"]
-            location = title.split(" --- ", 1)[1] if " --- " in title else "Select Screen"
-            char_name = inst.get("char_name", "Unknown")
-            tree.insert("", "end", iid=str(inst["pid"]), values=(inst["pid"], char_name, location))
-
-        # NEW: Background scanner for identity
-        def background_identity_scan():
-            try:
-                from m59_scraper import capture_identity
-                for inst in instances:
-                    if not popup.winfo_exists(): return
-
-                    # Only scan if we don't already have a valid name
-                    if inst.get("char_name") in ["Unscanned", "Unknown", "..."]:
-                        name = capture_identity(inst["hwnd"], inst["pid"])
-                        if name and popup.winfo_exists():
-                            if not hasattr(self, 'pre_scanned_names'): self.pre_scanned_names = {}
-                            self.pre_scanned_names[inst["pid"]] = name
-                            # Update the specific row in the Treeview via the main thread
-                            self.after(0, lambda p=inst["pid"], n=name: tree.set(str(p), "Character", n))
-            except Exception as e:
-                logger.error(f"UI: Background identity scan failed: {e}")
-
-        threading.Thread(target=background_identity_scan, daemon=True).start()
-
-        def on_select():
-            selected = tree.selection()
-            if not selected:
-                messagebox.showwarning("Selection", "Please select an instance from the list.", parent=popup)
-                return
-            
-            selected_pid = int(selected[0])
-            logger.info(f"UI: User selected PID {selected_pid}.")
-            
-            if self.lifecycle.assign_instance(selected_pid):
-                popup.destroy()
-            else:
-                messagebox.showerror("Error", "Could not attach to that instance. It might have been claimed or closed.", parent=popup)
-                # Refresh list if it failed
-                unclaimed = get_unclaimed_instances()
-                if not unclaimed:
-                    popup.destroy()
-                else:
-                    for i in tree.get_children(): tree.delete(i)
-                    for i in unclaimed: tree.insert("", "end", iid=str(i["pid"]), values=(i["pid"], i.get("char_name", "Unknown"), i["title"]))
-        
-        tk.Button(btn_f, text=" CONNECT TO SELECTED ", command=on_select, 
-                  bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), padx=20, pady=5).pack()
-        
-        # If the popup is closed without selection, we resume auto-searching
-        def on_popup_close():
-            logger.info("UI: Instance selection cancelled by user.")
-            self.lifecycle.pause_auto_attach = False
-            popup.destroy()
-            
-        popup.protocol("WM_DELETE_WINDOW", on_popup_close)
-
-    def trigger_sync(self):
-        self.sync_btn.config(state="disabled")
-        self.debug_log("SYNC", "Starting manual sync cycle...")
-        threading.Thread(target=self.perform_sync, daemon=True).start()
-
-    def perform_sync(self):
-        self.sync_in_progress = True
-        try:
-            mr = MemoryReader(self.pm_obj)
-            kn, st = cycle_tabs_and_scrape(self.main_hwnd, mr)
-            if kn or st:
-                # Mark as initially synced now that we have data
-                self.initial_sync_done = True
-                self.after(0, lambda: self._apply_sync_results(kn, st))
-        except Exception as e:
-            logger.error(f"Sync: Automatic sync error: {e}")
-        finally:
-            self.sync_in_progress = False
-            self.after(100, self.hide_waiting_overlay)
-            self.after(0, lambda: self.sync_btn.config(state="normal"))
-
-    def _apply_sync_results(self, kn, st):
-        logger.info(f"Sync: Data received - Skills: {len(kn) if kn else 0}, Stats: {len(st) if st else 0}")
-        
-        if st:
-            # High-Verbosity Data Dump
-            if self.debug_enabled.get():
-                dump = ", ".join([f"{k}:{v}" for k, v in st.items()])
-                self.debug_log("DATA", f"Full Stat Dump: {dump}")
-
-            for k, v in st.items():
-                # 1. Update HUD Vitals (HP/MP/VG)
-                if k in self.hud_values:
-                    self.hud_values[k].config(text=str(v))
-                
-                # 2. Update Attributes (Might/Int/etc)
-                if k in self.attr_labels:
-                    self.current_attributes[k] = v
-                    self.attr_labels[k].config(text=str(v))
-
-        if kn:
-            self.knowledge_cache.update(kn)
-        
-        self.update_progression_tab()
-
-    def update_progression_tab(self):
-        if not self.knowledge_cache:
-            return
-        
-        intellect = self.current_attributes.get("Intellect", 25)
-        logger.debug(f"Calc: Processing progression (Intellect: {intellect})")
-        if self.debug_enabled.get():
-            self.debug_log("DATA", f"Knowledge Cache: {self.knowledge_cache}")
-
-        exp = {self.prog_tree.item(i)['text'] for i in self.prog_tree.get_children() if self.prog_tree.item(i, 'open')}
-        res = self.calculator.calculate_progression(self.knowledge_cache, intellect)
-        
-        for i in self.prog_tree.get_children():
-            self.prog_tree.delete(i)
-            
-        for r in res:
-            name = r['name']
-            is_open = name in exp
-
-            # Handle Mastered Display
-            if r.get('mastered'):
-                val_tuple = ("Level 6", "MASTERED", "---", "---")
-            elif r['needed'] == 0:
-                val_tuple = (f"Level {r['current_lvl']}", f"{r['current_sum']}%", f"{r['target_sum']}%", "YOU QUALIFY!")
-            else:
-                val_tuple = (f"Level {r['current_lvl']}", f"{r['current_sum']}%", f"{r['target_sum']}%", f"{r['needed']}%")
-
-            p = self.prog_tree.insert("", "end", text=name, values=val_tuple, open=is_open)
-
-            sd = self.calculator.schools.get(name, {})
-            for l in range(1, 7):
-                lk = f"Level_{l}"
-                if lk in sd:
-                    for s in sd[lk]:
-                        if s.lower() in self.knowledge_cache:
-                            self.prog_tree.insert(p, "end", text=f"  {s}", 
-                                                 values=(f"L{l}", f"{self.knowledge_cache[s.lower()]}%", "", ""))
-
-    def trigger_vault_scan(self, vt):
-        rm = {"barloque": "Office of the Barloque Vaultman", "hungry": "The Hungry Vaults"}
-        cur = self.get_current_room()
-        logger.info(f"Vault: Validating location for {vt} scan. Current: {cur}")
-        
-        # Language-Independent relaxation:
-        # If the room name doesn't match the English default, warn but allow bypass.
-        if rm.get(vt) and rm[vt].lower() not in cur.lower():
-            msg = f"Your current location '{cur}' does not match the expected vault room '{rm[vt]}'.\n\n"
-            msg += "If you are on a non-English client or have already opened the vault window, you can 'Bypass' to attempt the scan anyway.\n\n"
-            msg += "Attempt scan?"
-            if not messagebox.askyesno("Vault Location Warning", msg):
-                return
-        elif not messagebox.askyesno("Scan", f"Scan {vt} vault?"):
-            return
-            
-        w = self.vault_widgets[vt]
-        w["sync_btn"].config(state="disabled")
-        threading.Thread(target=self.perform_vault_scan_thread, args=(vt,), daemon=True).start()
-
-    def perform_vault_scan_thread(self, vt):
-        logger.info(f"Vault: Starting automated scan of {vt} vault...")
-        try:
-            inv = perform_vault_scan(self.main_hwnd, self.char_name, vt, lambda c, t, i, q: self.after(0, lambda: self.status_var.set(f"Scan: {c}/{t}")))
-            if inv:
-                logger.info(f"Vault: Scan complete. Found {len(inv)} items.")
-                self.after(0, lambda: self._apply_vault_results(vt, inv))
-        except Exception as e:
-            logger.error(f"Vault: Scan error: {e}")
-        finally:
-            self.after(0, lambda: self.vault_widgets[vt]["sync_btn"].config(state="normal"))
-
-    def _apply_vault_results(self, vt, inv):
-        self.vault_data[vt] = inv
-        self.update_vault_tree(vt)
-        self.vault_widgets[vt]["status_lbl"].config(text=f"Last Scan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-    def update_vault_tree(self, vt):
-        w = self.vault_widgets[vt]
-        tr = w["tree"]
-        fv = w["filter_var"]
-        for i in tr.get_children():
-            tr.delete(i)
-        for i in self.vault_data[vt]:
-            if fv.get().lower() in i['item'].lower():
-                tr.insert("", "end", values=(i['item'], i['quantity']))
-
-    def load_vault_cache(self):
-        if self.char_name == "Unknown":
-            return
-        sn = get_safe_name(self.char_name)
-        for vt in ["barloque", "hungry"]:
-            p = next((x for x in [f"settings/{sn}_vault_{vt}.json"] if os.path.exists(x)), None)
-            if p:
-                try:
-                    with open(p, "r") as f:
-                        d = json.load(f)
-                        self.vault_data[vt] = d.get("items", [])
-                        self.update_vault_tree(vt)
-                except:
-                    pass
-
-    def load_kill_book(self):
-        if self.char_name == "Unknown":
-            return
-        sn = get_safe_name(self.char_name)
-        p = f"settings/{sn}_kills.json"
-        if os.path.exists(p):
-            try:
-                with open(p, "r") as f:
-                    d = json.load(f)
-                    from m59_combat import CombatMonitor
-                    tm = CombatMonitor(self.char_name)
-                    self.all_time_kills = {"monsters": {}, "players": {}}
-                    for cat in ["monsters", "players"]:
-                        for v, c in d.get(cat, {}).items():
-                            l = v.lower()
-                            is_m = l in tm.mob_set or (l.startswith("the ") and l[4:] in tm.mob_set) or (l.startswith("a ") and l[2:] in tm.mob_set)
-                            nc = "monsters" if is_m else "players"
-                            self.all_time_kills[nc][v] = self.all_time_kills[nc].get(v, 0) + c
-                self.update_book_tree("monsters")
-                self.update_book_tree("players")
-            except:
-                pass
-
-    def get_current_room(self):
-        if not self.main_hwnd:
-            return "Unknown"
-        t = win32gui.GetWindowText(self.main_hwnd)
-        # Format: Meridian 59 --- [ROOM NAME]
-        return t.split(" --- ", 1)[1].strip() if " --- " in t else "Unknown Location"
-
-    def background_update_check(self):
-        def check():
-            u, rv, notes = check_for_updates(self.version)
-            if not u: 
-                self.after(0, self.establish_connection)
-                return
-            def show_prompt():
-                msg = f"v{rv} available.\n\n"
-                if notes:
-                    msg += f"Release Notes:\n{notes}\n\n"
-                msg += "Update?"
-                choice = messagebox.askquestion("Update", msg, icon="info", type="yesnocancel")
-                if choice == "yes":
-                    self.status_var.set("Updating...")
-                    from m59_updater import download_update, apply_update
-                    new_path = download_update()
-                    if new_path:
-                        apply_update(new_path)
-                    else:
-                        self.after(0, self.establish_connection)
-                else:
-                    self.after(0, self.establish_connection)
-            self.after(0, show_prompt)
-        threading.Thread(target=check, daemon=True).start()
-
-    def find_all_instances(self):
-        insts = []
-        def cb(h, e):
-            if win32gui.IsWindowVisible(h) and "Meridian 59" in win32gui.GetWindowText(h):
-                _, p = win32process.GetWindowThreadProcessId(h)
-                try:
-                    if psutil.Process(p).name().lower() == self.target_name.lower():
-                        insts.append({"pid": p, "title": win32gui.GetWindowText(h), "hwnd": h})
-                except:
-                    pass
-        win32gui.EnumWindows(cb, None)
-        return insts
-
-    def browse_pk_sound(self):
-        p = filedialog.askopenfilename(filetypes=[("Audio files", "*.wav *.mp3"), ("Wave files", "*.wav"), ("MP3 files", "*.mp3"), ("All files", "*.*")])
-        if p:
-            # If the path is within the current working directory, make it relative
-            try:
-                rel_p = os.path.relpath(p, os.getcwd())
-                if not rel_p.startswith(".."):
-                    p = rel_p
-            except:
-                pass
-            self.pk_sound_path.set(p)
-
-
-    def test_pk_sound(self):
-        p = self.pk_sound_path.get()
-        self.play_audio_file(p)
-
-    def browse_tell_sound(self):
-        p = filedialog.askopenfilename(filetypes=[("Audio files", "*.wav *.mp3"), ("Wave files", "*.wav"), ("MP3 files", "*.mp3"), ("All files", "*.*")])
-        if p:
-            try:
-                rel_p = os.path.relpath(p, os.getcwd())
-                if not rel_p.startswith(".."):
-                    p = rel_p
-            except:
-                pass
-            self.tell_sound_path.set(p)
-
-
-    def test_tell_sound(self):
-        p = self.tell_sound_path.get()
-        self.play_audio_file(p)
-
-
-
-
-    def play_audio_file(self, filepath):
-        try:
-            if filepath.startswith("System"):
-                winsound.PlaySound(filepath, winsound.SND_ALIAS | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-            else:
-                original_filepath = filepath
-                if not os.path.isabs(filepath):
-                    cwd_path = os.path.join(os.getcwd(), filepath)
-                    if os.path.exists(cwd_path):
-                        filepath = cwd_path
-                    else:
-                        filepath = resource_path(filepath)
-                
-                import ctypes
-                ctypes.windll.winmm.mciSendStringW(f'close m59_audio', None, 0, None)
-                res = ctypes.windll.winmm.mciSendStringW(f'open "{filepath}" alias m59_audio', None, 0, None)
-                if res != 0:
-                    # Fallback to winsound if MCI fails to open it (e.g. some wav formats)
-                    if filepath.lower().endswith(".wav"):
-                        winsound.PlaySound(filepath, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-                else:
-                    ctypes.windll.winmm.mciSendStringW(f'play m59_audio', None, 0, None)
-        except Exception as e:
-            logger.debug(f"Audio playback error: {e}")
-
-    def show_waiting_overlay(self, mode="searching"):
-        """Displays a splash screen and keeps the main UI hidden until initialization is complete."""
-        try:
-            self.attributes("-alpha", 0.0)
-        except: pass
-
-        if self.waiting_overlay and self.waiting_overlay.winfo_exists():
-            if mode == "login":
-                self.waiting_title_lbl.config(text=" ↻  WAITING FOR LOGIN ", fg="#64B5F6")
-                self.waiting_msg_lbl.config(text="Please select a character and enter the world")
-            elif mode == "initializing":
-                self.waiting_title_lbl.config(text=" ↻  INITIALIZING ", fg="#FFCA28")
-                self.waiting_msg_lbl.config(text="Synchronizing game state...")
-            else:
-                self.waiting_title_lbl.config(text=" ↻  SCANNING FOR GAME ", fg="#81C784")
-                self.waiting_msg_lbl.config(text="Please launch Meridian 59 to continue")
-            self.waiting_overlay.update_idletasks()
-            return
-            
-        logger.info(f"UI: Displaying 'Splash' overlay (Mode: {mode}).")
-        
-        overlay = tk.Toplevel(self)
-        overlay.title("M59 Companion - Connecting...")
-        
-        window_width = 580
-        window_height = 420
-        screen_width = self.winfo_screenwidth()
-        screen_height = self.winfo_screenheight()
-        center_x = int(screen_width/2 - window_width / 2)
-        center_y = int(screen_height/2 - window_height / 2)
-        
-        overlay.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
-        overlay.resizable(False, False)
-        overlay.overrideredirect(True)
-        overlay.attributes("-topmost", True)
-        
-        try: overlay.attributes("-alpha", 0.95)
-        except: pass
-            
-        overlay.configure(bg="#0F0F0F")
-        
-        inner = tk.Frame(overlay, bg="#181818", highlightthickness=1, highlightbackground="#333333")
-        inner.pack(expand=True, fill="both", padx=2, pady=2)
-        
-        # Try to load splash image
-        try:
-            from PIL import Image, ImageTk
-            import os
-            icon_path = resource_path(os.path.join("imgs", "m59comp.jpg"))
-            if os.path.exists(icon_path):
-                # For older PIL versions
-                resample_filter = getattr(Image, 'Resampling', Image).LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
-                img = Image.open(icon_path).convert("RGBA")
-                img = img.resize((200, 200), resample_filter)
-                self.splash_photo = ImageTk.PhotoImage(img)
-                img_lbl = tk.Label(inner, image=self.splash_photo, bg="#181818")
-                img_lbl.pack(pady=(25, 5))
-            else:
-                tk.Label(inner, text="M59 COMPANION", font=("Segoe UI", 22, "bold"), fg="#FFFFFF", bg="#181818").pack(pady=(35, 10))
-        except Exception as e:
-            logger.error(f"Failed to load splash image: {e}")
-            tk.Label(inner, text="M59 COMPANION", font=("Segoe UI", 22, "bold"), fg="#FFFFFF", bg="#181818").pack(pady=(35, 10))
-        
-        if mode == "initializing":
-            title_text = " ↻  INITIALIZING "
-            title_color = "#FFCA28"
-            msg_text = "Synchronizing game state..."
-        elif mode == "login":
-            title_text = " ↻  WAITING FOR LOGIN "
-            title_color = "#64B5F6"
-            msg_text = "Please select a character and enter the world"
-        else:
-            title_text = " ↻  SCANNING FOR GAME "
-            title_color = "#81C784"
-            msg_text = "Please launch Meridian 59 to continue"
-        
-        self.waiting_title_lbl = tk.Label(inner, text=title_text, font=("Segoe UI", 12, "bold"), fg=title_color, bg="#181818", pady=5)
-        self.waiting_title_lbl.pack(pady=(15, 5) if hasattr(self, 'splash_photo') else 5)
-        
-        self.waiting_msg_lbl = tk.Label(inner, text=msg_text, font=("Segoe UI", 10), fg="#B0B0B0", bg="#181818")
-        self.waiting_msg_lbl.pack(pady=(5, 15))
-        
-        self.waiting_overlay = overlay
-
-    def hide_waiting_overlay(self):
-        """Materializes the main UI and destroys the splash screen."""
-        if getattr(self, "_is_materializing", False):
-            return
-            
-        if self.waiting_overlay:
-            try:
-                if self.waiting_overlay.winfo_exists():
-                    logger.info("UI: Materializing main interface...")
-                    self._is_materializing = True
-                    try: self.deiconify()
-                    except: pass
-                    self._materialize_ui(self.waiting_overlay, 0.0)
-                    return
-            except:
-                pass
-            self.waiting_overlay = None
-            
-        # Fallback if no overlay
-        try:
-            self.deiconify()
-            self.attributes("-alpha", 1.0)
-        except: pass
-
-    def _materialize_ui(self, overlay, main_alpha):
-        if main_alpha < 1.0:
-            main_alpha += 0.05  # Slower fade
-            if main_alpha > 1.0:
-                main_alpha = 1.0
-            
-            try:
-                self.attributes("-alpha", main_alpha)
-                
-                # Keep splash fully opaque until main UI is partially visible to avoid black flashes
-                splash_alpha = 1.0
-                if main_alpha > 0.3:
-                    splash_alpha = 1.0 - ((main_alpha - 0.3) / 0.7)
-                
-                if splash_alpha < 0: splash_alpha = 0.0
-                overlay.attributes("-alpha", splash_alpha)
-                
-                self.after(30, self._materialize_ui, overlay, main_alpha)
-            except Exception as e:
-                logger.error(f"UI Fade Error: {e}")
-                self.attributes("-alpha", 1.0)
-                try: overlay.destroy()
-                except: pass
-                self.waiting_overlay = None
-                self._is_materializing = False
-        else:
-            try:
-                overlay.destroy()
-            except:
-                pass
-            self.attributes("-alpha", 1.0)
-            self.waiting_overlay = None
-            self._is_materializing = False
-            logger.info("UI: Interface completely materialized.")
-
+        # Off-track detection -> recalculate path automatically
+        start_rid = self.gps_manager.resolve_name_to_rid(current_room_name)
+        if start_rid:
+            recalculated = self.gps_manager.find_path(start_rid, self.gps_manager.current_destination_rid)
+            if recalculated is not None:
+                self.gps_manager.current_path = recalculated
+                self.gps_manager.current_step_index = 0
+                self.update_gps_navigation_ui()
+
+
+# ----------------------------------------------------------------------
+# Application Entry Point
+# ----------------------------------------------------------------------
 if __name__ == "__main__":
-    # Enable High DPI awareness to fix scaling issues with AppBar and screen coordinates
-    try:
-        # PROCESS_PER_MONITOR_DPI_AWARE = 2
-        # PROCESS_SYSTEM_DPI_AWARE = 1
-        # Try per-monitor awareness first
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    except:
-        try:
-            # Fallback to system-level awareness
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        except:
-            try:
-                # Legacy fallback
-                ctypes.windll.user32.SetProcessDPIAware()
-            except:
-                pass
-            
-    app = M59Dashboard()
-    app.mainloop()
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    # Set Window / App Icon
+    icon_path = resource_path(os.path.join("imgs", "m59comp.ico"))
+    if not os.path.exists(icon_path):
+        icon_path = resource_path(os.path.join("imgs", "m59comp.jpg"))
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
+    window = M59CompanionApp()
+    window.show()
+
+    # Launch splash screen overlay during process scan
+    window.show_splash_overlay("searching")
+
+    sys.exit(app.exec())

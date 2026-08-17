@@ -12,37 +12,39 @@ class BankManager:
 
     def load_balances(self, char_name):
         """Loads persistent balances for a specific character."""
-        if not char_name or char_name == "Unknown":
+        if not char_name or char_name in ["Unknown", "--"]:
             return
             
         self.current_char = char_name
         safe_n = get_safe_name(char_name)
-        p = f"logs/{safe_n}_bank.json"
         
-        if os.path.exists(p):
-            try:
-                with open(p, "r") as f:
-                    self.balances = json.load(f)
-                    logger.info(f"Bank: Loaded balances for {char_name}: M:{self.balances['mainland']}, I:{self.balances['island']}")
-            except Exception as e:
-                logger.error(f"Bank: Failed to load balances: {e}")
-        else:
-            self.balances = {"mainland": 0, "island": 0}
+        for folder in ["settings", "logs"]:
+            p = f"{folder}/{safe_n}_bank.json"
+            if os.path.exists(p):
+                try:
+                    with open(p, "r") as f:
+                        self.balances = json.load(f)
+                        logger.info(f"Bank: Loaded balances for {char_name}: M:{self.balances.get('mainland', 0)}, I:{self.balances.get('island', 0)}")
+                        return
+                except Exception as e:
+                    logger.error(f"Bank: Failed to load balances from {p}: {e}")
+        self.balances = {"mainland": 0, "island": 0}
 
     def save_balances(self):
         """Saves current balances to disk."""
-        if not self.current_char or self.current_char == "Unknown":
+        if not self.current_char or self.current_char in ["Unknown", "--"]:
             return
             
         safe_n = get_safe_name(self.current_char)
-        p = f"logs/{safe_n}_bank.json"
         
-        try:
-            os.makedirs("logs", exist_ok=True)
-            with open(p, "w") as f:
-                json.dump(self.balances, f)
-        except Exception as e:
-            logger.error(f"Bank: Failed to save balances: {e}")
+        for folder in ["settings", "logs"]:
+            try:
+                os.makedirs(folder, exist_ok=True)
+                p = f"{folder}/{safe_n}_bank.json"
+                with open(p, "w") as f:
+                    json.dump(self.balances, f)
+            except Exception as e:
+                logger.error(f"Bank: Failed to save balances to {folder}: {e}")
 
     def process_line(self, line):
         """Parses a chat line for bank messages. Returns True if a balance changed."""
