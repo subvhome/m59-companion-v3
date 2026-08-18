@@ -65,6 +65,27 @@
           "type": "tell",
           "text": "DOOM, \"DOOM test",
           "raw": "You tell MF DOOM, \"DOOM test\""
+        },
+        {
+          "ts": "23:51:34",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"DOOM test",
+          "raw": "You tell MF DOOM, \"DOOM test\""
+        },
+        {
+          "ts": "23:52:32",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \" test",
+          "raw": "You tell MF DOOM, \" test\""
+        },
+        {
+          "ts": "23:54:15",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"DOOM tet",
+          "raw": "You tell MF DOOM, \"DOOM tet\""
         }
       ]
     },
@@ -98,6 +119,41 @@
           "type": "tell",
           "text": "DOOM test",
           "raw": "MF DOOM tells you, \"DOOM test\""
+        },
+        {
+          "ts": "23:51:33",
+          "direction": "out",
+          "type": "tell",
+          "text": "test",
+          "raw": "You tell MF DOOM, 'test'"
+        },
+        {
+          "ts": "23:51:34",
+          "direction": "in",
+          "type": "tell",
+          "text": "DOOM test",
+          "raw": "MF DOOM tells you, \"DOOM test\""
+        },
+        {
+          "ts": "23:52:32",
+          "direction": "in",
+          "type": "tell",
+          "text": "test",
+          "raw": "MF DOOM tells you, \" test\""
+        },
+        {
+          "ts": "23:54:15",
+          "direction": "out",
+          "type": "tell",
+          "text": "tet",
+          "raw": "You tell MF DOOM, 'tet'"
+        },
+        {
+          "ts": "23:54:15",
+          "direction": "in",
+          "type": "tell",
+          "text": "DOOM tet",
+          "raw": "MF DOOM tells you, \"DOOM tet\""
         }
       ]
     },
@@ -268,7 +324,5 @@
       ]
     }
   },
-  "unread_dms": {
-    "mf doom": 1
-  }
+  "unread_dms": {}
 }

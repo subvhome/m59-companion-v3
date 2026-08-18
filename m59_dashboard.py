@@ -1647,24 +1647,24 @@ class M59DirectMessageDialog(QDialog):
             QDialog#DirectMessageDialog {
                 background-color: #0b0f19;
                 color: #f8fafc;
-                border: 1px solid #9333ea;
-                border-radius: 10px;
+                border: 1px solid #d97706;
+                border-radius: 8px;
             }
             QFrame#TitleBar {
-                background-color: #1e1b4b;
-                border-top-left-radius: 9px;
-                border-top-right-radius: 9px;
-                border-bottom: 1px solid #4c1d95;
+                background-color: #1e293b;
+                border-top-left-radius: 7px;
+                border-top-right-radius: 7px;
+                border-bottom: 1px solid #334155;
             }
             QLabel#TitleLabel {
-                color: #f0abfc;
+                color: #fbbf24;
                 font-weight: 800;
                 font-size: 12px;
                 letter-spacing: 0.5px;
             }
             QPushButton#CloseBtn {
-                background-color: #4c1d95;
-                color: #f5d0fe;
+                background-color: #334155;
+                color: #cbd5e1;
                 font-weight: 800;
                 border: none;
                 border-radius: 4px;
@@ -1672,7 +1672,7 @@ class M59DirectMessageDialog(QDialog):
                 font-size: 11px;
             }
             QPushButton#CloseBtn:hover {
-                background-color: #e11d48;
+                background-color: #dc2626;
                 color: #ffffff;
             }
             QPushButton#ActionBtn {
@@ -1689,27 +1689,27 @@ class M59DirectMessageDialog(QDialog):
                 color: #ffffff;
             }
             QPushButton#SendBtn {
-                background-color: #7e22ce;
+                background-color: #059669;
                 color: #ffffff;
                 font-weight: 800;
                 font-size: 11px;
-                padding: 5px 12px;
+                padding: 5px 14px;
                 border-radius: 6px;
-                border: 1px solid #c084fc;
+                border: 1px solid #34d399;
             }
             QPushButton#SendBtn:hover {
-                background-color: #9333ea;
+                background-color: #10b981;
             }
             QLineEdit {
                 background-color: #030712;
-                border: 1px solid #4c1d95;
+                border: 1px solid #334155;
                 border-radius: 6px;
                 padding: 6px 10px;
                 color: #f8fafc;
                 font-size: 12px;
             }
             QLineEdit:focus {
-                border-color: #c084fc;
+                border-color: #fbbf24;
             }
         """)
 
@@ -1844,21 +1844,23 @@ class M59DirectMessageDialog(QDialog):
 
                 if direction == "out":
                     # Outgoing message (You -> Player)
+                    clean_target = self.player_name.strip().strip('"')
                     html += f"""
                     <div style='margin-bottom: 6px; text-align: right;'>
-                        <div style='display: inline-block; max-width: 85%; background-color: #083344; border: 1px solid #0891b2; border-radius: 8px 8px 2px 8px; padding: 6px 10px; text-align: left;'>
-                            <div style='font-size: 10px; color: #67e8f9; font-weight: 700; margin-bottom: 2px;'>You tell {self.player_name} <span style='color: #94a3b8; font-weight: 400;'>[{ts}]</span></div>
+                        <div style='display: inline-block; max-width: 85%; background-color: #0c4a6e; border: 1px solid #0284c7; border-radius: 8px 8px 2px 8px; padding: 6px 10px; text-align: left;'>
+                            <div style='font-size: 10px; color: #38bdf8; font-weight: 700; margin-bottom: 2px;'>You tell "{clean_target}" <span style='color: #94a3b8; font-weight: 400;'>[{ts}]</span></div>
                             <div style='color: #f0fdfa; font-size: 12px; line-height: 1.35;'>{text}</div>
                         </div>
                     </div>
                     """
                 else:
                     # Incoming message (Player -> You)
+                    clean_sender = self.player_name.strip().strip('"')
                     html += f"""
                     <div style='margin-bottom: 6px; text-align: left;'>
-                        <div style='display: inline-block; max-width: 85%; background-color: #2e1065; border: 1px solid #9333ea; border-radius: 8px 8px 8px 2px; padding: 6px 10px;'>
-                            <div style='font-size: 10px; color: #d8b4fe; font-weight: 700; margin-bottom: 2px;'>{self.player_name} [{m_type}] <span style='color: #94a3b8; font-weight: 400;'>[{ts}]</span></div>
-                            <div style='color: #faf5ff; font-size: 12px; line-height: 1.35;'>{text}</div>
+                        <div style='display: inline-block; max-width: 85%; background-color: #451a03; border: 1px solid #d97706; border-radius: 8px 8px 8px 2px; padding: 6px 10px;'>
+                            <div style='font-size: 10px; color: #fbbf24; font-weight: 700; margin-bottom: 2px;'>"{clean_sender}" [{m_type}] <span style='color: #94a3b8; font-weight: 400;'>[{ts}]</span></div>
+                            <div style='color: #fffbeb; font-size: 12px; line-height: 1.35;'>{text}</div>
                         </div>
                     </div>
                     """
@@ -1889,7 +1891,8 @@ class M59DirectMessageDialog(QDialog):
         if not text:
             return
 
-        tell_cmd = f"tell {self.player_name} {text}"
+        clean_pname = self.player_name.strip().strip('"')
+        tell_cmd = f'tell "{clean_pname}" {text}'
 
         # 1. Directly transmit tell command to Meridian 59 game chat
         target = getattr(self.dashboard, 'main_hwnd', None) if self.dashboard else None
