@@ -4414,7 +4414,8 @@
                 "to_pos": [
                     60,
                     32
-                ]
+                ],
+                "travel_time": 480.05
             }
         ],
         "pvp_status": "Safe (No PVP)",
@@ -4470,7 +4471,7 @@
                     43,
                     37
                 ],
-                "travel_time": 13.1
+                "travel_time": 12.14
             },
             {
                 "type": "point",
@@ -4483,7 +4484,7 @@
                     44,
                     37
                 ],
-                "travel_time": 13.1
+                "travel_time": 12.14
             },
             {
                 "type": "point",
@@ -4496,7 +4497,7 @@
                     45,
                     37
                 ],
-                "travel_time": 13.1
+                "travel_time": 12.14
             },
             {
                 "type": "point",
@@ -4509,7 +4510,7 @@
                     51,
                     35
                 ],
-                "travel_time": 13.1
+                "travel_time": 12.14
             },
             {
                 "type": "point",
@@ -4522,7 +4523,7 @@
                     52,
                     35
                 ],
-                "travel_time": 13.1
+                "travel_time": 12.14
             },
             {
                 "type": "point",
@@ -4535,7 +4536,7 @@
                     60,
                     32
                 ],
-                "travel_time": 13.1
+                "travel_time": 12.14
             },
             {
                 "type": "point",
@@ -4548,7 +4549,7 @@
                     60,
                     32
                 ],
-                "travel_time": 13.1
+                "travel_time": 12.14
             },
             {
                 "type": "point",

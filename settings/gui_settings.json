@@ -26,5 +26,10 @@
   "floating_chat_y_offset": 1128,
   "floating_chat_width": 1101,
   "floating_chat_height": 359,
-  "floating_chat_rolled_up": true
+  "floating_chat_rolled_up": true,
+  "window_x": 33,
+  "window_y": 35,
+  "window_width": 1855,
+  "window_height": 1025,
+  "window_maximized": false
 }

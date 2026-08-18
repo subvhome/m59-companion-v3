@@ -78,6 +78,63 @@ ABM_SETPOS = 0x00000003
 ABE_RIGHT = 2
 APPBAR_CALLBACK = 0x0400 + 101
 
+# Track active registered AppBar HWNDs
+registered_appbar_hwnds = set()
+
+def reset_desktop_workarea():
+    """Restores the primary monitor desktop work area to full dimensions if it was left corrupted by a killed/halted process."""
+    if sys.platform != 'win32' or not wintypes:
+        return
+    try:
+        user32 = ctypes.windll.user32
+        SPI_GETWORKAREA = 0x0030
+        SPI_SETWORKAREA = 0x002F
+        SPIF_UPDATEINIFILE = 0x0001
+        SPIF_SENDCHANGE = 0x0002
+
+        screen_w = user32.GetSystemMetrics(0) # SM_CXSCREEN = 0
+        screen_h = user32.GetSystemMetrics(1) # SM_CYSCREEN = 1
+
+        class RECT(ctypes.Structure):
+            _fields_ = [('left', wintypes.LONG), ('top', wintypes.LONG),
+                        ('right', wintypes.LONG), ('bottom', wintypes.LONG)]
+
+        rc = RECT()
+        user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rc), 0)
+
+        # If right edge is constricted (less than screen_w), reset it to full screen_w
+        if rc.right < screen_w:
+            print(f"[APPBAR-RESET] Detected restricted work area (right was {rc.right}, screen width is {screen_w}). Restoring...", flush=True)
+            rc.right = screen_w
+            user32.SystemParametersInfoW(SPI_SETWORKAREA, 0, ctypes.byref(rc), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
+        else:
+            user32.SystemParametersInfoW(0x0014, 0, None, 0x0001 | 0x0002)
+    except Exception as e:
+        print(f"[APPBAR-RESET] Error resetting desktop work area: {e}", flush=True)
+
+def cleanup_all_appbars():
+    """Unregisters all active AppBars and restores desktop work area on exit or crash."""
+    for h in list(registered_appbar_hwnds):
+        try:
+            unregister_window_appbar(h)
+        except Exception:
+            pass
+    reset_desktop_workarea()
+
+import atexit
+atexit.register(cleanup_all_appbars)
+
+def _appbar_sig_handler(sig, frame):
+    cleanup_all_appbars()
+    sys.exit(0)
+
+try:
+    import signal
+    signal.signal(signal.SIGINT, _appbar_sig_handler)
+    signal.signal(signal.SIGTERM, _appbar_sig_handler)
+except Exception:
+    pass
+
 def register_window_appbar(hwnd_int, width=290):
     """Registers HWND as a native Windows AppBar on the right screen edge.
     Adjusts Windows desktop work area so all maximized windows resize around it."""
@@ -87,7 +144,10 @@ def register_window_appbar(hwnd_int, width=290):
         shell32 = ctypes.windll.shell32
         user32 = ctypes.windll.user32
 
-        # 0. Ensure clean state by removing any existing AppBar registration for this HWND
+        # 0. Ensure clean state by resetting any stale/corrupted work area
+        reset_desktop_workarea()
+
+        # Remove any existing AppBar registration for this HWND
         abd_rm = APPBARDATA()
         abd_rm.cbSize = ctypes.sizeof(APPBARDATA)
         abd_rm.hWnd = wintypes.HWND(hwnd_int)
@@ -99,7 +159,7 @@ def register_window_appbar(hwnd_int, width=290):
         abd.uCallbackMessage = APPBAR_CALLBACK
 
         # 1. Register AppBar with Windows Shell
-        res = shell32.SHAppBarMessage(ABM_NEW, ctypes.byref(abd))
+        shell32.SHAppBarMessage(ABM_NEW, ctypes.byref(abd))
 
         # 2. Get physical screen resolution (NOT work area!)
         screen_w = user32.GetSystemMetrics(0) # SM_CXSCREEN = 0
@@ -111,9 +171,12 @@ def register_window_appbar(hwnd_int, width=290):
         abd.rc.right = screen_w
         abd.rc.bottom = screen_h
 
-        # 3. Request & Set Position (Notifies Windows Shell to reserve work area)
+        # 3. Request & Set Position (Always anchor right edge strictly to screen_w)
         shell32.SHAppBarMessage(ABM_QUERYPOS, ctypes.byref(abd))
-        abd.rc.left = abd.rc.right - width
+        abd.rc.right = screen_w
+        abd.rc.left = screen_w - width
+        abd.rc.top = 0
+        abd.rc.bottom = screen_h
         shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
 
         # 4. Position Window accurately via SetWindowPos
@@ -123,13 +186,14 @@ def register_window_appbar(hwnd_int, width=290):
         user32.SetWindowPos(
             wintypes.HWND(hwnd_int),
             wintypes.HWND(-1), # HWND_TOPMOST
-            abd.rc.left,
-            abd.rc.top,
-            abd.rc.right - abd.rc.left,
-            abd.rc.bottom - abd.rc.top,
+            screen_w - width,
+            0,
+            width,
+            screen_h,
             SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
         )
-        print(f"[APPBAR] Successfully registered HWND {hwnd_int} as right-edge AppBar (rc={abd.rc.left},{abd.rc.top},{abd.rc.right},{abd.rc.bottom}).", flush=True)
+        registered_appbar_hwnds.add(hwnd_int)
+        print(f"[APPBAR] Successfully registered HWND {hwnd_int} as right-edge AppBar (width={width}).", flush=True)
         return True
     except Exception as e:
         print(f"[APPBAR-ERR] Failed to register AppBar: {e}", flush=True)
@@ -156,7 +220,10 @@ def update_window_appbar_pos(hwnd_int, width=290):
         abd.rc.bottom = screen_h
 
         shell32.SHAppBarMessage(ABM_QUERYPOS, ctypes.byref(abd))
-        abd.rc.left = abd.rc.right - width
+        abd.rc.right = screen_w
+        abd.rc.left = screen_w - width
+        abd.rc.top = 0
+        abd.rc.bottom = screen_h
         shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
 
         SWP_NOACTIVATE = 0x0010
@@ -165,10 +232,10 @@ def update_window_appbar_pos(hwnd_int, width=290):
         user32.SetWindowPos(
             wintypes.HWND(hwnd_int),
             wintypes.HWND(-1),
-            abd.rc.left,
-            abd.rc.top,
-            abd.rc.right - abd.rc.left,
-            abd.rc.bottom - abd.rc.top,
+            screen_w - width,
+            0,
+            width,
+            screen_h,
             SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
         )
         return True
@@ -188,8 +255,8 @@ def unregister_window_appbar(hwnd_int):
         abd.hWnd = wintypes.HWND(hwnd_int)
         shell32.SHAppBarMessage(ABM_REMOVE, ctypes.byref(abd))
 
-        # Refresh desktop work area
-        user32.SystemParametersInfoW(0x0014, 0, None, 0x0001 | 0x0002)
+        registered_appbar_hwnds.discard(hwnd_int)
+        reset_desktop_workarea()
         print(f"[APPBAR] Unregistered HWND {hwnd_int} as AppBar.", flush=True)
         return True
     except Exception as e:
@@ -310,8 +377,8 @@ from PySide6.QtWidgets import (
     QSplashScreen, QSizePolicy, QComboBox, QDialog, QCheckBox, QFormLayout, QMessageBox, QAbstractItemView,
     QCompleter, QTreeWidget, QTreeWidgetItem, QSizeGrip
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QMimeData, QPoint
-from PySide6.QtGui import QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QDrag, QPainter, QPen, QBrush
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QMimeData, QPoint, QRect
+from PySide6.QtGui import QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QDrag, QPainter, QPen, QBrush, QGuiApplication
 
 # ----------------------------------------------------------------------
 # PK / PvP Alert Red Box Overlay Window around Game Client
@@ -1491,14 +1558,30 @@ class QtFloatingChatBox(QWidget):
             return
         query = self.search_input.text().lower().strip()
         for entry in self.dashboard.chat_logs:
-            if self.active_channel == "all" or self.active_channel == entry.get('channel'):
+            ch = entry.get('channel')
+            is_match = False
+            if self.active_channel == "all":
+                is_match = True
+            elif self.active_channel == "private":
+                is_match = (ch in ("private", "guild", "group"))
+            else:
+                is_match = (self.active_channel == ch)
+            if is_match:
                 if not query or query in entry.get('text', '').lower():
                     self.render_entry(entry)
 
     def append_entry(self, entry):
-        if entry.get('channel') == 'private':
+        ch = entry.get('channel')
+        if ch in ('private', 'guild', 'group'):
             self.notify_private_message()
-        if self.active_channel == "all" or self.active_channel == entry.get('channel'):
+        is_match = False
+        if self.active_channel == "all":
+            is_match = True
+        elif self.active_channel == "private":
+            is_match = (ch in ("private", "guild", "group"))
+        else:
+            is_match = (self.active_channel == ch)
+        if is_match:
             query = self.search_input.text().lower().strip()
             if not query or query in entry.get('text', '').lower():
                 self.render_entry(entry)
@@ -1514,6 +1597,8 @@ class QtFloatingChatBox(QWidget):
             color = "#a855f7"
         elif ch == "guild":
             color = "#c084fc"
+        elif ch == "group":
+            color = "#38bdf8"
         elif ch == "chat":
             color = "#60a5fa"
         elif ch == "system":
@@ -1533,6 +1618,364 @@ class QtFloatingChatBox(QWidget):
         if self.dashboard and getattr(self.dashboard, 'active_floating_chat', None) == self:
             self.dashboard.active_floating_chat = None
         event.accept()
+
+# ----------------------------------------------------------------------
+# Player Direct Message Popup Dialog
+# ----------------------------------------------------------------------
+class M59DirectMessageDialog(QDialog):
+    """
+    Direct Message popup dialog for player-to-player communications.
+    Features:
+    - Frameless draggable title bar with online/offline status
+    - Queued chronological message stream with timestamping
+    - Direct tell input field with auto-copy to Windows clipboard (/tell <Player> <text>)
+    - Sound and toast feedback notifications
+    """
+    def __init__(self, player_name, dashboard, parent=None):
+        super().__init__(None, Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.player_name = player_name
+        self.dashboard = dashboard
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.resize(400, 460)
+        self.setMinimumSize(320, 360)
+
+        self.drag_position = QPoint()
+        self.is_dragging = False
+
+        self.setObjectName("DirectMessageDialog")
+        self.setStyleSheet("""
+            QDialog#DirectMessageDialog {
+                background-color: #0b0f19;
+                color: #f8fafc;
+                border: 1px solid #9333ea;
+                border-radius: 10px;
+            }
+            QFrame#TitleBar {
+                background-color: #1e1b4b;
+                border-top-left-radius: 9px;
+                border-top-right-radius: 9px;
+                border-bottom: 1px solid #4c1d95;
+            }
+            QLabel#TitleLabel {
+                color: #f0abfc;
+                font-weight: 800;
+                font-size: 12px;
+                letter-spacing: 0.5px;
+            }
+            QPushButton#CloseBtn {
+                background-color: #4c1d95;
+                color: #f5d0fe;
+                font-weight: 800;
+                border: none;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 11px;
+            }
+            QPushButton#CloseBtn:hover {
+                background-color: #e11d48;
+                color: #ffffff;
+            }
+            QPushButton#ActionBtn {
+                background-color: #1e293b;
+                color: #cbd5e1;
+                font-weight: 700;
+                font-size: 10px;
+                padding: 4px 8px;
+                border-radius: 4px;
+                border: 1px solid #334155;
+            }
+            QPushButton#ActionBtn:hover {
+                background-color: #334155;
+                color: #ffffff;
+            }
+            QPushButton#SendBtn {
+                background-color: #7e22ce;
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 11px;
+                padding: 5px 12px;
+                border-radius: 6px;
+                border: 1px solid #c084fc;
+            }
+            QPushButton#SendBtn:hover {
+                background-color: #9333ea;
+            }
+            QLineEdit {
+                background-color: #030712;
+                border: 1px solid #4c1d95;
+                border-radius: 6px;
+                padding: 6px 10px;
+                color: #f8fafc;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border-color: #c084fc;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # 1. Custom Title Bar (Draggable)
+        title_bar = QFrame()
+        title_bar.setObjectName("TitleBar")
+        tb_layout = QHBoxLayout(title_bar)
+        tb_layout.setContentsMargins(10, 7, 10, 7)
+        tb_layout.setSpacing(8)
+
+        msg_icon = QLabel("💬")
+        msg_icon.setStyleSheet("font-size: 13px; background: transparent;")
+        tb_layout.addWidget(msg_icon)
+
+        self.title_lbl = QLabel(f"Direct Message — {self.player_name}")
+        self.title_lbl.setObjectName("TitleLabel")
+        tb_layout.addWidget(self.title_lbl)
+
+        self.status_pill = QLabel()
+        self.update_status_pill()
+        tb_layout.addWidget(self.status_pill)
+
+        tb_layout.addStretch()
+
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("CloseBtn")
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.clicked.connect(self.close)
+        tb_layout.addWidget(close_btn)
+
+        layout.addWidget(title_bar)
+
+        # 2. Content Container
+        content_widget = QWidget()
+        cw_layout = QVBoxLayout(content_widget)
+        cw_layout.setContentsMargins(10, 10, 10, 10)
+        cw_layout.setSpacing(8)
+
+        # Sub-header actions row
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(6)
+
+        clear_btn = QPushButton("🗑️ Clear History", objectName="ActionBtn")
+        clear_btn.setToolTip("Clear message history for this player")
+        clear_btn.clicked.connect(self.clear_history)
+        actions_row.addWidget(clear_btn)
+
+        actions_row.addStretch()
+
+        mark_read_btn = QPushButton("✔️ Mark Read", objectName="ActionBtn")
+        mark_read_btn.clicked.connect(self.mark_as_read)
+        actions_row.addWidget(mark_read_btn)
+
+        cw_layout.addLayout(actions_row)
+
+        # 3. Queued Message Stream View
+        self.msg_view = QTextEdit()
+        self.msg_view.setReadOnly(True)
+        self.msg_view.setStyleSheet("""
+            QTextEdit {
+                background-color: #030712;
+                border: 1px solid #1e293b;
+                border-radius: 8px;
+                padding: 10px;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                font-size: 12px;
+            }
+        """)
+        cw_layout.addWidget(self.msg_view, 1)
+
+        # 4. Direct Tell Input Bar
+        reply_box = QVBoxLayout()
+        reply_box.setSpacing(4)
+
+        input_row = QHBoxLayout()
+        input_row.setSpacing(6)
+
+        self.reply_input = QLineEdit()
+        self.reply_input.setPlaceholderText(f"Message {self.player_name}... (Press Enter to Send)")
+        self.reply_input.returnPressed.connect(self.send_reply)
+        input_row.addWidget(self.reply_input, 1)
+
+        send_btn = QPushButton("Send", objectName="SendBtn")
+        send_btn.setCursor(Qt.PointingHandCursor)
+        send_btn.clicked.connect(self.send_reply)
+        input_row.addWidget(send_btn)
+
+        reply_box.addLayout(input_row)
+
+        self.status_toast = QLabel("")
+        self.status_toast.setStyleSheet("font-size: 10px; color: #a855f7; font-weight: 700; background: transparent;")
+        reply_box.addWidget(self.status_toast)
+
+        cw_layout.addLayout(reply_box)
+
+        layout.addWidget(content_widget, 1)
+
+        # Load queued messages
+        self.refresh_messages()
+
+    def update_status_pill(self):
+        p_key = self.player_name.lower()
+        is_online = hasattr(self.dashboard, 'wholist_data') and any(str(k).lower() == p_key for k in self.dashboard.wholist_data.keys())
+        if is_online:
+            st = self.dashboard.wholist_data.get(self.player_name, "ONLINE")
+            self.status_pill.setText(f"🟢 Online ({st})")
+            self.status_pill.setStyleSheet("background-color: #064e3b; color: #34d399; font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 4px; border: 1px solid #059669;")
+        else:
+            self.status_pill.setText("⚪ Offline")
+            self.status_pill.setStyleSheet("background-color: #1e293b; color: #94a3b8; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; border: 1px solid #334155;")
+
+    def refresh_messages(self):
+        p_key = self.player_name.lower()
+        thread_data = getattr(self.dashboard, 'player_dms', {}).get(p_key, {"player_name": self.player_name, "messages": []})
+        messages = thread_data.get("messages", [])
+
+        self.update_status_pill()
+
+        if not messages:
+            html = f"<div style='color: #64748b; text-align: center; margin-top: 50px; font-size: 12px;'>No direct messages with <b>{self.player_name}</b> yet.<br><br>Type below to send a tell.</div>"
+        else:
+            html = "<div style='display: flex; flex-direction: column; gap: 6px; font-family: sans-serif;'>"
+            for m in messages:
+                direction = m.get("direction", "in")
+                ts = m.get("ts", "")
+                text = m.get("text", "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                m_type = m.get("type", "tell").upper()
+
+                if direction == "out":
+                    # Outgoing message (You -> Player)
+                    html += f"""
+                    <div style='margin-bottom: 6px; text-align: right;'>
+                        <div style='display: inline-block; max-width: 85%; background-color: #083344; border: 1px solid #0891b2; border-radius: 8px 8px 2px 8px; padding: 6px 10px; text-align: left;'>
+                            <div style='font-size: 10px; color: #67e8f9; font-weight: 700; margin-bottom: 2px;'>You tell {self.player_name} <span style='color: #94a3b8; font-weight: 400;'>[{ts}]</span></div>
+                            <div style='color: #f0fdfa; font-size: 12px; line-height: 1.35;'>{text}</div>
+                        </div>
+                    </div>
+                    """
+                else:
+                    # Incoming message (Player -> You)
+                    html += f"""
+                    <div style='margin-bottom: 6px; text-align: left;'>
+                        <div style='display: inline-block; max-width: 85%; background-color: #2e1065; border: 1px solid #9333ea; border-radius: 8px 8px 8px 2px; padding: 6px 10px;'>
+                            <div style='font-size: 10px; color: #d8b4fe; font-weight: 700; margin-bottom: 2px;'>{self.player_name} [{m_type}] <span style='color: #94a3b8; font-weight: 400;'>[{ts}]</span></div>
+                            <div style='color: #faf5ff; font-size: 12px; line-height: 1.35;'>{text}</div>
+                        </div>
+                    </div>
+                    """
+            html += "</div>"
+
+        self.msg_view.setHtml(html)
+        self.msg_view.moveCursor(QTextCursor.End)
+
+    def refocus_dialog(self):
+        """Ensures DM window remains visible, on top, and ready for the next message."""
+        try:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            self.reply_input.setFocus()
+        except Exception:
+            pass
+
+    def clear_status_toast(self):
+        try:
+            if hasattr(self, 'status_toast') and self.status_toast:
+                self.status_toast.setText("")
+        except Exception:
+            pass
+
+    def send_reply(self):
+        text = self.reply_input.text().strip()
+        if not text:
+            return
+
+        tell_cmd = f"tell {self.player_name} {text}"
+
+        # 1. Directly transmit tell command to Meridian 59 game chat
+        target = getattr(self.dashboard, 'main_hwnd', None) if self.dashboard else None
+        sent_to_game = False
+        if target and send_chat_command:
+            try:
+                def _send():
+                    try:
+                        send_chat_command(target, tell_cmd, send_enter=True)
+                    except Exception as ex:
+                        print(f"[DM-SEND-ERR] {ex}", flush=True)
+                    # Re-focus DM window immediately after game command dispatch
+                    QTimer.singleShot(100, self.refocus_dialog)
+                threading.Thread(target=_send, daemon=True).start()
+                sent_to_game = True
+            except Exception as e:
+                print(f"[DM-SEND] Error dispatching to game: {e}", flush=True)
+
+        # 2. Also keep clipboard ready as fallback
+        try:
+            clipboard = QApplication.clipboard()
+            if clipboard:
+                clipboard.setText(tell_cmd)
+        except Exception:
+            pass
+
+        # 3. Record in local conversation thread
+        ts = datetime.now().strftime("%H:%M:%S")
+        if self.dashboard:
+            self.dashboard.record_direct_message(ts, self.player_name, text, f"You tell {self.player_name}, '{text}'", direction="out", msg_type="tell")
+
+        self.reply_input.clear()
+        self.refresh_messages()
+        
+        if sent_to_game:
+            self.status_toast.setText(f"✓ Sent tell to {self.player_name}")
+        else:
+            self.status_toast.setText(f"✓ Copied '{tell_cmd}' (Game not attached)")
+        QTimer.singleShot(3000, self.clear_status_toast)
+
+        # Refocus window and input field for continuous typing
+        self.refocus_dialog()
+
+    def clear_history(self):
+        p_key = self.player_name.lower()
+        if self.dashboard and hasattr(self.dashboard, 'player_dms') and p_key in self.dashboard.player_dms:
+            self.dashboard.player_dms[p_key]["messages"] = []
+            self.dashboard.save_dms_cache()
+            self.refresh_messages()
+
+    def mark_as_read(self):
+        if self.dashboard:
+            self.dashboard.mark_dm_read(self.player_name)
+        self.status_toast.setText("✓ Marked as read.")
+        QTimer.singleShot(2000, self.clear_status_toast)
+
+    def mousePressEvent(self, event):
+        pos_y = event.position().y() if hasattr(event, 'position') else event.pos().y()
+        if event.button() == Qt.LeftButton and pos_y <= 36:
+            self.is_dragging = True
+            g_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+            self.drag_position = g_pos - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self.is_dragging and event.buttons() & Qt.LeftButton:
+            g_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+            self.move(g_pos - self.drag_position)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self.is_dragging = False
+        event.accept()
+
+    def closeEvent(self, event):
+        p_key = self.player_name.lower()
+        if self.dashboard:
+            if hasattr(self.dashboard, 'active_dm_dialogs'):
+                self.dashboard.active_dm_dialogs.pop(p_key, None)
+            if hasattr(self.dashboard, 'active_icq_dialogs'):
+                self.dashboard.active_icq_dialogs.pop(p_key, None)
+            self.dashboard.mark_dm_read(self.player_name)
+        event.accept()
+
+# Alias for backwards compatibility
+M59ICQMessengerDialog = M59DirectMessageDialog
 
 # ----------------------------------------------------------------------
 # Alias & Macro Editor Modal Dialog
@@ -2662,10 +3105,17 @@ class M59StandaloneDockWindow(QWidget):
         # Standalone Header
         hdr = QHBoxLayout()
         hdr.setContentsMargins(6, 6, 6, 6)
+        hdr.setSpacing(4)
         title = QLabel("🛡️ M59 DOCK PANEL")
         title.setStyleSheet("font-size: 11px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
         hdr.addWidget(title)
         hdr.addStretch()
+
+        self.reset_workarea_btn = QPushButton("🧹")
+        self.reset_workarea_btn.setProperty("class", "WebBtnSecondary")
+        self.reset_workarea_btn.setToolTip("Fix desktop alignment & reset Windows work area if a gap appears")
+        self.reset_workarea_btn.clicked.connect(self.fix_workarea_alignment)
+        hdr.addWidget(self.reset_workarea_btn)
 
         self.undock_btn = QPushButton("🪟 Undock")
         self.undock_btn.setProperty("class", "WebBtnSecondary")
@@ -2674,6 +3124,13 @@ class M59StandaloneDockWindow(QWidget):
         hdr.addWidget(self.undock_btn)
 
         self.container_layout.addLayout(hdr)
+
+    def fix_workarea_alignment(self):
+        """Forces an instant recalculation of Windows AppBar positioning and clears any ghost gap."""
+        hwnd = int(self.winId())
+        reset_desktop_workarea()
+        if self.is_docked:
+            register_window_appbar(hwnd, width=self.dock_width)
 
     def attach_dock_content(self, content_widget):
         """Attaches right_panel_content widget into this standalone window and registers Windows AppBar."""
@@ -2745,6 +3202,7 @@ class M59CompanionApp(QMainWindow):
 
         # Sound & Audio Alert State
         ensure_default_sounds()
+        reset_desktop_workarea()
         self.unread_private_count = 0
         s_cfg = self.load_gui_settings()
         self.pk_alert_enabled = s_cfg.get("pk_alert_enabled", True)
@@ -2831,11 +3289,14 @@ class M59CompanionApp(QMainWindow):
             "Karma": "--"
         }
 
-        # Session Ledgers
+        # Session Ledgers & Direct Messages
         self.session_kills = {"monsters": {}, "players": {}}
         self.improves_history = []
         self.kills_history = []
         self.chat_logs = []
+        self.player_dms = {}
+        self.unread_dms = {}
+        self.active_icq_dialogs = {}
         self.recent_log_fingerprints = deque(maxlen=250)
         self.active_channel = "all"
         self.session_seconds = 0
@@ -2860,6 +3321,9 @@ class M59CompanionApp(QMainWindow):
 
         # Load Knowledge Cache & Progression
         self.load_knowledge_cache()
+
+        # Load Direct Messages Cache
+        self.load_dms_cache()
 
         # Load Historical Logs in Settings Directory
         self.refresh_historical_logs_list()
@@ -3151,6 +3615,7 @@ class M59CompanionApp(QMainWindow):
         self.who_list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.who_list_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.who_list_widget.setStyleSheet("border: none; background: transparent; padding: 0px; margin: 0px;")
+        self.who_list_widget.itemDoubleClicked.connect(lambda item: self.open_dm_with_player(item.data(Qt.UserRole)) if item and item.data(Qt.UserRole) else None)
         who_card.content_layout.addWidget(self.who_list_widget, 1)
 
         rpc_layout.addWidget(who_card, 1)
@@ -3379,8 +3844,9 @@ class M59CompanionApp(QMainWindow):
         self.right_panel_layout.addWidget(self.right_panel_content)
         main_layout.addWidget(self.right_panel)
 
-        # Load saved view layout configuration if exists
+        # Load saved view layout configuration & restore window size/position
         self.load_layout_config()
+        self.restore_window_position_and_size()
         self.update_bank_ui()
         self.load_kill_book()
 
@@ -3572,27 +4038,114 @@ class M59CompanionApp(QMainWindow):
         except Exception as e:
             print(f"[M59-LAYOUT] Error resetting layout: {e}", flush=True)
 
+    def center_on_screen(self):
+        """Centers main application window on primary screen."""
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            ww = min(self.width(), max(1200, geo.width() - 80))
+            wh = min(self.height(), max(750, geo.height() - 80))
+            self.resize(ww, wh)
+            x = geo.x() + (geo.width() - ww) // 2
+            y = geo.y() + (geo.height() - wh) // 2
+            self.move(max(geo.x(), x), max(geo.y(), y))
+
+    def restore_window_position_and_size(self):
+        """Restores saved window position and size from GUI settings, defaulting to centered if not set or invalid."""
+        cfg = self.load_gui_settings()
+        pos_x = cfg.get("window_x")
+        pos_y = cfg.get("window_y")
+        width = cfg.get("window_width")
+        height = cfg.get("window_height")
+        is_max = cfg.get("window_maximized", False)
+
+        screen = QApplication.primaryScreen()
+        screen_geo = screen.availableGeometry() if screen else None
+
+        if width and height and width >= 400 and height >= 300:
+            if screen_geo:
+                width = min(width, screen_geo.width())
+                height = min(height, screen_geo.height())
+            self.resize(width, height)
+
+        if pos_x is not None and pos_y is not None and screen_geo:
+            # Check if saved position keeps the top-left corner visible on screen
+            if (screen_geo.x() - 50 <= pos_x <= screen_geo.x() + screen_geo.width() - 100 and
+                screen_geo.y() - 50 <= pos_y <= screen_geo.y() + screen_geo.height() - 100):
+                self.move(pos_x, pos_y)
+            else:
+                self.center_on_screen()
+        else:
+            self.center_on_screen()
+
+        if is_max:
+            self.showMaximized()
+
+    def save_window_position_and_size(self):
+        """Saves current window position and size to gui_settings.json upon exit."""
+        try:
+            if self.isMaximized():
+                self.save_gui_settings({"window_maximized": True})
+            else:
+                pos = self.pos()
+                sz = self.size()
+                self.save_gui_settings({
+                    "window_x": pos.x(),
+                    "window_y": pos.y(),
+                    "window_width": sz.width(),
+                    "window_height": sz.height(),
+                    "window_maximized": False
+                })
+        except Exception as ex:
+            print(f"[M59-GUI] Error saving window geometry: {ex}", flush=True)
+
     def closeEvent(self, event):
-        """Ensure layout config is saved and standalone AppBar is cleanly unregistered when exiting."""
-        self.save_layout_config()
+        """Ensure window position, size, layout config, standalone AppBar, Frida monitors, and floating dialogs are cleanly saved and shutdown when exiting."""
+        try:
+            self.save_window_position_and_size()
+            self.save_layout_config()
+        except Exception as e:
+            print(f"[M59-EXIT] Error saving geometry/layout: {e}", flush=True)
+
+        if hasattr(self, 'wholist_monitor') and self.wholist_monitor:
+            try:
+                self.wholist_monitor.stop()
+            except Exception:
+                pass
+            self.wholist_monitor = None
+
+        if hasattr(self, 'active_dm_dialogs'):
+            for dlg in list(self.active_dm_dialogs.values()):
+                try:
+                    dlg.close()
+                except Exception:
+                    pass
+
         if self.standalone_dock and self.standalone_dock.is_docked:
-            self.standalone_dock.undock_desktop()
+            try:
+                self.standalone_dock.undock_desktop()
+            except Exception:
+                pass
+
         if hasattr(self, 'active_floating_chat') and self.active_floating_chat:
             try:
                 self.active_floating_chat.close()
             except Exception:
                 pass
+
         if hasattr(self, 'active_elude_bar') and self.active_elude_bar:
             try:
                 self.active_elude_bar.close()
             except Exception:
                 pass
+
         if hasattr(self, 'floating_hotkey_buttons'):
             for btn in self.floating_hotkey_buttons:
                 try:
                     btn.close()
                 except Exception:
                     pass
+
         event.accept()
 
     def toggle_right_panel(self):
@@ -4870,15 +5423,15 @@ class M59CompanionApp(QMainWindow):
             QMessageBox.information(self, "M59 Config Status", f"Could not read config.ini:\n{ex}")
 
     # ==================================================================
-    # SECTION 3: CHAT LOGGER PAGE (Comms Engine)
+    # SECTION 3: COMMUNICATIONS & CHAT LOGGER PAGE
     # ==================================================================
     def build_chat_logger_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(14)
+        layout.setSpacing(12)
 
-        # Top Banner Card: Title, Description & Floating Chatbox Launcher
+        # 1. Top Banner Card: Title & Floating Chatbox Launcher
         top_card = QFrame()
         top_card.setProperty("class", "WebCard")
         tc_layout = QHBoxLayout(top_card)
@@ -4887,9 +5440,9 @@ class M59CompanionApp(QMainWindow):
 
         t_box = QVBoxLayout()
         t_box.setSpacing(3)
-        t_lbl = QLabel("💬 Communications & Live Chat Stream")
+        t_lbl = QLabel("💬 Communications & Chat Logger")
         t_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc;")
-        t_desc = QLabel("This can be placed over the game chat with live stream logging, channel filtering, roll-up toggle, and game anchoring.")
+        t_desc = QLabel("Real-time multi-channel stream with message filters, historical logs, and floating chatbox.")
         t_desc.setStyleSheet("font-size: 12px; color: #94a3b8;")
         t_box.addWidget(t_lbl)
         t_box.addWidget(t_desc)
@@ -4904,14 +5457,14 @@ class M59CompanionApp(QMainWindow):
 
         layout.addWidget(top_card)
 
-        # Header Bar: Filter Tabs & Controls
+        # 2. Header Filter Bar: Channels & Search Controls
         hdr_card = QFrame()
         hdr_card.setProperty("class", "WebCard")
         hc_layout = QHBoxLayout(hdr_card)
-        hc_layout.setContentsMargins(14, 12, 14, 12)
+        hc_layout.setContentsMargins(14, 10, 14, 10)
         hc_layout.setSpacing(10)
 
-        # Live Stream Mode Button
+        # Live Stream Mode Indicator Button
         self.mode_btn = QPushButton("🟢 LIVE STREAM")
         self.mode_btn.setProperty("class", "WebBtnSecondary")
         self.mode_btn.setStyleSheet("color: #94a3b8; font-weight: 800;")
@@ -4922,8 +5475,8 @@ class M59CompanionApp(QMainWindow):
         self.channel_btns = {}
         channels = [
             ("all", "All Channels"),
+            ("private", "Private Messages"),
             ("chat", "Chat / Say"),
-            ("guild", "Guild / Tells"),
             ("combat", "Combat Log"),
             ("improves", "Improves"),
             ("system", "System Broadcasts")
@@ -4955,7 +5508,7 @@ class M59CompanionApp(QMainWindow):
 
         layout.addWidget(hdr_card)
 
-        # Splitter: Historical Logs Sidebar + Stream View
+        # 3. Splitter: Historical Logs Sidebar + Stream View
         chat_splitter = QSplitter(Qt.Horizontal)
         chat_splitter.setHandleWidth(8)
 
@@ -4963,12 +5516,12 @@ class M59CompanionApp(QMainWindow):
         hist_card = QFrame()
         hist_card.setProperty("class", "WebCard")
         hist_card.setMaximumWidth(220)
-        hc_layout = QVBoxLayout(hist_card)
-        hc_layout.setContentsMargins(12, 12, 12, 12)
+        hc_layout_inner = QVBoxLayout(hist_card)
+        hc_layout_inner.setContentsMargins(12, 12, 12, 12)
 
         hl_title = QLabel("HISTORICAL LOGS")
         hl_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #64748b; letter-spacing: 0.8px;")
-        hc_layout.addWidget(hl_title)
+        hc_layout_inner.addWidget(hl_title)
 
         self.hist_log_list = QListWidget()
         self.hist_log_list.setStyleSheet("""
@@ -4989,12 +5542,12 @@ class M59CompanionApp(QMainWindow):
             }
         """)
         self.hist_log_list.itemClicked.connect(self.load_selected_historical_log)
-        hc_layout.addWidget(self.hist_log_list)
+        hc_layout_inner.addWidget(self.hist_log_list)
 
         import_log_btn = QPushButton("Import External Log")
         import_log_btn.setProperty("class", "WebBtnSecondary")
         import_log_btn.clicked.connect(self.import_log_file_dialog)
-        hc_layout.addWidget(import_log_btn)
+        hc_layout_inner.addWidget(import_log_btn)
 
         chat_splitter.addWidget(hist_card)
 
@@ -5016,7 +5569,7 @@ class M59CompanionApp(QMainWindow):
 
         layout.addWidget(chat_splitter, 1)
 
-        # Bottom Manual Line Input Bar
+        # 4. Bottom Manual Line Input Bar
         bottom_card = QFrame()
         bottom_card.setProperty("class", "WebCard")
         bc_layout = QHBoxLayout(bottom_card)
@@ -6760,6 +7313,7 @@ class M59CompanionApp(QMainWindow):
             self.bank_manager.load_balances(self.char_name)
             self.load_vault_cache()
             self.load_knowledge_cache(self.char_name)
+            self.load_dms_cache(self.char_name)
 
             if not getattr(self, '_initial_sync_started', False):
                 self._initial_sync_started = True
@@ -6849,6 +7403,7 @@ class M59CompanionApp(QMainWindow):
                             self.bank_manager.load_balances(self.char_name)
                             self.load_vault_cache()
                             self.load_knowledge_cache(self.char_name)
+                            self.load_dms_cache(self.char_name)
 
                             # Show splash overlay initializing state & trigger initial memory scrape
                             self.show_splash_overlay("initializing", "↻ INITIALIZING GAME STATE", f"Synchronizing memory state for {self.char_name}...")
@@ -7020,9 +7575,14 @@ class M59CompanionApp(QMainWindow):
             elif s in ("INNOCENT", "WHITE"):
                 group = 3
             else:
-                # Other colors (CREATOR / YELLOW, STAFF / BLUE, etc.)
+                # Other colors (CREATOR / YELLOW, STAFF / BLUE, BARD, ADMIN, etc.)
                 group = 2
-            return (group, str(name).lower())
+
+            p_lower = str(name).lower()
+            unread_c = getattr(self, 'unread_dms', {}).get(p_lower, 0)
+            has_unread_flag = 0 if unread_c > 0 else 1
+
+            return (group, has_unread_flag, p_lower)
 
         fs = getattr(self, 'font_settings', {}).get("player_list", 13)
 
@@ -7045,10 +7605,137 @@ class M59CompanionApp(QMainWindow):
             item_layout.addWidget(name_lbl)
             item_layout.addStretch()
 
+            p_lower = str(name).lower()
+            unread_c = getattr(self, 'unread_dms', {}).get(p_lower, 0)
+            if unread_c > 0:
+                dm_badge = QPushButton(f"💬 {unread_c}")
+                dm_badge.setCursor(Qt.PointingHandCursor)
+                dm_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #581c87;
+                        color: #f0abfc;
+                        font-weight: 800;
+                        font-size: 10px;
+                        padding: 1px 6px;
+                        border-radius: 4px;
+                        border: 1px solid #c084fc;
+                    }
+                    QPushButton:hover {
+                        background-color: #7e22ce;
+                        color: #ffffff;
+                    }
+                """)
+                dm_badge.setToolTip(f"{unread_c} unread message(s) from {name}. Click to view DMs.")
+                dm_badge.clicked.connect(lambda checked=False, n=name: self.open_dm_with_player(n))
+                item_layout.addWidget(dm_badge)
+            else:
+                dm_btn = QPushButton("💬")
+                dm_btn.setCursor(Qt.PointingHandCursor)
+                dm_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: transparent;
+                        color: #64748b;
+                        font-size: 11px;
+                        padding: 1px 4px;
+                        border: none;
+                        border-radius: 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #1e293b;
+                        color: #c084fc;
+                    }
+                """)
+                dm_btn.setToolTip(f"Send Direct Message to {name}")
+                dm_btn.clicked.connect(lambda checked=False, n=name: self.open_dm_with_player(n))
+                item_layout.addWidget(dm_btn)
+
             list_item = QListWidgetItem()
             list_item.setSizeHint(QSize(0, max(32, fs + 16)))
+            list_item.setData(Qt.UserRole, name)
             self.who_list_widget.addItem(list_item)
             self.who_list_widget.setItemWidget(list_item, item_widget)
+
+        # -------------------------------------------------------------
+        # OFFLINE PLAYERS WITH UNREAD DMs SECTION
+        # -------------------------------------------------------------
+        online_keys = {str(k).lower() for k in self.wholist_data.keys()}
+        unread_offline_players = []
+        for p_key, count in getattr(self, 'unread_dms', {}).items():
+            if count > 0 and p_key not in online_keys:
+                thread_info = getattr(self, 'player_dms', {}).get(p_key, {})
+                disp_name = thread_info.get("player_name", p_key.capitalize())
+                msgs = thread_info.get("messages", [])
+                last_ts = msgs[-1]["ts"] if msgs else ""
+                unread_offline_players.append((disp_name, p_key, count, last_ts))
+
+        # Sort offline players with unread messages by latest message or unread count
+        unread_offline_players.sort(key=lambda x: (x[2], x[3]), reverse=True)
+
+        matching_offline = [p for p in unread_offline_players if not query or query in p[0].lower()]
+
+        if matching_offline:
+            # Section Header Divider
+            hdr_item = QListWidgetItem()
+            hdr_item.setFlags(Qt.NoItemFlags)
+            hdr_item.setSizeHint(QSize(0, 30))
+
+            hdr_widget = QWidget()
+            hw_layout = QHBoxLayout(hdr_widget)
+            hw_layout.setContentsMargins(8, 6, 8, 2)
+            hw_layout.setSpacing(6)
+
+            total_off_unread = sum(p[2] for p in matching_offline)
+            hdr_lbl = QLabel(f"✉️ OFFLINE DMs ({total_off_unread})")
+            hdr_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #c084fc; letter-spacing: 0.8px; background: transparent;")
+            hw_layout.addWidget(hdr_lbl)
+            hw_layout.addStretch()
+
+            self.who_list_widget.addItem(hdr_item)
+            self.who_list_widget.setItemWidget(hdr_item, hdr_widget)
+
+            # Render each logged-off player with unread DMs
+            for disp_name, p_key, unread_c, last_ts in matching_offline:
+                item_widget = QWidget()
+                item_layout = QHBoxLayout(item_widget)
+                item_layout.setContentsMargins(10, 3, 10, 3)
+                item_layout.setSpacing(6)
+
+                name_lbl = QLabel(f"⚪ {disp_name}")
+                name_lbl.setStyleSheet(f"font-size: {fs}px; font-weight: 700; color: #c4b5fd; background: transparent;")
+                item_layout.addWidget(name_lbl)
+                item_layout.addStretch()
+
+                if last_ts:
+                    ts_lbl = QLabel(last_ts)
+                    ts_lbl.setStyleSheet("font-size: 10px; color: #64748b; background: transparent;")
+                    item_layout.addWidget(ts_lbl)
+
+                dm_badge = QPushButton(f"💬 {unread_c}")
+                dm_badge.setCursor(Qt.PointingHandCursor)
+                dm_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #581c87;
+                        color: #f0abfc;
+                        font-weight: 800;
+                        font-size: 10px;
+                        padding: 1px 6px;
+                        border-radius: 4px;
+                        border: 1px solid #c084fc;
+                    }
+                    QPushButton:hover {
+                        background-color: #7e22ce;
+                        color: #ffffff;
+                    }
+                """)
+                dm_badge.setToolTip(f"{unread_c} unread message(s) from {disp_name} (Offline). Click to view & respond.")
+                dm_badge.clicked.connect(lambda checked=False, n=disp_name: self.open_dm_with_player(n))
+                item_layout.addWidget(dm_badge)
+
+                list_item = QListWidgetItem()
+                list_item.setSizeHint(QSize(0, max(30, fs + 14)))
+                list_item.setData(Qt.UserRole, disp_name)
+                self.who_list_widget.addItem(list_item)
+                self.who_list_widget.setItemWidget(list_item, item_widget)
 
         self.who_count_badge.setText(f"{len(self.wholist_data)} Online")
 
@@ -7293,32 +7980,418 @@ class M59CompanionApp(QMainWindow):
                     self.update_killbook_ui()
                 return
 
-        # 3. Channel Categorization
-        channel = "system"
-        lower = msg_text.lower()
-        if "tells you" in lower or "you tell " in lower or msg_text.startswith("[Tell]") or msg_text.startswith("[Private]") or msg_text.startswith("Tell:") or msg_text.startswith("Private:"):
-            channel = "private"
-        elif "says," in lower or msg_text.startswith("[Say]"):
-            channel = "chat"
-        elif msg_text.startswith("[Guild]"):
-            channel = "guild"
-        elif "killed" in lower or "fatal blow" in lower or "collapses" in lower:
-            channel = "combat"
-        elif "improved" in lower or "tougher" in lower:
-            channel = "improves"
+    # ------------------------------------------------------------------
+    # DIRECT MESSAGES (DMs) & PLAYER MESSAGING ENGINE
+    # ------------------------------------------------------------------
+    def record_direct_message(self, timestamp, player_name, text, raw_text, direction="in", msg_type="tell"):
+        """Stores direct message in player conversation thread, tracks unread counters, and triggers UI updates."""
+        if not player_name or player_name.lower() in ("you", "--", "unknown"):
+            return
+
+        p_key = player_name.lower()
+        if not hasattr(self, 'player_dms'):
+            self.player_dms = {}
+        if not hasattr(self, 'unread_dms'):
+            self.unread_dms = {}
+        if not hasattr(self, 'active_dm_dialogs'):
+            self.active_dm_dialogs = {}
+        self.active_icq_dialogs = self.active_dm_dialogs
+
+        if p_key not in self.player_dms:
+            self.player_dms[p_key] = {
+                "player_name": player_name,
+                "messages": []
+            }
+        else:
+            # Preserve proper display casing from latest event
+            self.player_dms[p_key]["player_name"] = player_name
+
+        msg_entry = {
+            "ts": timestamp,
+            "direction": direction,
+            "type": msg_type,
+            "text": text,
+            "raw": raw_text
+        }
+        self.player_dms[p_key]["messages"].append(msg_entry)
+
+        # Check if direct message popup is actively open for this player
+        is_dm_open = False
+        if p_key in self.active_dm_dialogs and self.active_dm_dialogs[p_key]:
+            try:
+                dlg = self.active_dm_dialogs[p_key]
+                if dlg.isVisible():
+                    dlg.refresh_messages()
+                    is_dm_open = True
+            except Exception:
+                pass
+
+        if direction == "in":
+            if is_dm_open:
+                self.unread_dms[p_key] = 0
+            else:
+                self.unread_dms[p_key] = self.unread_dms.get(p_key, 0) + 1
+
+        self.save_dms_cache()
+
+        # Update Who's Online list badges
+        if hasattr(self, 'wholist_data'):
+            self.update_wholist_gui(self.wholist_data)
+
+        # Refresh Private Messages filter badge
+        self.update_dm_ui()
+
+    def open_dm_with_player(self, player_name):
+        """Opens a Direct Message popup dialog for the specified player, marking queued messages read."""
+        if not player_name or player_name == "--":
+            return
+
+        p_key = player_name.lower()
+        if not hasattr(self, 'active_dm_dialogs'):
+            self.active_dm_dialogs = {}
+        self.active_icq_dialogs = self.active_dm_dialogs
+
+        # If already open, bring to front, focus and refresh
+        if p_key in self.active_dm_dialogs and self.active_dm_dialogs[p_key]:
+            try:
+                dlg = self.active_dm_dialogs[p_key]
+                if dlg.isVisible():
+                    dlg.raise_()
+                    dlg.activateWindow()
+                    dlg.refresh_messages()
+                    self.mark_dm_read(player_name)
+                    return
+            except Exception:
+                pass
+
+        # Create new Direct Message popup
+        dlg = M59DirectMessageDialog(player_name=player_name, dashboard=self)
+        self.active_dm_dialogs[p_key] = dlg
+        self.active_icq_dialogs[p_key] = dlg
+
+        # Position bubble next to the player list if possible
+        try:
+            if hasattr(self, 'who_list_widget') and self.who_list_widget.isVisible():
+                pos = self.who_list_widget.mapToGlobal(QPoint(0, 0))
+                target_x = max(20, pos.x() - 415)
+                target_y = max(50, pos.y() + 20)
+                dlg.move(target_x, target_y)
+            elif hasattr(self, 'pos'):
+                dlg.move(self.pos().x() + 250, self.pos().y() + 120)
+        except Exception:
+            pass
+
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        self.mark_dm_read(player_name)
+
+    def mark_dm_read(self, player_name):
+        """Marks unread direct messages as read for a player."""
+        if not player_name:
+            return
+        p_key = player_name.lower()
+        if hasattr(self, 'unread_dms') and p_key in self.unread_dms:
+            del self.unread_dms[p_key]
+            self.save_dms_cache()
+            if hasattr(self, 'wholist_data'):
+                self.update_wholist_gui(self.wholist_data)
+            self.update_dm_ui()
+
+    def update_dm_ui(self):
+        """Refreshes unread DM badge on the Private Messages filter button and active ICQ popups."""
+        if not hasattr(self, 'unread_dms'):
+            self.unread_dms = {}
+
+        total_unread = sum(self.unread_dms.values())
+
+        # Update Private Messages channel filter button badge in Chat Logger
+        if hasattr(self, 'channel_btns') and "private" in self.channel_btns:
+            p_btn = self.channel_btns["private"]
+            if total_unread > 0:
+                p_btn.setText(f"✉️ Private Messages ({total_unread})")
+                p_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #581c87;
+                        color: #fdf4ff;
+                        font-weight: 800;
+                        border: 1px solid #c084fc;
+                        border-radius: 6px;
+                        padding: 6px 12px;
+                    }
+                    QPushButton:hover {
+                        background-color: #7e22ce;
+                    }
+                """)
+            else:
+                p_btn.setText("Private Messages")
+                p_btn.setStyleSheet("")
+                p_btn.style().unpolish(p_btn)
+                p_btn.style().polish(p_btn)
+
+        # Refresh any open ICQ dialogs
+        if hasattr(self, 'active_icq_dialogs'):
+            for p_key, dlg in list(self.active_icq_dialogs.items()):
+                try:
+                    if dlg and dlg.isVisible():
+                        dlg.refresh_messages()
+                except Exception:
+                    pass
+
+    def save_dms_cache(self):
+        """Persists direct messages ledger to disk."""
+        try:
+            os.makedirs("settings", exist_ok=True)
+            safe_n = get_safe_name(self.char_name if self.char_name and self.char_name != "--" else "global")
+            cache_file = os.path.join("settings", f"{safe_n}_dms.json")
+            data = {
+                "player_dms": getattr(self, 'player_dms', {}),
+                "unread_dms": getattr(self, 'unread_dms', {})
+            }
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"[M59-DMS] Error saving DMs cache: {e}", flush=True)
+
+    def load_dms_cache(self, char_name=None):
+        """Loads direct messages ledger from disk."""
+        try:
+            target_char = char_name or (self.char_name if self.char_name != "--" else "global")
+            safe_n = get_safe_name(target_char)
+            cache_file = os.path.join("settings", f"{safe_n}_dms.json")
+            if os.path.exists(cache_file):
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.player_dms = data.get("player_dms", {})
+                    self.unread_dms = data.get("unread_dms", {})
+                    print(f"[M59-DMS] Loaded {len(self.player_dms)} DM conversation threads ({sum(self.unread_dms.values())} unread).", flush=True)
+            else:
+                self.player_dms = getattr(self, 'player_dms', {})
+                self.unread_dms = getattr(self, 'unread_dms', {})
+            self.update_dm_ui()
+            if hasattr(self, 'who_list_widget'):
+                self.update_wholist_gui(getattr(self, 'wholist_data', {}))
+        except Exception as e:
+            print(f"[M59-DMS] Error loading DMs cache: {e}", flush=True)
+
+    # ------------------------------------------------------------------
+    # Communication Regex Categorizer (Meridian 59 Protocol)
+    # ------------------------------------------------------------------
+    def categorize_communication_line(self, msg_text):
+        """
+        Parses raw game text according to Meridian 59 client communication patterns:
+        - Tells: 'Kran tells you, ...', 'You tell Kran, ...'
+        - Sends: 'Kran sends to you, ...', 'You send to Kran, ...'
+        - Guild: '[Guild] Kran: ...', 'Kran sends to guild, ...'
+        - Group: '[Group] Kran: ...', 'Kran sends to group, ...'
+        - Chat: 'Kran says, ...', 'You say, ...'
+        - Yell: 'Kran yells, ...'
+        - Broadcast / System: '[Broadcast] ...', '[System] ...', server messages
+        - Combat / Improves: Death, kills, improves
+        Returns: (channel, is_dm, dm_direction, dm_player, dm_body, dm_type)
+        """
+        text = msg_text.strip()
+        lower = text.lower()
+
+        # 1. Incoming Tell: "Kran tells you, 'Hello'" or "Kran tells you, Hello"
+        m = re.match(r"^([A-Za-z0-9_ -]+?)\s+tells\s+you[,\s:]+[\"']?(.*?)[\"']?$", text, re.IGNORECASE)
+        if m:
+            sender = m.group(1).strip()
+            body = m.group(2).strip()
+            return ("private", True, "in", sender, body, "tell")
+
+        # 2. Outgoing Tell: "You tell Kran, 'Hello'"
+        m = re.match(r"^You\s+tell\s+([A-Za-z0-9_ -]+?)[,\s:]+[\"']?(.*?)[\"']?$", text, re.IGNORECASE)
+        if m:
+            target = m.group(1).strip()
+            body = m.group(2).strip()
+            return ("private", True, "out", target, body, "tell")
+
+        # 3. Incoming Send: "Kran sends to you, 'Hello'" or "Kran sends you, 'Hello'"
+        m = re.match(r"^([A-Za-z0-9_ -]+?)\s+sends(?:\s+to)?\s+you[,\s:]+[\"']?(.*?)[\"']?$", text, re.IGNORECASE)
+        if m:
+            sender = m.group(1).strip()
+            body = m.group(2).strip()
+            return ("private", True, "in", sender, body, "send")
+
+        # 4. Outgoing Send: "You send to Kran, 'Hello'"
+        m = re.match(r"^You\s+send(?:\s+to)?\s+([A-Za-z0-9_ -]+?)[,\s:]+[\"']?(.*?)[\"']?$", text, re.IGNORECASE)
+        if m:
+            target = m.group(1).strip()
+            body = m.group(2).strip()
+            return ("private", True, "out", target, body, "send")
+
+        # 5. Guild Communications: "[Guild] Kran: Hello" or "Kran sends to guild, 'Hello'"
+        m = re.match(r"^\[Guild\]\s*(?:([A-Za-z0-9_ -]+?):)?\s*(.*)$", text, re.IGNORECASE)
+        if m:
+            return ("guild", False, None, None, None, None)
+        m = re.match(r"^([A-Za-z0-9_ -]+?)\s+sends\s+to\s+guild[,\s:]+[\"']?(.*?)[\"']?$", text, re.IGNORECASE)
+        if m:
+            return ("guild", False, None, None, None, None)
+
+        # 6. Group Communications: "[Group] Kran: Hello" or "Kran sends to group, 'Hello'"
+        m = re.match(r"^\[Group\]\s*(?:([A-Za-z0-9_ -]+?):)?\s*(.*)$", text, re.IGNORECASE)
+        if m:
+            return ("group", False, None, None, None, None)
+        m = re.match(r"^([A-Za-z0-9_ -]+?)\s+sends\s+to\s+group[,\s:]+[\"']?(.*?)[\"']?$", text, re.IGNORECASE)
+        if m:
+            return ("group", False, None, None, None, None)
+
+        # 7. Local / Public Say & Yell: "Kran says, 'Hello'", "You say, 'Hello'", "Kran yells, ..."
+        m = re.match(r"^([A-Za-z0-9_ -]+?)\s+(?:says|yells)[,\s:]+[\"']?(.*?)[\"']?$", text, re.IGNORECASE)
+        if m or "[Say]" in text or "says," in lower or "yells," in lower:
+            return ("chat", False, None, None, None, None)
+
+        # 8. Combat & Kills
+        if any(k in lower for k in ["killed", "fatal blow", "collapses", "slain", "strikes", "casts", "inflicts"]):
+            return ("combat", False, None, None, None, None)
+
+        # 9. Progression & Improves
+        if "improved" in lower or "tougher" in lower or "more knowledgeable" in lower:
+            return ("improves", False, None, None, None, None)
+
+        # 10. Default System Broadcast
+        return ("system", False, None, None, None, None)
+
+    # ------------------------------------------------------------------
+    # Log Processing Pipeline
+    # ------------------------------------------------------------------
+    def process_log_line(self, line):
+        if not line or not line.strip():
+            return
+
+        raw_line = line.strip()
+
+        # Ignore terminal/system internal debug output lines if any slip in
+        if any(raw_line.startswith(prefix) for prefix in [
+            "[M59-", "DEBUG:", "INFO:", "WARNING:", "ERROR:", "Traceback", "File \"", "[PySide6]"
+        ]):
+            return
+
+        # Extract timestamp if line has [YYYY-MM-DD HH:MM:SS] or [HH:MM:SS] or [HH:MM]
+        ts_match = re.match(r"^\[(?:\d{4}-\d{2}-\d{2}\s+)?(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.*)$", raw_line)
+        if ts_match:
+            msg_ts = ts_match.group(1)
+            msg_text = ts_match.group(2).strip()
+        else:
+            msg_ts = datetime.now().strftime("%H:%M:%S")
+            msg_text = raw_line
+
+        if not msg_text:
+            return
+
+        # Prevent duplicate entries (within short timeframe or identical timestamp+text)
+        dedup_key = (msg_ts, msg_text)
+        now_time = time.time()
+        if hasattr(self, 'recent_log_fingerprints'):
+            for stored_key, stored_time in list(self.recent_log_fingerprints):
+                if stored_key == dedup_key and (now_time - stored_time) < 3.0:
+                    return
+                if stored_key[1] == msg_text and (now_time - stored_time) < 1.0:
+                    return
+            self.recent_log_fingerprints.append((dedup_key, now_time))
+        else:
+            self.recent_log_fingerprints = deque([(dedup_key, now_time)], maxlen=250)
+
+        # 0. Check Bank updates
+        if hasattr(self, 'bank_manager') and self.bank_manager.process_line(msg_text):
+            self.update_bank_ui()
+
+        # 1. Check SessionTracker for Improves
+        gain = self.tracker.process_line(msg_text)
+        if gain:
+            found_row = -1
+            for r in range(self.imp_table.rowCount()):
+                item = self.imp_table.item(r, 0)
+                if item and item.text().lower() == gain['name'].lower():
+                    found_row = r
+                    break
+
+            if found_row != -1:
+                self.imp_table.setItem(found_row, 1, QTableWidgetItem(str(gain['count'])))
+                self.imp_table.setItem(found_row, 2, QTableWidgetItem(gain['delta']))
+                self.imp_table.setItem(found_row, 3, QTableWidgetItem(msg_ts))
+            else:
+                row = self.imp_table.rowCount()
+                self.imp_table.insertRow(row)
+                self.imp_table.setItem(row, 0, QTableWidgetItem(gain['name']))
+                self.imp_table.setItem(row, 1, QTableWidgetItem(str(gain['count'])))
+                self.imp_table.setItem(row, 2, QTableWidgetItem(gain['delta']))
+                self.imp_table.setItem(row, 3, QTableWidgetItem(msg_ts))
+
+            self.improves_history.append(msg_text)
+            self.imp_count_badge.setText(f"{len(self.improves_history)} Gains")
+            self.add_log_entry(msg_ts, "improves", msg_text)
+
+            # Update progression knowledge cache
+            skill_k = gain['name'].lower()
+            if skill_k != "hit points":
+                cur_val = self.knowledge_cache.get(skill_k, 0)
+                self.knowledge_cache[skill_k] = min(99, max(cur_val + 1, 1))
+                self.save_knowledge_cache()
+                self.update_progression_ui()
+            return
+
+        # 2. Check CombatMonitor for Kills / PK Alerts
+        kill = self.combat_monitor.process_line(msg_text)
+        if kill:
+            if kill.get("type") == "PK_ALERT":
+                self.trigger_pk_alert()
+            elif kill.get("type") == "KILL":
+                category = kill['category']
+                victim = kill['name']
+
+                if category not in self.session_kills:
+                    self.session_kills[category] = {}
+                self.session_kills[category][victim] = self.session_kills[category].get(victim, 0) + 1
+                session_count = self.session_kills[category][victim]
+
+                found_row = -1
+                for r in range(self.kill_table.rowCount()):
+                    item = self.kill_table.item(r, 0)
+                    if item and item.text().lower() == victim.lower():
+                        found_row = r
+                        break
+
+                if found_row != -1:
+                    self.kill_table.setItem(found_row, 1, QTableWidgetItem(category.capitalize()))
+                    self.kill_table.setItem(found_row, 2, QTableWidgetItem(str(session_count)))
+                    self.kill_table.setItem(found_row, 3, QTableWidgetItem(msg_ts))
+                else:
+                    row = self.kill_table.rowCount()
+                    self.kill_table.insertRow(row)
+                    self.kill_table.setItem(row, 0, QTableWidgetItem(victim))
+                    self.kill_table.setItem(row, 1, QTableWidgetItem(category.capitalize()))
+                    self.kill_table.setItem(row, 2, QTableWidgetItem(str(session_count)))
+                    self.kill_table.setItem(row, 3, QTableWidgetItem(msg_ts))
+
+                self.kills_history.append(msg_text)
+                total_session_kills = sum(sum(c.values()) for c in self.session_kills.values())
+                self.kill_count_badge.setText(f"{total_session_kills} Kills")
+                self.add_log_entry(msg_ts, "combat", msg_text)
+
+                if hasattr(self, 'update_killbook_ui'):
+                    self.update_killbook_ui()
+                return
+
+        # 3. Categorize line using communication parsing engine
+        channel, is_dm, dm_dir, dm_player, dm_body, dm_type = self.categorize_communication_line(msg_text)
+
+        # If direct message (tell or send), record in player DM ledger
+        if is_dm and dm_player:
+            self.record_direct_message(msg_ts, dm_player, dm_body, msg_text, direction=dm_dir, msg_type=dm_type)
 
         self.add_log_entry(msg_ts, channel, msg_text)
 
     def add_log_entry(self, timestamp, channel, text):
         entry = {"ts": timestamp, "channel": channel, "text": text}
         self.chat_logs.append(entry)
-        if channel == "private":
+
+        if channel in ("private", "guild", "group"):
             self.play_tell_alert()
-            if getattr(self, 'active_channel', 'all') != 'private':
-                self.unread_private_count = getattr(self, 'unread_private_count', 0) + 1
-                if hasattr(self, 'channel_btns') and 'private' in self.channel_btns:
-                    self.channel_btns['private'].setText(f"Private ({self.unread_private_count})")
+
         self.render_chat_line(entry)
+
         if hasattr(self, 'active_floating_chat') and self.active_floating_chat:
             try:
                 self.active_floating_chat.append_entry(entry)
@@ -7326,18 +8399,21 @@ class M59CompanionApp(QMainWindow):
                 pass
 
     def render_chat_line(self, entry):
+        ch = entry.get('channel', 'system')
         color = "#e2e8f0"
-        if entry['channel'] == "improves":
+        if ch == "improves":
             color = "#34d399"
-        elif entry['channel'] == "combat":
+        elif ch == "combat":
             color = "#f87171"
-        elif entry['channel'] == "private":
-            color = "#a855f7"
-        elif entry['channel'] == "guild":
+        elif ch == "private":
             color = "#c084fc"
-        elif entry['channel'] == "chat":
+        elif ch == "guild":
+            color = "#a855f7"
+        elif ch == "group":
+            color = "#38bdf8"
+        elif ch == "chat":
             color = "#60a5fa"
-        elif entry['channel'] == "system":
+        elif ch == "system":
             color = "#fbbf24"
 
         fs = getattr(self, 'font_settings', {}).get("chat_logger", 13)
@@ -7346,7 +8422,16 @@ class M59CompanionApp(QMainWindow):
         text_escaped = raw_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         line_html = f"<div style='margin-bottom: 4px;'><span style='color: #64748b; font-size: {ts_fs}px;'>[{entry['ts']}]</span> <span style='color: {color}; font-weight: 600; font-size: {fs}px;'>{text_escaped}</span></div>"
 
-        if self.active_channel == "all" or self.active_channel == entry['channel']:
+        # Check filter matching: "private" filter matches private, guild, and group
+        matches_channel = False
+        if self.active_channel == "all":
+            matches_channel = True
+        elif self.active_channel == "private" and ch in ("private", "guild", "group"):
+            matches_channel = True
+        elif self.active_channel == ch:
+            matches_channel = True
+
+        if matches_channel:
             query = self.chat_search.text().lower()
             if not query or query in raw_text.lower():
                 self.chat_stream_view.append(line_html)
@@ -7354,10 +8439,6 @@ class M59CompanionApp(QMainWindow):
 
     def set_chat_channel_filter(self, channel_id):
         self.active_channel = channel_id
-        if channel_id == "private":
-            self.unread_private_count = 0
-            if hasattr(self, 'channel_btns') and 'private' in self.channel_btns:
-                self.channel_btns['private'].setText("Private")
         for cid, btn in self.channel_btns.items():
             btn.setProperty("active", "true" if cid == channel_id else "false")
             btn.style().unpolish(btn)
@@ -7368,7 +8449,16 @@ class M59CompanionApp(QMainWindow):
         self.chat_stream_view.clear()
         query = self.chat_search.text().lower()
         for entry in self.chat_logs:
-            if self.active_channel == "all" or self.active_channel == entry['channel']:
+            ch = entry.get('channel', 'system')
+            matches_channel = False
+            if self.active_channel == "all":
+                matches_channel = True
+            elif self.active_channel == "private" and ch in ("private", "guild", "group"):
+                matches_channel = True
+            elif self.active_channel == ch:
+                matches_channel = True
+
+            if matches_channel:
                 if not query or query in entry['text'].lower():
                     self.render_chat_line(entry)
 
@@ -7725,9 +8815,22 @@ class M59CompanionApp(QMainWindow):
 
 
 # ----------------------------------------------------------------------
-# Application Entry Point
+# Application Entry Point & Process Lifecycle Safety
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
+    import signal
+    import atexit
+    import tempfile
+    from PySide6.QtCore import QLockFile
+
+    # 1. Single Instance Lock Enforcement to prevent duplicate rogue background processes
+    lock_path = os.path.join(tempfile.gettempdir(), "m59_companion_v3.lock")
+    lock_file = QLockFile(lock_path)
+    lock_file.setStaleLockTime(3000)  # considers lock stale if previous instance crashed >3s ago
+    if not lock_file.tryLock(100):
+        print("[M59-INIT] Another instance of Meridian 59 Companion is already active. Exiting cleanly.", flush=True)
+        sys.exit(0)
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
@@ -7739,9 +8842,42 @@ if __name__ == "__main__":
         app.setWindowIcon(QIcon(icon_path))
 
     window = M59CompanionApp()
+
+    # 2. Comprehensive Termination Cleanup Handler
+    _cleaned_up = False
+    def global_cleanup():
+        global _cleaned_up
+        if _cleaned_up:
+            return
+        _cleaned_up = True
+        try:
+            if 'window' in locals() and window:
+                window.close()
+        except Exception:
+            pass
+        try:
+            if 'lock_file' in locals() and lock_file and lock_file.isLocked():
+                lock_file.unlock()
+        except Exception:
+            pass
+        # Force terminate any remaining background threads/sockets immediately
+        os._exit(0)
+
+    app.aboutToQuit.connect(global_cleanup)
+    atexit.register(global_cleanup)
+
+    # 3. OS Signal Interception (SIGINT / SIGTERM)
+    try:
+        signal.signal(signal.SIGINT, lambda sig, frame: global_cleanup())
+        signal.signal(signal.SIGTERM, lambda sig, frame: global_cleanup())
+    except Exception:
+        pass
+
     window.show()
 
     # Launch splash screen overlay during process scan
     window.show_splash_overlay("searching")
 
-    sys.exit(app.exec())
+    ret_code = app.exec()
+    global_cleanup()
+    sys.exit(ret_code)

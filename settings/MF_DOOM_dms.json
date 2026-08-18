@@ -1,0 +1,274 @@
+{
+  "player_dms": {
+    "mf": {
+      "player_name": "MF",
+      "messages": [
+        {
+          "ts": "22:23:46",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"test",
+          "raw": "You tell MF DOOM, \"test\""
+        },
+        {
+          "ts": "22:24:03",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"test",
+          "raw": "You tell MF DOOM, \"test\""
+        },
+        {
+          "ts": "22:24:10",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"test",
+          "raw": "You tell MF DOOM, \"test\""
+        },
+        {
+          "ts": "22:24:17",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"test",
+          "raw": "You tell MF DOOM, \"test\""
+        },
+        {
+          "ts": "22:25:05",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"test",
+          "raw": "You tell MF DOOM, \"test\""
+        },
+        {
+          "ts": "22:53:26",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"test",
+          "raw": "You tell MF DOOM, \"test\""
+        },
+        {
+          "ts": "23:08:39",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"DOOM test",
+          "raw": "You tell MF DOOM, \"DOOM test\""
+        },
+        {
+          "ts": "23:08:53",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"DOOM test",
+          "raw": "You tell MF DOOM, \"DOOM test\""
+        },
+        {
+          "ts": "23:30:21",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"DOOM test",
+          "raw": "You tell MF DOOM, \"DOOM test\""
+        }
+      ]
+    },
+    "mf doom": {
+      "player_name": "MF DOOM",
+      "messages": [
+        {
+          "ts": "23:08:39",
+          "direction": "in",
+          "type": "tell",
+          "text": "DOOM test",
+          "raw": "MF DOOM tells you, \"DOOM test\""
+        },
+        {
+          "ts": "23:08:54",
+          "direction": "in",
+          "type": "tell",
+          "text": "DOOM test",
+          "raw": "MF DOOM tells you, \"DOOM test\""
+        },
+        {
+          "ts": "23:30:20",
+          "direction": "out",
+          "type": "tell",
+          "text": "test",
+          "raw": "You tell MF DOOM, 'test'"
+        },
+        {
+          "ts": "23:30:21",
+          "direction": "in",
+          "type": "tell",
+          "text": "DOOM test",
+          "raw": "MF DOOM tells you, \"DOOM test\""
+        }
+      ]
+    },
+    "markandeya": {
+      "player_name": "Markandeya",
+      "messages": [
+        {
+          "ts": "22:57:20",
+          "direction": "in",
+          "type": "tell",
+          "text": "sup homey",
+          "raw": "Markandeya tells you, \" sup homey\""
+        },
+        {
+          "ts": "22:59:58",
+          "direction": "out",
+          "type": "tell",
+          "text": "heya bro",
+          "raw": "You tell Markandeya, \"heya bro\""
+        },
+        {
+          "ts": "23:01:20",
+          "direction": "in",
+          "type": "tell",
+          "text": "not bad   but can you eliminate the  timestamp  and make translusent?",
+          "raw": "Markandeya tells you, \"  not bad   but can you eliminate the  timestamp  and make translusent?\""
+        },
+        {
+          "ts": "23:02:17",
+          "direction": "out",
+          "type": "tell",
+          "text": "not sure what you mean. have you tried the beta yet?",
+          "raw": "You tell Markandeya, \"not sure what you mean. have you tried the beta yet?\""
+        },
+        {
+          "ts": "23:03:24",
+          "direction": "in",
+          "type": "tell",
+          "text": "the one i have now has text screen on cummunications ?  wait let me download  from gitt  site    my update dont work right",
+          "raw": "Markandeya tells you, \"the one i have now has text screen on cummunications ?  wait let me download  from gitt  site    my update dont work right\""
+        },
+        {
+          "ts": "23:03:38",
+          "direction": "in",
+          "type": "tell",
+          "text": "whats the  Url again",
+          "raw": "Markandeya tells you, \" whats the  Url again\""
+        },
+        {
+          "ts": "23:04:39",
+          "direction": "out",
+          "type": "tell",
+          "text": "https://github.com/subvhome/m59-companion you will see a beta link..",
+          "raw": "You tell Markandeya, \"https://github.com/subvhome/m59-companion you will see a beta link.. \""
+        },
+        {
+          "ts": "23:06:55",
+          "direction": "in",
+          "type": "tell",
+          "text": "getting beta now",
+          "raw": "Markandeya tells you, \" getting beta now\""
+        },
+        {
+          "ts": "23:08:04",
+          "direction": "out",
+          "type": "tell",
+          "text": "testing dm",
+          "raw": "You tell Markandeya, \"testing dm\""
+        },
+        {
+          "ts": "23:08:12",
+          "direction": "out",
+          "type": "tell",
+          "text": "noice",
+          "raw": "You tell Markandeya, \"noice\""
+        },
+        {
+          "ts": "23:09:47",
+          "direction": "in",
+          "type": "tell",
+          "text": "whow     let me look around  looks  great so far  :)",
+          "raw": "Markandeya tells you, \"  whow     let me look around  looks  great so far  :)\""
+        },
+        {
+          "ts": "23:10:27",
+          "direction": "out",
+          "type": "tell",
+          "text": "new version coming out with that DM thing you mentioned.. well my idea of it.",
+          "raw": "You tell Markandeya, \"new version coming out with that DM thing you mentioned.. well my idea of it.\""
+        },
+        {
+          "ts": "23:11:39",
+          "direction": "in",
+          "type": "tell",
+          "text": "i have  figure this one out   gonna take a minut",
+          "raw": "Markandeya tells you, \"i have  figure this one out   gonna take a minut\""
+        },
+        {
+          "ts": "23:17:21",
+          "direction": "out",
+          "type": "tell",
+          "text": "its the same thing but main is customizable. move tiles around. etc..  still early beta.. need to make it prettier.. customizable..  new features is a floating chatbox.. and IM windows.  let me know if you have questions",
+          "raw": "You tell Markandeya, 'its the same thing but main is customizable. move tiles around. etc..  still early beta.. need to make it prettier.. customizable..  new features is a floating chatbox.. and IM windows.  let me know if you have questions'"
+        },
+        {
+          "ts": "23:17:22",
+          "direction": "out",
+          "type": "tell",
+          "text": "its the same thing but main is customizable. move tiles around. etc..  still early beta.. need to make it prettier.. customizable..  new features is a floating chatbox.. and IM windows.  let me know if you have questions",
+          "raw": "You tell Markandeya, \"its the same thing but main is customizable. move tiles around. etc..  still early beta.. need to make it prettier.. customizable..  new features is a floating chatbox.. and IM windows.  let me know if you have questions\""
+        },
+        {
+          "ts": "23:19:49",
+          "direction": "in",
+          "type": "tell",
+          "text": "gonna have to play around with to figure out ,  my windows some are too large and i have so many hot buttons  the go off screen .im gonna have to play around  an figur it out",
+          "raw": "Markandeya tells you, \"gonna have to play around with to figure out ,  my windows some are too large and i have so many hot buttons  the go off screen .im gonna have to play around  an figur it out\""
+        },
+        {
+          "ts": "23:20:26",
+          "direction": "out",
+          "type": "tell",
+          "text": "your buttons didn't import correctly? like off the UI?",
+          "raw": "You tell Markandeya, 'your buttons didn't import correctly? like off the UI?'"
+        },
+        {
+          "ts": "23:20:27",
+          "direction": "out",
+          "type": "tell",
+          "text": "your buttons didn't import correctly? like off the UI?",
+          "raw": "You tell Markandeya, \"your buttons didn't import correctly? like off the UI?\""
+        },
+        {
+          "ts": "23:22:37",
+          "direction": "in",
+          "type": "tell",
+          "text": "im having trouble gettin it to fit in my screen",
+          "raw": "Markandeya tells you, \"im having trouble gettin it to fit in my screen  \""
+        },
+        {
+          "ts": "23:23:42",
+          "direction": "out",
+          "type": "tell",
+          "text": "its too big?  would you happen to know your screen resolution?  it seems like my developing machine may not have as high a resolution then your machine..",
+          "raw": "You tell Markandeya, 'its too big?  would you happen to know your screen resolution?  it seems like my developing machine may not have as high a resolution then your machine..'"
+        },
+        {
+          "ts": "23:23:42",
+          "direction": "out",
+          "type": "tell",
+          "text": "its too big?  would you happen to know your screen resolution?  it seems like my developing machine may not have as high a resolution then your machine..",
+          "raw": "You tell Markandeya, \"its too big?  would you happen to know your screen resolution?  it seems like my developing machine may not have as high a resolution then your machine..\""
+        },
+        {
+          "ts": "23:28:51",
+          "direction": "in",
+          "type": "tell",
+          "text": "ok  found issue  i had two open at once",
+          "raw": "Markandeya tells you, \"  ok  found issue  i had two open at once  \""
+        },
+        {
+          "ts": "23:30:26",
+          "direction": "in",
+          "type": "tell",
+          "text": "how do i filter in floating box",
+          "raw": "Markandeya tells you, \" how do i filter in floating box\""
+        }
+      ]
+    }
+  },
+  "unread_dms": {
+    "mf doom": 1
+  }
+}
