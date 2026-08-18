@@ -97,40 +97,123 @@ def get_next_version():
             return v_str + ".1"
     return "1.0.0"
 
-def update_readme_beta_link(beta_version, repo_raw_url=None):
-    """Dynamically updates or injects the Beta Build download link into README.md."""
+def get_current_beta_version():
+    """Reads current beta version from VERSION_BETA or falls back to VERSION."""
+    if os.path.exists("VERSION_BETA"):
+        try:
+            with open("VERSION_BETA", "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                v_str = content.splitlines()[0].lower().replace('v', '')
+                if v_str:
+                    return v_str
+        except Exception:
+            pass
+    current_stable = get_current_version()
+    return f"{current_stable}b"
+
+def get_next_beta_version():
+    """
+    Calculates the next bumped beta version from VERSION_BETA.
+    Examples:
+      - 3.0b      -> 3.0.1b
+      - 3.0.1b    -> 3.0.2b
+      - 3.0b1     -> 3.0b2
+      - 3.0-beta1 -> 3.0-beta2
+    """
+    current_beta = get_current_beta_version()
+    
+    # 1. Trailing number after b/beta: e.g. 3.0b1 -> 3.0b2
+    match_trail = re.search(r"^(.*?b(?:eta)?[\.\-]?)(\d+)$", current_beta, re.IGNORECASE)
+    if match_trail:
+        prefix = match_trail.group(1)
+        num = int(match_trail.group(2)) + 1
+        return f"{prefix}{num}"
+
+    # 2. Pattern: X.Y.Zb -> increment Z (e.g. 3.0.1b -> 3.0.2b)
+    match_dot = re.search(r"^(\d+\.\d+\.)(\d+)(b(?:eta)?)$", current_beta, re.IGNORECASE)
+    if match_dot:
+        prefix = match_dot.group(1)
+        patch = int(match_dot.group(2)) + 1
+        suffix = match_dot.group(3)
+        return f"{prefix}{patch}{suffix}"
+
+    # 3. Pattern: X.Yb -> e.g. 3.0b -> 3.0.1b
+    match_letter = re.search(r"^(\d+\.\d+)(b(?:eta)?)$", current_beta, re.IGNORECASE)
+    if match_letter:
+        base = match_letter.group(1)
+        suffix = match_letter.group(2)
+        return f"{base}.1{suffix}"
+
+    # 4. Fallback: split on dot and increment last segment
+    parts = current_beta.split('.')
+    if len(parts) >= 1:
+        try:
+            parts[-1] = str(int(parts[-1]) + 1)
+            return ".".join(parts)
+        except Exception:
+            return current_beta + ".1"
+    return "3.0.1b"
+
+def get_github_repo_info():
+    """Detects GitHub owner/repo from local git remote if available, with fallback."""
+    raw = run_command("git config --get remote.origin.url", None, capture=True)
+    if raw:
+        match = re.search(r"github\.com[:/]([\w\-]+)/([\w\-]+?)(?:\.git)?$", str(raw).strip())
+        if match:
+            return f"{match.group(1)}/{match.group(2)}"
+    return "subvhome/m59-companion"
+
+def update_readme_links(stable_version=None, beta_version=None):
+    """Dynamically updates or injects both Stable & Beta download links into README.md."""
     if not os.path.exists("README.md"):
         return
     try:
+        repo_slug = get_github_repo_info()
         with open("README.md", "r", encoding="utf-8") as f:
             content = f.read()
 
-        beta_line = f"- **🧪 Beta Preview**: [Download M59Companion_beta.exe (v{beta_version})](https://github.com/Substance-V/m59companion/raw/main/dist/M59Companion_beta.exe)"
+        stable_url = f"https://github.com/{repo_slug}/raw/main/dist/M59Companion.exe"
+        beta_url = f"https://github.com/{repo_slug}/raw/main/dist/M59Companion_beta.exe"
 
-        # Check if a beta line already exists in README
+        s_label = f" (v{stable_version})" if stable_version else " (Latest)"
+        b_label = f" (v{beta_version})" if beta_version else " (Beta Build)"
+
+        stable_line = f"- **🌟 Stable Release**: [Download M59Companion.exe{s_label}]({stable_url})"
+        beta_line = f"- **🧪 Beta Preview**: [Download M59Companion_beta.exe{b_label}]({beta_url})"
+
+        if re.search(r"-\s*\*\*.*Stable.*?\*\*:\s*\[.*\]\(.*M59Companion\.exe.*\)", content, re.IGNORECASE):
+            content = re.sub(
+                r"-\s*\*\*.*Stable.*?\*\*:\s*\[.*\]\(.*M59Companion\.exe.*\)",
+                stable_line,
+                content,
+                flags=re.IGNORECASE
+            )
+        
         if re.search(r"-\s*\*\*.*Beta.*?\*\*:\s*\[.*\]\(.*M59Companion_beta\.exe.*\)", content, re.IGNORECASE):
-            updated_content = re.sub(
+            content = re.sub(
                 r"-\s*\*\*.*Beta.*?\*\*:\s*\[.*\]\(.*M59Companion_beta\.exe.*\)",
                 beta_line,
                 content,
                 flags=re.IGNORECASE
             )
         elif "M59Companion.exe" in content:
-            # Place beta line right below stable download link
-            updated_content = re.sub(
+            content = re.sub(
                 r"(- \*\*.*Stable.*?\*\*: \[.*?\]\(.*?M59Companion\.exe.*?\))",
                 r"\1\n" + beta_line,
                 content
             )
         else:
-            # Append a download section if none exists
-            updated_content = content + f"\n\n### 📥 Downloads\n- **Stable Release**: [Download M59Companion.exe](dist/M59Companion.exe)\n{beta_line}\n"
+            content += f"\n\n### 📥 Downloads & Releases\n{stable_line}\n{beta_line}\n"
 
         with open("README.md", "w", encoding="utf-8") as f:
-            f.write(updated_content)
-        print(f"-> Updated README.md with beta release link for v{beta_version}")
+            f.write(content)
+        print(f"-> Updated README.md download links for repository: {repo_slug}")
     except Exception as ex:
         print(f"!! Warning: Could not update README.md automatically: {ex}")
+
+def update_readme_beta_link(beta_version):
+    """Convenience wrapper for beta updates."""
+    update_readme_links(beta_version=beta_version)
 
 def show_restore_menu():
     print("\n--- RESTORE MODULE ---")
@@ -348,7 +431,7 @@ def get_git_tracked_assets():
                     break
             if found_dir: continue
             
-            if line == "VERSION" or any(line.endswith(ext) for ext in asset_exts):
+            if line in ("VERSION", "VERSION_BETA") or any(line.endswith(ext) for ext in asset_exts):
                 if os.path.exists(line):
                     if "/" in line:
                         dest_folder = os.path.dirname(line)
@@ -364,6 +447,8 @@ def get_git_tracked_assets():
             bundled.append('--add-data "settings;settings"')
         if os.path.exists("VERSION"):
             bundled.append('--add-data "VERSION;."')
+        if os.path.exists("VERSION_BETA"):
+            bundled.append('--add-data "VERSION_BETA;."')
                 
     return bundled
 
@@ -468,7 +553,10 @@ def run_promotion():
 
     check_file_size_limit("dist/M59Companion.exe", limit_mb=50.0)
 
-    # 4. Verification Pause
+    # 4. Update README.md with Stable Download Link
+    update_readme_links(stable_version=version)
+
+    # 5. Verification Pause
     print("\n" + "!"*40)
     print(f" PIPELINE PAUSED: Please test 'dist/M59Companion.exe'")
     print(f" Verify title bar shows v{version}")
@@ -495,13 +583,19 @@ def run_promotion():
 
 def run_beta_promotion():
     print("\n--- 🧪 BUILD & PUBLISH BETA RELEASE ---")
-    current_v = get_current_version()
-    default_beta_v = f"{current_v}-beta"
+    current_beta_v = get_current_beta_version()
+    default_beta_v = get_next_beta_version()
     
-    user_v = input(f"Enter Beta Version name [{default_beta_v}]: ").strip()
+    user_v = input(f"Enter Beta Version name [{default_beta_v}] (current: v{current_beta_v}): ").strip()
     beta_version = user_v if user_v else default_beta_v
 
     beta_notes = input("Enter Beta release notes (or press enter to skip): ").strip()
+
+    with open("VERSION_BETA", "w", encoding="utf-8") as f:
+        f.write(beta_version)
+        if beta_notes:
+            f.write(f"\n{beta_notes}")
+    print(f"-> VERSION_BETA file updated to v{beta_version}")
 
     # 1. Compilation for Beta target (_beta.exe) & Packaging Optimization
     opt_flags = prompt_build_optimization()

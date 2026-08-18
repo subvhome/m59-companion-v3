@@ -2610,6 +2610,9 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 """
 
 
+import m59_updater
+from m59_updater import check_all_releases, show_qt_update_dialog, get_installed_version
+
 # ----------------------------------------------------------------------
 # Qt Signal Bridge for Game Lifecycle Events
 # ----------------------------------------------------------------------
@@ -2624,6 +2627,7 @@ class GameBridgeSignal(QObject):
     vault_updated = Signal(str, list, str) # vault_type, items list, last_scan timestamp string
     room_changed = Signal(str)           # current room name string
     knowledge_updated = Signal(dict)     # knowledge dict {skill/spell: percent}
+    update_detected = Signal(dict)       # release data dictionary
 
 
 # ----------------------------------------------------------------------
@@ -2719,7 +2723,10 @@ class M59StandaloneDockWindow(QWidget):
 class M59CompanionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Meridian 59 Companion - Fluid Web Edition")
+        # Version & Channel State
+        self.version = get_installed_version()
+        v_clean = str(self.version).lstrip('v')
+        self.setWindowTitle(f"Meridian 59 Companion - v{v_clean}")
         self.resize(1380, 880)
 
         # Print Startup Debug
@@ -2774,6 +2781,7 @@ class M59CompanionApp(QMainWindow):
         self.signals.vault_updated.connect(self.on_vault_updated)
         self.signals.room_changed.connect(self.update_gps_room)
         self.signals.knowledge_updated.connect(self.update_progression_ui)
+        self.signals.update_detected.connect(self.on_update_detected)
 
         # Character State
         self.char_name = "--"
@@ -2871,6 +2879,9 @@ class M59CompanionApp(QMainWindow):
         self.update_floating_hotkey_buttons()
         self.register_global_hotkeys()
 
+        # Automatic Background Check for Dual Stable & Beta Releases
+        self.start_background_update_check()
+
     def setup_ui(self):
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -2904,7 +2915,7 @@ class M59CompanionApp(QMainWindow):
 
         title_v = QVBoxLayout()
         t1 = QLabel("M59 Companion", objectName="SidebarTitle")
-        t2 = QLabel("v3.0 Fluid Web Interface", objectName="SidebarSub")
+        t2 = QLabel(f"v{str(self.version).lstrip('v')}", objectName="SidebarSub")
         title_v.addWidget(t1)
         title_v.addWidget(t2)
         brand_box.addLayout(title_v)
@@ -6471,9 +6482,82 @@ class M59CompanionApp(QMainWindow):
 
         layout.addWidget(sound_card)
 
+        # --------------------------------------------------------------
+        # 4. Software Updates & Dual Release Channels (Stable / Beta)
+        # --------------------------------------------------------------
+        update_card = QFrame()
+        update_card.setProperty("class", "WebCard")
+        uc_layout = QVBoxLayout(update_card)
+        uc_layout.setContentsMargins(16, 16, 16, 16)
+        uc_layout.setSpacing(12)
+
+        u_hdr = QHBoxLayout()
+        u_title = QLabel("🚀 Software Updates & Release Channels")
+        u_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #94a3b8;")
+        u_hdr.addWidget(u_title)
+        u_hdr.addStretch()
+
+        is_beta_cur = 'beta' in str(self.version).lower()
+        badge_style = "background-color: #1e3a8a; color: #93c5fd;" if is_beta_cur else "background-color: #065f46; color: #34d399;"
+        channel_name = "BETA CHANNEL" if is_beta_cur else "STABLE CHANNEL"
+        v_badge = QLabel(f"  {channel_name} • v{self.version}  ")
+        v_badge.setStyleSheet(f"{badge_style} font-weight: 800; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
+        u_hdr.addWidget(v_badge)
+        uc_layout.addLayout(u_hdr)
+
+        u_desc = QLabel("Check GitHub for the latest verified stable releases or preview cutting-edge experimental Beta builds.")
+        u_desc.setStyleSheet("font-size: 12px; color: #64748b;")
+        uc_layout.addWidget(u_desc)
+
+        u_btn_row = QHBoxLayout()
+        u_btn_row.setSpacing(10)
+
+        check_upd_btn = QPushButton("🔄 Check for Updates (Stable & Beta)")
+        check_upd_btn.setProperty("class", "WebBtnPrimary")
+        check_upd_btn.clicked.connect(self.trigger_manual_update_check)
+        u_btn_row.addWidget(check_upd_btn)
+
+        gh_btn = QPushButton("🌐 Open Releases on GitHub")
+        gh_btn.setProperty("class", "WebBtnSecondary")
+        gh_btn.clicked.connect(lambda: m59_updater.open_browser())
+        u_btn_row.addWidget(gh_btn)
+
+        u_btn_row.addStretch()
+        uc_layout.addLayout(u_btn_row)
+
+        layout.addWidget(update_card)
+
         layout.addStretch()
         scroll.setWidget(page)
         return scroll
+
+    def start_background_update_check(self):
+        """Starts background thread to detect latest stable & beta releases from GitHub."""
+        def _check():
+            try:
+                time.sleep(2)
+                res = check_all_releases(self.version)
+                if res.get("stable_update_available") or res.get("beta_update_available"):
+                    self.signals.update_detected.emit(res)
+            except Exception as ex:
+                print(f"[M59-UPDATER] Background check error: {ex}", flush=True)
+        threading.Thread(target=_check, daemon=True).start()
+
+    def on_update_detected(self, release_data):
+        """Displays Qt update dialog with dual Stable/Beta selection."""
+        show_qt_update_dialog(self, release_data)
+
+    def trigger_manual_update_check(self):
+        """Manually checks for both stable and beta releases, opening the update dialog or informing user."""
+        def _run():
+            res = check_all_releases(self.version)
+            def _ui():
+                if res.get("error"):
+                    QMessageBox.warning(self, "Update Check Failed", f"Could not reach update servers:\n{res['error']}")
+                else:
+                    show_qt_update_dialog(self, res)
+            QTimer.singleShot(0, _ui)
+        threading.Thread(target=_run, daemon=True).start()
 
     def reset_font_settings(self):
         """Resets all font size groups to default values."""
