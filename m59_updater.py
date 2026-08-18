@@ -57,28 +57,57 @@ def is_version_newer(candidate_ver, reference_ver):
     return False
 
 def get_installed_version():
-    """Reads the local VERSION_BETA or VERSION file."""
-    # 1. Check VERSION_BETA first
-    if os.path.exists("VERSION_BETA"):
-        try:
-            with open("VERSION_BETA", "r", encoding="utf-8") as f:
-                lines = f.read().strip().splitlines()
-                if lines and lines[0].strip():
-                    return lines[0].strip()
-        except Exception:
-            pass
+    """
+    Reads the active version from VERSION_BETA or VERSION file,
+    checking PyInstaller bundle (_MEIPASS), executable directory, and CWD.
+    """
+    search_dirs = []
+    
+    # 1. Check PyInstaller bundled location
+    if hasattr(sys, '_MEIPASS'):
+        search_dirs.append(sys._MEIPASS)
+        
+    # 2. Check executable directory
+    try:
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        if exe_dir and exe_dir not in search_dirs:
+            search_dirs.append(exe_dir)
+    except Exception:
+        pass
 
-    # 2. Check VERSION
-    if os.path.exists("VERSION"):
-        try:
-            with open("VERSION", "r", encoding="utf-8") as f:
-                lines = f.read().strip().splitlines()
-                if lines and lines[0].strip():
-                    return lines[0].strip()
-        except Exception:
-            pass
+    # 3. Check current working directory
+    try:
+        cwd = os.path.abspath(".")
+        if cwd and cwd not in search_dirs:
+            search_dirs.append(cwd)
+    except Exception:
+        pass
 
-    return "3.0b"
+    # First pass: check for VERSION_BETA across all candidate paths
+    for base in search_dirs:
+        beta_path = os.path.join(base, "VERSION_BETA")
+        if os.path.exists(beta_path):
+            try:
+                with open(beta_path, "r", encoding="utf-8") as f:
+                    lines = f.read().strip().splitlines()
+                    if lines and lines[0].strip():
+                        return lines[0].strip()
+            except Exception:
+                pass
+
+    # Second pass: check for VERSION across all candidate paths
+    for base in search_dirs:
+        ver_path = os.path.join(base, "VERSION")
+        if os.path.exists(ver_path):
+            try:
+                with open(ver_path, "r", encoding="utf-8") as f:
+                    lines = f.read().strip().splitlines()
+                    if lines and lines[0].strip():
+                        return lines[0].strip()
+            except Exception:
+                pass
+
+    return "3.0.2b"
 
 def fetch_url_text(url, timeout=5):
     """Safely retrieves UTF-8 decoded text from a URL with cache-busting timestamp."""
@@ -187,13 +216,21 @@ def check_for_updates(current_version):
         return True, res["beta_version"], res["beta_notes"]
     return False, res.get("stable_version"), res.get("stable_notes")
 
-def download_update(target_type='stable', on_progress=None):
+def download_update(target_type=None, on_progress=None):
     """
     Downloads the selected executable (stable or beta) with optional progress callback.
     on_progress(downloaded_bytes, total_bytes, percentage_float)
     """
     releases = check_all_releases()
-    url = releases["beta_exe_url"] if target_type == 'beta' else releases["stable_exe_url"]
+    if target_type is None:
+        if releases.get("stable_update_available"):
+            target_type = 'stable'
+        elif releases.get("beta_update_available"):
+            target_type = 'beta'
+        else:
+            target_type = 'stable'
+
+    url = releases.get("beta_exe_url") if target_type == 'beta' else releases.get("stable_exe_url")
     
     if not url:
         url = REPO_URLS[0]["beta_exe_url"] if target_type == 'beta' else REPO_URLS[0]["stable_exe_url"]

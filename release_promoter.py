@@ -406,15 +406,16 @@ def run_quick_sync():
         print("==========================================")
 
 def get_git_tracked_assets():
-    """Dynamically identifies files to bundle in the EXE based on what Git is tracking."""
+    """Dynamically identifies files to bundle in the EXE based on what Git is tracking and local files."""
     asset_exts = {'.json', '.csv', '.wav', '.txt', '.md'}
-    asset_dirs = {'imgs', 'sound'}
+    asset_dirs = {'imgs', 'sound', 'graphics'}
     
     cmd = "git ls-files"
     raw = run_command(cmd, "Detecting tracked assets", capture=True)
     
     bundled = []
     seen_dirs = set()
+    added_files = set()
     
     if raw:
         for line in raw.splitlines():
@@ -424,7 +425,7 @@ def get_git_tracked_assets():
             found_dir = False
             for d in asset_dirs:
                 if line.startswith(d + "/"):
-                    if d not in seen_dirs:
+                    if d not in seen_dirs and os.path.exists(d):
                         bundled.append(f'--add-data "{d};{d}"')
                         seen_dirs.add(d)
                     found_dir = True
@@ -433,22 +434,23 @@ def get_git_tracked_assets():
             
             if line in ("VERSION", "VERSION_BETA") or any(line.endswith(ext) for ext in asset_exts):
                 if os.path.exists(line):
+                    added_files.add(line)
                     if "/" in line:
                         dest_folder = os.path.dirname(line)
                         bundled.append(f'--add-data "{line};{dest_folder}"')
                     else:
                         bundled.append(f'--add-data "{line};."')
-    else:
-        # Fallback if git is not initialized
-        for d in asset_dirs:
-            if os.path.exists(d):
-                bundled.append(f'--add-data "{d};{d}"')
-        if os.path.exists("settings"):
-            bundled.append('--add-data "settings;settings"')
-        if os.path.exists("VERSION"):
-            bundled.append('--add-data "VERSION;."')
-        if os.path.exists("VERSION_BETA"):
-            bundled.append('--add-data "VERSION_BETA;."')
+
+    # ALWAYS ensure crucial folders and version files are bundled into the binary:
+    for d in ('imgs', 'sound', 'settings', 'graphics'):
+        if d not in seen_dirs and os.path.exists(d):
+            bundled.append(f'--add-data "{d};{d}"')
+            seen_dirs.add(d)
+
+    for f_name in ("VERSION_BETA", "VERSION"):
+        if f_name not in added_files and os.path.exists(f_name):
+            bundled.append(f'--add-data "{f_name};."')
+            added_files.add(f_name)
                 
     return bundled
 
