@@ -7,29 +7,27 @@ import subprocess
 import webbrowser
 import threading
 
+# ----------------------------------------------------------------------
 # Primary and Fallback Release Repositories
+# ----------------------------------------------------------------------
 REPO_URLS = [
     {
-        "version_url": "https://raw.githubusercontent.com/subvhome/m59-companion/main/VERSION",
-        "version_beta_url": "https://raw.githubusercontent.com/subvhome/m59-companion/main/VERSION_BETA",
-        "readme_url": "https://raw.githubusercontent.com/subvhome/m59-companion/main/README.md",
-        "stable_exe_url": "https://github.com/subvhome/m59-companion/raw/main/dist/M59Companion.exe",
-        "beta_exe_url": "https://github.com/subvhome/m59-companion/raw/main/dist/M59Companion_beta.exe",
-        "github_site": "https://github.com/subvhome/m59-companion"
+        "version_url": "https://raw.githubusercontent.com/subvhome/m59-companion-v3/main/VERSION",
+        "readme_url": "https://raw.githubusercontent.com/subvhome/m59-companion-v3/main/README.md",
+        "exe_url": "https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion.exe",
+        "github_site": "https://github.com/subvhome/m59-companion-v3"
     },
     {
-        "version_url": "https://raw.githubusercontent.com/Substance-V/m59companion/main/VERSION",
-        "version_beta_url": "https://raw.githubusercontent.com/Substance-V/m59companion/main/VERSION_BETA",
-        "readme_url": "https://raw.githubusercontent.com/Substance-V/m59companion/main/README.md",
-        "stable_exe_url": "https://github.com/Substance-V/m59companion/raw/main/dist/M59Companion.exe",
-        "beta_exe_url": "https://github.com/Substance-V/m59companion/raw/main/dist/M59Companion_beta.exe",
-        "github_site": "https://github.com/Substance-V/m59companion"
+        "version_url": "https://raw.githubusercontent.com/Substance-V/m59companion-v3/main/VERSION",
+        "readme_url": "https://raw.githubusercontent.com/Substance-V/m59companion-v3/main/README.md",
+        "exe_url": "https://github.com/Substance-V/m59companion-v3/raw/main/dist/M59Companion.exe",
+        "github_site": "https://github.com/Substance-V/m59companion-v3"
     }
 ]
 
 def parse_version_tuple(v_str):
     """
-    Parses versions like '1.8.0', 'v1.8.1', '1.8.2-beta', '3.0b', '1.8.0.1' into comparable tuples:
+    Parses versions like '3.0.0', 'v3.1.0', '3.1.1' into comparable tuples:
     Returns ((major, minor, patch, build), is_beta, raw_str)
     """
     if not v_str:
@@ -51,14 +49,14 @@ def is_version_newer(candidate_ver, reference_ver):
     if c_nums > r_nums:
         return True
     elif c_nums == r_nums:
-        # If numerical parts are identical: Stable (not beta) > Beta
+        # If numerical parts are identical: Stable release is newer than pre-release/beta
         if not c_beta and r_beta:
             return True
     return False
 
 def get_installed_version():
     """
-    Reads the active version from VERSION_BETA or VERSION file,
+    Reads the active version strictly from the VERSION file,
     checking PyInstaller bundle (_MEIPASS), executable directory, and CWD.
     """
     search_dirs = []
@@ -83,19 +81,7 @@ def get_installed_version():
     except Exception:
         pass
 
-    # First pass: check for VERSION_BETA across all candidate paths
-    for base in search_dirs:
-        beta_path = os.path.join(base, "VERSION_BETA")
-        if os.path.exists(beta_path):
-            try:
-                with open(beta_path, "r", encoding="utf-8") as f:
-                    lines = f.read().strip().splitlines()
-                    if lines and lines[0].strip():
-                        return lines[0].strip()
-            except Exception:
-                pass
-
-    # Second pass: check for VERSION across all candidate paths
+    # Check for VERSION across candidate paths
     for base in search_dirs:
         ver_path = os.path.join(base, "VERSION")
         if os.path.exists(ver_path):
@@ -103,11 +89,11 @@ def get_installed_version():
                 with open(ver_path, "r", encoding="utf-8") as f:
                     lines = f.read().strip().splitlines()
                     if lines and lines[0].strip():
-                        return lines[0].strip()
+                        return lines[0].strip().replace('v', '')
             except Exception:
                 pass
 
-    return "3.0.2b"
+    return "3.1.0"
 
 def fetch_url_text(url, timeout=5):
     """Safely retrieves UTF-8 decoded text from a URL with cache-busting timestamp."""
@@ -115,7 +101,7 @@ def fetch_url_text(url, timeout=5):
         busting_url = f"{url}?t={int(time.time())}"
         req = urllib.request.Request(
             busting_url,
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) M59CompanionUpdater/1.0'}
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) M59CompanionUpdater/3.0'}
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read().decode('utf-8', errors='replace').strip()
@@ -124,81 +110,57 @@ def fetch_url_text(url, timeout=5):
 
 def check_all_releases(current_version=None):
     """
-    Fetches both Stable and Beta release metadata from remote repo.
-    Returns a dictionary with full release comparison data.
+    Fetches latest release metadata from remote repository VERSION file.
+    Returns a dictionary with version comparison data.
     """
     if current_version is None:
         current_version = get_installed_version()
 
     result = {
         "current_version": current_version,
-        "is_current_beta": 'beta' in str(current_version).lower() or 'b' in str(current_version).lower(),
+        "latest_version": None,
+        "release_notes": "",
+        "exe_url": REPO_URLS[0]["exe_url"],
+        "update_available": False,
+        "github_site": REPO_URLS[0]["github_site"],
+        "error": None,
+        # Backward compatibility aliases
         "stable_version": None,
         "stable_notes": "",
-        "stable_exe_url": None,
+        "stable_exe_url": REPO_URLS[0]["exe_url"],
         "stable_update_available": False,
         "beta_version": None,
         "beta_notes": "",
-        "beta_exe_url": None,
+        "beta_exe_url": REPO_URLS[0]["exe_url"],
         "beta_update_available": False,
-        "github_site": REPO_URLS[0]["github_site"],
-        "error": None
     }
 
     fetched = False
     for repo in REPO_URLS:
         version_txt = fetch_url_text(repo["version_url"])
-        version_beta_txt = fetch_url_text(repo.get("version_beta_url")) if repo.get("version_beta_url") else None
-        readme_txt = fetch_url_text(repo["readme_url"])
-
         if version_txt:
             v_lines = version_txt.splitlines()
-            stable_v = v_lines[0].strip().replace('v', '') if v_lines else "1.8.0"
-            stable_notes = "\n".join(v_lines[1:]).strip() if len(v_lines) > 1 else ""
+            remote_v = v_lines[0].strip().replace('v', '') if v_lines else "3.1.0"
+            release_notes = "\n".join(v_lines[1:]).strip() if len(v_lines) > 1 else ""
 
-            # Check for Beta release information: 1. VERSION_BETA, 2. README.md, 3. Fallback
-            beta_v = None
-            beta_notes = "Latest experimental preview build with upcoming features."
+            is_newer = is_version_newer(remote_v, current_version)
 
-            if version_beta_txt:
-                b_lines = version_beta_txt.splitlines()
-                if b_lines and b_lines[0].strip():
-                    beta_v = b_lines[0].strip().replace('v', '')
-                    if len(b_lines) > 1 and "\n".join(b_lines[1:]).strip():
-                        beta_notes = "\n".join(b_lines[1:]).strip()
-
-            if not beta_v and readme_txt:
-                match = re.search(r"M59Companion_beta\.exe\s*\(([^\)]+)\)", readme_txt, re.IGNORECASE)
-                if match:
-                    beta_v = match.group(1).strip().replace('v', '')
-                else:
-                    match2 = re.search(r"-\s*\*\*.*Beta.*?\*\*:\s*\[.*?(v[\d\.\w\-]+).*?\]", readme_txt, re.IGNORECASE)
-                    if match2:
-                        beta_v = match2.group(1).strip().replace('v', '')
-
-            if not beta_v:
-                parts = stable_v.split('.')
-                if len(parts) >= 1:
-                    try:
-                        p_last = str(int(parts[-1]) + 1)
-                        beta_v = ".".join(parts[:-1] + [p_last]) + "-beta"
-                    except Exception:
-                        beta_v = f"{stable_v}-beta"
-                else:
-                    beta_v = f"{stable_v}-beta"
-
-            result["stable_version"] = stable_v
-            result["stable_notes"] = stable_notes or "Latest verified production release with stable features."
-            result["stable_exe_url"] = repo["stable_exe_url"]
-            result["stable_update_available"] = is_version_newer(stable_v, current_version)
-
-            result["beta_version"] = beta_v
-            result["beta_notes"] = beta_notes
-            result["beta_exe_url"] = repo["beta_exe_url"]
-            result["beta_update_available"] = is_version_newer(beta_v, current_version) or (
-                ('beta' in str(current_version).lower() or 'b' in str(current_version).lower()) and is_version_newer(beta_v, current_version)
-            )
+            result["latest_version"] = remote_v
+            result["release_notes"] = release_notes or "Latest verified release for Meridian 59 Companion."
+            result["exe_url"] = repo["exe_url"]
+            result["update_available"] = is_newer
             result["github_site"] = repo["github_site"]
+
+            # Aliases for backward compatibility
+            result["stable_version"] = remote_v
+            result["stable_notes"] = result["release_notes"]
+            result["stable_exe_url"] = repo["exe_url"]
+            result["stable_update_available"] = is_newer
+            result["beta_version"] = remote_v
+            result["beta_notes"] = result["release_notes"]
+            result["beta_exe_url"] = repo["exe_url"]
+            result["beta_update_available"] = False
+            
             fetched = True
             break
 
@@ -207,70 +169,62 @@ def check_all_releases(current_version=None):
 
     return result
 
-def check_for_updates(current_version):
-    """Legacy backward-compatible wrapper returning (update_available, remote_version, release_notes)"""
+def check_for_updates(current_version=None):
+    """Legacy wrapper returning (update_available, remote_version, release_notes)"""
     res = check_all_releases(current_version)
-    if res.get("stable_update_available"):
-        return True, res["stable_version"], res["stable_notes"]
-    elif res.get("beta_update_available"):
-        return True, res["beta_version"], res["beta_notes"]
-    return False, res.get("stable_version"), res.get("stable_notes")
+    return res.get("update_available", False), res.get("latest_version"), res.get("release_notes")
 
 def download_update(target_type=None, on_progress=None):
     """
-    Downloads the selected executable (stable or beta) with optional progress callback.
+    Downloads M59Companion.exe from the release repo with optional progress callback:
     on_progress(downloaded_bytes, total_bytes, percentage_float)
     """
     releases = check_all_releases()
-    if target_type is None:
-        if releases.get("stable_update_available"):
-            target_type = 'stable'
-        elif releases.get("beta_update_available"):
-            target_type = 'beta'
-        else:
-            target_type = 'stable'
-
-    url = releases.get("beta_exe_url") if target_type == 'beta' else releases.get("stable_exe_url")
-    
-    if not url:
-        url = REPO_URLS[0]["beta_exe_url"] if target_type == 'beta' else REPO_URLS[0]["stable_exe_url"]
+    url = releases.get("exe_url") or REPO_URLS[0]["exe_url"]
 
     temp_path = "M59Companion_update_temp.exe"
     
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) M59CompanionUpdater/1.0'}
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            total_size = resp.info().get('Content-Length')
-            total_size = int(total_size) if total_size else None
-            downloaded = 0
-            block_size = 64 * 1024  # 64KB chunks
+    # Try primary then fallback
+    urls_to_try = [url]
+    for r in REPO_URLS:
+        if r["exe_url"] not in urls_to_try:
+            urls_to_try.append(r["exe_url"])
 
-            with open(temp_path, "wb") as out_file:
-                while True:
-                    chunk = resp.read(block_size)
-                    if not chunk:
-                        break
-                    out_file.write(chunk)
-                    downloaded += len(chunk)
-                    if on_progress and total_size:
-                        pct = (downloaded / total_size) * 100.0
-                        on_progress(downloaded, total_size, pct)
+    for candidate_url in urls_to_try:
+        try:
+            print(f"[M59-UPDATER] Downloading update binary from: {candidate_url}", flush=True)
+            req = urllib.request.Request(
+                candidate_url,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) M59CompanionUpdater/3.0'}
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                total_size = resp.info().get('Content-Length')
+                total_size = int(total_size) if total_size else None
+                downloaded = 0
+                block_size = 64 * 1024  # 64KB chunks
 
-        if os.path.exists(temp_path) and os.path.getsize(temp_path) > 100000:
-            return temp_path
-        else:
-            return None
-    except Exception as ex:
-        print(f"[M59-UPDATER] Download failed: {ex}", flush=True)
-        if os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
-        return None
+                with open(temp_path, "wb") as out_file:
+                    while True:
+                        chunk = resp.read(block_size)
+                        if not chunk:
+                            break
+                        out_file.write(chunk)
+                        downloaded += len(chunk)
+                        if on_progress and total_size:
+                            pct = (downloaded / total_size) * 100.0
+                            on_progress(downloaded, total_size, pct)
+
+            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 100000:
+                return temp_path
+        except Exception as ex:
+            print(f"[M59-UPDATER] Download failed from {candidate_url}: {ex}", flush=True)
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+
+    return None
 
 def apply_update(new_exe_path):
     """
@@ -284,16 +238,12 @@ def apply_update(new_exe_path):
     current_exe = sys.executable
     
     # If running from source python (e.g. 'python.exe m59_dashboard.py'), target dist exe
-    if not current_exe.lower().endswith("m59companion.exe") and not current_exe.lower().endswith("m59companion_beta.exe"):
+    if not current_exe.lower().endswith("m59companion.exe"):
         dist_candidate = os.path.abspath("dist/M59Companion.exe")
         if os.path.exists(dist_candidate):
             current_exe = dist_candidate
         else:
-            dist_beta = os.path.abspath("dist/M59Companion_beta.exe")
-            if os.path.exists(dist_beta):
-                current_exe = dist_beta
-            else:
-                current_exe = os.path.abspath("M59Companion.exe")
+            current_exe = os.path.abspath("M59Companion.exe")
 
     current_exe = os.path.abspath(current_exe)
     new_exe_path = os.path.abspath(new_exe_path)
@@ -353,12 +303,11 @@ def open_browser(url=None):
     webbrowser.open(target)
 
 # ----------------------------------------------------------------------
-# Tkinter Dual-Channel Update Dialog (For Original Dashboard Compatibility)
+# Tkinter Update Dialog (Backward Compatibility)
 # ----------------------------------------------------------------------
 def show_tk_update_dialog(parent, release_data, on_close=None):
     """
-    Renders a Tkinter modal dialog with dual release selection (Stable vs Beta)
-    for backward compatibility with the original Tkinter dashboard.
+    Renders a Tkinter modal dialog for software updates.
     """
     try:
         import tkinter as tk
@@ -366,72 +315,34 @@ def show_tk_update_dialog(parent, release_data, on_close=None):
     except ImportError:
         return
 
+    cur_v = release_data.get('current_version', 'Unknown')
+    latest_v = release_data.get('latest_version') or release_data.get('stable_version', '3.1.0')
+    has_update = release_data.get('update_available', False)
+
+    if not has_update:
+        messagebox.showinfo("M59 Companion Update", f"You're already running the latest version (v{cur_v})!")
+        return
+
     top = tk.Toplevel(parent)
     top.title("M59 Companion - Software Update")
-    top.geometry("520x420")
+    top.geometry("500x360")
     top.configure(bg="#0b0f19")
     top.resizable(False, False)
     top.transient(parent)
     top.grab_set()
 
-    # Title & Subtitle
-    cur_v = release_data.get('current_version', 'Unknown')
-    lbl_title = tk.Label(top, text="Software Updates Available", font=("Segoe UI", 14, "bold"), fg="#f8fafc", bg="#0b0f19")
+    lbl_title = tk.Label(top, text="Software Update Available", font=("Segoe UI", 14, "bold"), fg="#f8fafc", bg="#0b0f19")
     lbl_title.pack(anchor="w", padx=20, pady=(15, 2))
-    lbl_cur = tk.Label(top, text=f"Current Installed Version: v{cur_v}", font=("Segoe UI", 10), fg="#60a5fa", bg="#0b0f19")
+    
+    lbl_cur = tk.Label(top, text=f"Current: v{cur_v}   ➜   New Version: v{latest_v}", font=("Segoe UI", 11, "bold"), fg="#34d399", bg="#0b0f19")
     lbl_cur.pack(anchor="w", padx=20, pady=(0, 10))
 
-    # Channel Selection Frame
-    choice_var = tk.StringVar()
-    stable_v = release_data.get('stable_version', '1.8.0')
-    beta_v = release_data.get('beta_version', '1.8.1-beta')
-    stable_avail = release_data.get('stable_update_available', False)
-    beta_avail = release_data.get('beta_update_available', False)
-
-    if 'beta' in str(cur_v).lower() and beta_avail:
-        choice_var.set("beta")
-    elif stable_avail:
-        choice_var.set("stable")
-    else:
-        choice_var.set("beta")
-
-    frame_cards = tk.Frame(top, bg="#0b0f19")
-    frame_cards.pack(fill="x", padx=20, pady=5)
-
-    # Stable Radio
-    f_s = tk.Frame(frame_cards, bg="#111827", highlightbackground="#1f2937", highlightthickness=1, padx=10, pady=8)
-    f_s.pack(fill="x", pady=4)
-    r_s = tk.Radiobutton(f_s, text=f"🌟 Stable Release — v{stable_v} {'(NEW)' if stable_avail else ''}",
-                         variable=choice_var, value="stable", font=("Segoe UI", 10, "bold"),
-                         fg="#34d399", bg="#111827", selectcolor="#065f46", activebackground="#111827", activeforeground="#34d399")
-    r_s.pack(anchor="w")
-    tk.Label(f_s, text="Recommended production build with maximum stability.", font=("Segoe UI", 9), fg="#94a3b8", bg="#111827").pack(anchor="w", padx=24)
-
-    # Beta Radio
-    f_b = tk.Frame(frame_cards, bg="#111827", highlightbackground="#1f2937", highlightthickness=1, padx=10, pady=8)
-    f_b.pack(fill="x", pady=4)
-    r_b = tk.Radiobutton(f_b, text=f"🧪 Beta Preview — v{beta_v} {'(NEW)' if beta_avail else ''}",
-                         variable=choice_var, value="beta", font=("Segoe UI", 10, "bold"),
-                         fg="#93c5fd", bg="#111827", selectcolor="#1e3a8a", activebackground="#111827", activeforeground="#93c5fd")
-    r_b.pack(anchor="w")
-    tk.Label(f_b, text="Experimental preview with upcoming features and fixes.", font=("Segoe UI", 9), fg="#94a3b8", bg="#111827").pack(anchor="w", padx=24)
-
     # Notes Display
-    tk.Label(top, text="Release Details:", font=("Segoe UI", 9, "bold"), fg="#94a3b8", bg="#0b0f19").pack(anchor="w", padx=20, pady=(8, 2))
-    notes_box = tk.Text(top, height=4, bg="#030712", fg="#cbd5e1", font=("Segoe UI", 9), wrap="word", relief="flat", highlightbackground="#1f2937", highlightthickness=1)
+    tk.Label(top, text="Release Details:", font=("Segoe UI", 9, "bold"), fg="#94a3b8", bg="#0b0f19").pack(anchor="w", padx=20, pady=(4, 2))
+    notes_box = tk.Text(top, height=5, bg="#030712", fg="#cbd5e1", font=("Segoe UI", 9), wrap="word", relief="flat", highlightbackground="#1f2937", highlightthickness=1)
     notes_box.pack(fill="x", padx=20, pady=(0, 8))
-
-    def update_notes():
-        notes_box.config(state="normal")
-        notes_box.delete("1.0", "end")
-        if choice_var.get() == "stable":
-            notes_box.insert("1.0", release_data.get('stable_notes') or "Stable release build.")
-        else:
-            notes_box.insert("1.0", release_data.get('beta_notes') or "Beta preview release build.")
-        notes_box.config(state="disabled")
-
-    choice_var.trace_add("write", lambda *args: update_notes())
-    update_notes()
+    notes_box.insert("1.0", release_data.get('release_notes') or "Latest release build.")
+    notes_box.config(state="disabled")
 
     # Progress & Status
     prog_lbl = tk.Label(top, text="", font=("Segoe UI", 9, "bold"), fg="#60a5fa", bg="#0b0f19")
@@ -443,15 +354,10 @@ def show_tk_update_dialog(parent, release_data, on_close=None):
     btn_frame.pack(fill="x", padx=20, pady=(6, 12), side="bottom")
 
     def start_tk_download():
-        target_ch = choice_var.get()
-        sel_ver = beta_v if target_ch == 'beta' else stable_v
-        
         btn_update.config(state="disabled")
         btn_cancel.config(state="disabled")
-        r_s.config(state="disabled")
-        r_b.config(state="disabled")
         prog_bar.pack(fill="x", padx=20, pady=(0, 4), before=btn_frame)
-        prog_lbl.config(text=f"Connecting to download {target_ch.upper()} v{sel_ver}...")
+        prog_lbl.config(text=f"Connecting to download M59Companion.exe v{latest_v}...")
 
         def _worker():
             def _prog(dl, tot, pct):
@@ -463,7 +369,7 @@ def show_tk_update_dialog(parent, release_data, on_close=None):
                 top.after(0, _up)
 
             try:
-                new_file = download_update(target_ch, on_progress=_prog)
+                new_file = download_update(on_progress=_prog)
                 if new_file and os.path.exists(new_file):
                     def _done():
                         prog_lbl.config(text="Download complete! Applying update...", fg="#34d399")
@@ -498,43 +404,49 @@ def show_tk_update_dialog(parent, release_data, on_close=None):
     btn_update.pack(side="right")
 
     tk.Button(btn_frame, text="🌐 GitHub", font=("Segoe UI", 9), bg="#111827", fg="#94a3b8", relief="flat", padx=10, pady=6,
-              command=lambda: open_browser()).pack(side="left")
-
+              command=lambda: open_browser(release_data.get('github_site'))).pack(side="left")
 
 # ----------------------------------------------------------------------
 # PySide6 / PyQt Fluid Update Dialog
 # ----------------------------------------------------------------------
 def show_qt_update_dialog(parent, release_data, auto_install=False):
     """
-    Renders a modern modal Qt dialog with dual release selection (Stable vs Beta).
+    Renders a modern modal Qt dialog for software updates.
     """
     try:
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-            QFrame, QProgressBar, QTextEdit, QRadioButton, QButtonGroup,
-            QApplication, QMessageBox
+            QFrame, QProgressBar, QTextEdit, QApplication, QMessageBox
         )
         from PySide6.QtCore import Qt, QThread, Signal
     except ImportError:
         try:
             from PyQt6.QtWidgets import (
                 QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-                QFrame, QProgressBar, QTextEdit, QRadioButton, QButtonGroup,
-                QApplication, QMessageBox
+                QFrame, QProgressBar, QTextEdit, QApplication, QMessageBox
             )
-            from PySide6.QtCore import Qt, QThread, pyqtSignal as Signal
+            from PyQt6.QtCore import Qt, QThread, pyqtSignal as Signal
         except ImportError:
             print("[M59-UPDATER] Qt libraries not available in current environment for dialog.", flush=True)
             return
+
+    cur_v = release_data.get('current_version', 'Unknown')
+    latest_v = release_data.get('latest_version') or release_data.get('stable_version', '3.1.0')
+    has_update = release_data.get('update_available', False)
+
+    # If invoked manually and already up to date, show an info box
+    if not has_update:
+        QMessageBox.information(
+            parent,
+            "Software Update",
+            f"🎉 You are running the latest version of Meridian 59 Companion!\n\nInstalled Version: v{cur_v}"
+        )
+        return
 
     class DownloadWorker(QThread):
         progress_signal = Signal(int, str)
         finished_signal = Signal(str)
         error_signal = Signal(str)
-
-        def __init__(self, target_type):
-            super().__init__()
-            self.target_type = target_type
 
         def run(self):
             def _prog(dl, total, pct):
@@ -543,7 +455,7 @@ def show_qt_update_dialog(parent, release_data, auto_install=False):
                 self.progress_signal.emit(int(pct), f"Downloading: {dl_mb:.1f} MB / {tot_mb:.1f} MB ({int(pct)}%)")
 
             try:
-                res_path = download_update(self.target_type, on_progress=_prog)
+                res_path = download_update(on_progress=_prog)
                 if res_path and os.path.exists(res_path):
                     self.finished_signal.emit(res_path)
                 else:
@@ -552,9 +464,9 @@ def show_qt_update_dialog(parent, release_data, auto_install=False):
                 self.error_signal.emit(str(e))
 
     dialog = QDialog(parent)
-    dialog.setWindowTitle("🚀 M59 Companion - Software Update Center")
-    dialog.setMinimumWidth(560)
-    dialog.setMinimumHeight(440)
+    dialog.setWindowTitle("🚀 M59 Companion - Software Update")
+    dialog.setMinimumWidth(520)
+    dialog.setMinimumHeight(380)
     dialog.setStyleSheet("""
         QDialog {
             background-color: #0b0f19;
@@ -565,17 +477,14 @@ def show_qt_update_dialog(parent, release_data, auto_install=False):
             background-color: #111827;
             border: 1px solid #1f2937;
             border-radius: 8px;
-            padding: 12px;
-        }
-        QFrame.ReleaseCard:hover {
-            border: 1px solid #3b82f6;
+            padding: 14px;
         }
         QPushButton.UpdateBtn {
             background-color: #2563eb;
             color: #ffffff;
             font-weight: 700;
             font-size: 13px;
-            padding: 10px 18px;
+            padding: 10px 20px;
             border-radius: 6px;
             border: none;
         }
@@ -602,129 +511,56 @@ def show_qt_update_dialog(parent, release_data, auto_install=False):
             text-align: center;
             color: #ffffff;
             font-weight: bold;
-            height: 20px;
+            height: 22px;
         }
         QProgressBar::chunk {
             background-color: #3b82f6;
             border-radius: 5px;
         }
-        QRadioButton {
-            color: #f1f5f9;
-            font-size: 13px;
-            font-weight: 700;
-            spacing: 8px;
-        }
-        QRadioButton::indicator {
-            width: 16px;
-            height: 16px;
-        }
     """)
 
     layout = QVBoxLayout(dialog)
-    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setContentsMargins(22, 22, 22, 22)
     layout.setSpacing(14)
 
     # Title & Subtitle Header
     header_layout = QVBoxLayout()
-    title_lbl = QLabel("Software Updates Available")
-    title_lbl.setStyleSheet("font-size: 18px; font-weight: 800; color: #f8fafc;")
-    cur_v = release_data.get('current_version', 'Unknown')
-    sub_lbl = QLabel(f"Current Installed Version:  <span style='color: #60a5fa; font-weight: 700;'>v{cur_v}</span>")
-    sub_lbl.setStyleSheet("font-size: 13px; color: #94a3b8;")
+    title_lbl = QLabel("✨ New Update Available")
+    title_lbl.setStyleSheet("font-size: 19px; font-weight: 800; color: #f8fafc;")
+    
+    sub_lbl = QLabel(f"Current Version: <span style='color: #94a3b8;'>v{cur_v}</span> &nbsp;&nbsp;➜&nbsp;&nbsp; Latest Version: <span style='color: #34d399; font-weight: 800;'>v{latest_v}</span>")
+    sub_lbl.setStyleSheet("font-size: 13px; color: #f1f5f9;")
     header_layout.addWidget(title_lbl)
     header_layout.addWidget(sub_lbl)
     layout.addLayout(header_layout)
 
-    # Release Channel Selection Box
-    btn_group = QButtonGroup(dialog)
+    # Release Card
+    rel_card = QFrame()
+    rel_card.setProperty("class", "ReleaseCard")
+    rc_layout = QVBoxLayout(rel_card)
+    rc_layout.setContentsMargins(12, 12, 12, 12)
+    rc_layout.setSpacing(8)
 
-    # 1. Stable Card
-    stable_card = QFrame()
-    stable_card.setProperty("class", "ReleaseCard")
-    sc_layout = QVBoxLayout(stable_card)
-    sc_layout.setContentsMargins(12, 12, 12, 12)
-    sc_layout.setSpacing(6)
-
-    stable_v = release_data.get('stable_version', '1.8.0')
-    stable_avail = release_data.get('stable_update_available', False)
-    badge_s = "<span style='background-color: #065f46; color: #34d399; font-size: 11px; padding: 2px 6px; border-radius: 4px;'>NEW</span>" if stable_avail else "<span style='color: #64748b; font-size: 11px;'>(Current)</span>"
-
-    radio_stable = QRadioButton(f"🌟 Stable Release Channel — v{stable_v}")
-    sc_header = QHBoxLayout()
-    sc_header.addWidget(radio_stable)
-    sc_header.addWidget(QLabel(badge_s))
-    sc_header.addStretch()
-    sc_layout.addLayout(sc_header)
-
-    s_desc = QLabel("Recommended for all players. Thoroughly tested production build with maximum stability.")
-    s_desc.setStyleSheet("font-size: 11px; color: #94a3b8; margin-left: 24px;")
-    s_desc.setWordWrap(True)
-    sc_layout.addWidget(s_desc)
-    btn_group.addButton(radio_stable, 1)
-    layout.addWidget(stable_card)
-
-    # 2. Beta Card
-    beta_card = QFrame()
-    beta_card.setProperty("class", "ReleaseCard")
-    bc_layout = QVBoxLayout(beta_card)
-    bc_layout.setContentsMargins(12, 12, 12, 12)
-    bc_layout.setSpacing(6)
-
-    beta_v = release_data.get('beta_version', '1.8.1-beta')
-    beta_avail = release_data.get('beta_update_available', False)
-    badge_b = "<span style='background-color: #1e3a8a; color: #93c5fd; font-size: 11px; padding: 2px 6px; border-radius: 4px;'>BETA</span>" if beta_avail else "<span style='color: #64748b; font-size: 11px;'>(Preview)</span>"
-
-    radio_beta = QRadioButton(f"🧪 Beta Preview Channel — v{beta_v}")
-    bc_header = QHBoxLayout()
-    bc_header.addWidget(radio_beta)
-    bc_header.addWidget(QLabel(badge_b))
-    bc_header.addStretch()
-    bc_layout.addLayout(bc_header)
-
-    b_desc = QLabel("Contains cutting-edge features, new experimental UI overlays, and recent fixes before official release.")
-    b_desc.setStyleSheet("font-size: 11px; color: #94a3b8; margin-left: 24px;")
-    b_desc.setWordWrap(True)
-    bc_layout.addWidget(b_desc)
-    btn_group.addButton(radio_beta, 2)
-    layout.addWidget(beta_card)
-
-    # Pre-select based on update priority or user's current version
-    if 'beta' in cur_v.lower() and beta_avail:
-        radio_beta.setChecked(True)
-    elif stable_avail:
-        radio_stable.setChecked(True)
-    else:
-        radio_beta.setChecked(True)
-
-    # Release Notes / Details Box
-    notes_lbl = QLabel("Release Notes:")
-    notes_lbl.setStyleSheet("font-size: 12px; font-weight: 700; color: #94a3b8; margin-top: 4px;")
-    layout.addWidget(notes_lbl)
+    card_hdr = QLabel("Release Notes:")
+    card_hdr.setStyleSheet("font-size: 12px; font-weight: 700; color: #94a3b8;")
+    rc_layout.addWidget(card_hdr)
 
     notes_edit = QTextEdit()
     notes_edit.setReadOnly(True)
-    notes_edit.setFixedHeight(70)
+    notes_edit.setFixedHeight(90)
     notes_edit.setStyleSheet("""
         QTextEdit {
             background-color: #030712;
             border: 1px solid #1f2937;
             border-radius: 6px;
             color: #cbd5e1;
-            font-size: 11px;
-            padding: 6px;
+            font-size: 12px;
+            padding: 8px;
         }
     """)
-    
-    def update_notes_display():
-        if radio_stable.isChecked():
-            notes_edit.setText(release_data.get('stable_notes') or "Stable channel build. Includes all verified updates.")
-        else:
-            notes_edit.setText(release_data.get('beta_notes') or "Beta channel preview. Includes latest features and fixes.")
-
-    radio_stable.toggled.connect(update_notes_display)
-    radio_beta.toggled.connect(update_notes_display)
-    update_notes_display()
-    layout.addWidget(notes_edit)
+    notes_edit.setText(release_data.get('release_notes') or "Latest release build for Meridian 59 Companion.")
+    rc_layout.addWidget(notes_edit)
+    layout.addWidget(rel_card)
 
     # Progress Bar (Hidden by default)
     progress_bar = QProgressBar()
@@ -742,7 +578,7 @@ def show_qt_update_dialog(parent, release_data, auto_install=False):
     action_box = QHBoxLayout()
     action_box.setSpacing(10)
 
-    web_btn = QPushButton("🌐 View on GitHub")
+    web_btn = QPushButton("🌐 GitHub")
     web_btn.setProperty("class", "CancelBtn")
     web_btn.clicked.connect(lambda: open_browser(release_data.get('github_site')))
     action_box.addWidget(web_btn)
@@ -757,18 +593,13 @@ def show_qt_update_dialog(parent, release_data, auto_install=False):
     install_btn.setProperty("class", "UpdateBtn")
     
     def start_download():
-        target_channel = 'beta' if radio_beta.isChecked() else 'stable'
-        selected_version = beta_v if target_channel == 'beta' else stable_v
-        
         install_btn.setEnabled(False)
         cancel_btn.setEnabled(False)
-        radio_stable.setEnabled(False)
-        radio_beta.setEnabled(False)
         progress_bar.setVisible(True)
         status_lbl.setVisible(True)
-        status_lbl.setText(f"Connecting to download {target_channel.upper()} v{selected_version}...")
+        status_lbl.setText(f"Connecting to download M59Companion.exe v{latest_v}...")
 
-        dialog.worker = DownloadWorker(target_channel)
+        dialog.worker = DownloadWorker()
         
         def on_prog(pct, msg):
             progress_bar.setValue(pct)
@@ -788,8 +619,6 @@ def show_qt_update_dialog(parent, release_data, auto_install=False):
             status_lbl.setText(f"Error: {err_msg}")
             install_btn.setEnabled(True)
             cancel_btn.setEnabled(True)
-            radio_stable.setEnabled(True)
-            radio_beta.setEnabled(True)
 
         dialog.worker.progress_signal.connect(on_prog)
         dialog.worker.finished_signal.connect(on_done)
@@ -803,8 +632,8 @@ def show_qt_update_dialog(parent, release_data, auto_install=False):
     dialog.exec()
 
 if __name__ == "__main__":
-    print("Testing Meridian 59 Companion Dual Release Checker...")
-    data = check_all_releases("1.8.0")
+    print("Testing Meridian 59 Companion Release Checker...")
+    data = check_all_releases("3.0.0")
     print(f"Current: {data['current_version']}")
-    print(f"Stable Remote: {data['stable_version']} (Update available: {data['stable_update_available']})")
-    print(f"Beta Remote: {data['beta_version']} (Update available: {data['beta_update_available']})")
+    print(f"Latest Remote: {data['latest_version']} (Update available: {data['update_available']})")
+    print(f"Download URL: {data['exe_url']}")

@@ -1,32 +1,33 @@
-# Meridian 59 Companion
+# Meridian 59 Companion v3.0
 
-A modern Qt companion dashboard for Meridian 59 featuring real-time chat overlays, quick macros, kill/vault trackers, map viewers, spell calculators, and in-game alerts.
-
----
-
-### 📥 Downloads & Releases
-
-- **🌟 Stable Release**: [Download M59Companion.exe (v3.1.0)](https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion.exe)
-- **🧪 Beta Preview**: [Download M59Companion_beta.exe (Beta Build)](https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion_beta.exe)
+A modern PySide6/Qt companion dashboard for Meridian 59 featuring real-time client overlay controls, automated map pathfinding & room detection, combat analytics, inventory & vault logging, and spell calculators.
 
 ---
 
-### 🚀 Key Features
-- **In-Game Overlay Anchoring**: Floating macros, teleport buttons, and floating chatbox attached to the Meridian 59 game client.
-- **PK / PvP Red Alert Box**: Flashes an in-game red boundary indicator during attacks or PK alerts.
-- **Real-Time GPS & Map Viewer**: Room detection, pathfinding, and interactive world map.
-- **Inventory & Vault Manager**: Comprehensive vault, bank, and inventory item logs.
-- **Spell & Combat Analytics**: Combat logs, spellbook calculator, and stats analyzer.
+### 📥 Direct Download
+
+- **🚀 Latest Release**: [Download M59Companion.exe (v3.1.1)](https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion.exe)
 
 ---
 
-### 🛠️ Building & Releasing
-Run the integrated pipeline promoter:
+### ✨ Key Features
+
+- **In-Game Client Overlay**: Attached macro bar, teleport buttons, and floating client overlays.
+- **PK / PvP Danger Indicator**: Visual boundary flash and audio alerts during PvP attacks or player threats.
+- **Interactive Map & GPS**: Real-time room detection, pathfinding routes, and interactive world map.
+- **Inventory, Vault & Bank Tracker**: Complete item tracking, vault storage logs, and bank balance history.
+- **Combat & Spell Analyzer**: Live combat metrics, spellbook calculator, and stats analyzer.
+
+---
+
+### 🛠️ Build & Development
+
+Run the release promoter script to compile and push updates:
 ```bash
 python release_promoter.py
 ```
 Options available:
-1. **Promote New Release (Build & Tag)**: Builds `M59Companion.exe` and tags the official release.
-2. **Build & Publish Beta Release (_beta.exe)**: Compiles `M59Companion_beta.exe`, updates download links in `README.md`, and pushes without overriding stable tags.
-3. **Quick Sync**: Syncs code without triggering a binary build.
-4. **Restore Version**: Reverts files to any historical release tag.
+1. **Promote New Release**: Compiles `M59Companion.exe`, generates metadata, updates `README.md`, and tags the release on GitHub.
+2. **Quick Sync**: Syncs code updates directly without triggering a binary build.
+3. **Restore Version**: Reverts working directory to a previous release tag.
+

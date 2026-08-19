@@ -7048,27 +7048,24 @@ class M59CompanionApp(QMainWindow):
         uc_layout.setSpacing(12)
 
         u_hdr = QHBoxLayout()
-        u_title = QLabel("🚀 Software Updates & Release Channels")
+        u_title = QLabel("🚀 Software Updates")
         u_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #94a3b8;")
         u_hdr.addWidget(u_title)
         u_hdr.addStretch()
 
-        is_beta_cur = 'beta' in str(self.version).lower()
-        badge_style = "background-color: #1e3a8a; color: #93c5fd;" if is_beta_cur else "background-color: #065f46; color: #34d399;"
-        channel_name = "BETA CHANNEL" if is_beta_cur else "STABLE CHANNEL"
-        v_badge = QLabel(f"  {channel_name} • v{self.version}  ")
-        v_badge.setStyleSheet(f"{badge_style} font-weight: 800; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
+        v_badge = QLabel(f"  v{self.version}  ")
+        v_badge.setStyleSheet("background-color: #065f46; color: #34d399; font-weight: 800; font-size: 11px; padding: 4px 8px; border-radius: 6px;")
         u_hdr.addWidget(v_badge)
         uc_layout.addLayout(u_hdr)
 
-        u_desc = QLabel("Check GitHub for the latest verified stable releases or preview cutting-edge experimental Beta builds.")
+        u_desc = QLabel("Check GitHub for the latest releases, performance improvements, and feature updates.")
         u_desc.setStyleSheet("font-size: 12px; color: #64748b;")
         uc_layout.addWidget(u_desc)
 
         u_btn_row = QHBoxLayout()
         u_btn_row.setSpacing(10)
 
-        check_upd_btn = QPushButton("🔄 Check for Updates (Stable & Beta)")
+        check_upd_btn = QPushButton("🔄 Check for Updates")
         check_upd_btn.setProperty("class", "WebBtnPrimary")
         check_upd_btn.clicked.connect(self.trigger_manual_update_check)
         u_btn_row.addWidget(check_upd_btn)
@@ -7088,23 +7085,23 @@ class M59CompanionApp(QMainWindow):
         return scroll
 
     def start_background_update_check(self):
-        """Starts background thread to detect latest stable & beta releases from GitHub."""
+        """Starts background thread to detect latest releases from GitHub."""
         def _check():
             try:
                 time.sleep(2)
                 res = check_all_releases(self.version)
-                if res.get("stable_update_available") or res.get("beta_update_available"):
+                if res.get("update_available") or res.get("stable_update_available"):
                     self.signals.update_detected.emit(res)
             except Exception as ex:
                 print(f"[M59-UPDATER] Background check error: {ex}", flush=True)
         threading.Thread(target=_check, daemon=True).start()
 
     def on_update_detected(self, release_data):
-        """Displays Qt update dialog with dual Stable/Beta selection."""
+        """Displays Qt update dialog when an update is detected."""
         show_qt_update_dialog(self, release_data)
 
     def trigger_manual_update_check(self):
-        """Manually checks for both stable and beta releases, opening the update dialog or informing user."""
+        """Manually checks for releases, opening the update dialog or informing user."""
         def _run():
             res = check_all_releases(self.version)
             def _ui():
