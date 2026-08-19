@@ -6,8 +6,8 @@ A modern Qt companion dashboard for Meridian 59 featuring real-time chat overlay
 
 ### 📥 Downloads & Releases
 
-- **🌟 Stable Release**: [Download M59Companion.exe (Latest)](https://github.com/subvhome/m59-companion/raw/main/dist/M59Companion.exe)
-- **🧪 Beta Preview**: [Download M59Companion_beta.exe (v3.0.7b)](https://github.com/subvhome/m59-companion/raw/main/dist/M59Companion_beta.exe)
+- **🌟 Stable Release**: [Download M59Companion.exe (v3.1.0)](https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion.exe)
+- **🧪 Beta Preview**: [Download M59Companion_beta.exe (Beta Build)](https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion_beta.exe)
 
 ---
 
