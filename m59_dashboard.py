@@ -3844,6 +3844,7 @@ class M59CompanionApp(QMainWindow):
         self.restore_window_position_and_size()
         self.update_bank_ui()
         self.load_kill_book()
+        self.load_vault_cache()
 
         # Default to Dashboard
         self.nav_list.setCurrentRow(0)
@@ -5760,21 +5761,60 @@ class M59CompanionApp(QMainWindow):
             else:
                 status_lbl.setText("No scan data")
 
+    def save_vault_cache_file(self, vt, items, last_scan_str):
+        """Saves vault configuration and item state to disk for current character."""
+        cname = self.char_name if self.char_name and self.char_name != "--" else "Unknown"
+        sn = get_safe_name(cname)
+        now_str = last_scan_str if last_scan_str else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        save_data = {
+            "timestamp": time.time(),
+            "last_scan": now_str,
+            "items": items if items is not None else []
+        }
+        for folder in ["settings", "logs"]:
+            os.makedirs(folder, exist_ok=True)
+            save_path = os.path.join(folder, f"{sn}_vault_{vt}.json")
+            try:
+                with open(save_path, "w", encoding="utf-8") as f:
+                    json.dump(save_data, f, indent=4)
+            except Exception as ex:
+                print(f"[M59-VAULT] Failed saving vault file to {save_path}: {ex}", flush=True)
+
     def load_vault_cache(self):
-        """Loads persistent vault inventory save files for current character."""
-        if not self.char_name or self.char_name == "--":
-            return
-        sn = get_safe_name(self.char_name)
+        """Loads persistent vault inventory save files for current character or latest cached file."""
+        cname = self.char_name if self.char_name and self.char_name != "--" else ""
+        sn = get_safe_name(cname) if cname else ""
+
         for vt in ["barloque", "hungry"]:
             loaded = False
-            paths = [
-                f"settings/{sn}_vault_{vt}.json",
-                f"logs/{sn}_vault_{vt}.json"
-            ]
+            paths = []
+            if sn:
+                paths.extend([
+                    f"settings/{sn}_vault_{vt}.json",
+                    f"logs/{sn}_vault_{vt}.json",
+                    f"settings/{sn.lower()}_vault_{vt}.json",
+                    f"logs/{sn.lower()}_vault_{vt}.json"
+                ])
+            paths.extend([
+                f"settings/unknown_vault_{vt}.json",
+                f"logs/unknown_vault_{vt}.json"
+            ])
+            # Search settings/ and logs/ for any existing vault file if character not identified yet
+            for folder in ["settings", "logs"]:
+                if os.path.exists(folder):
+                    try:
+                        for fn in sorted(os.listdir(folder), key=lambda x: os.path.getmtime(os.path.join(folder, x)), reverse=True):
+                            if fn.endswith(f"_vault_{vt}.json"):
+                                fp = os.path.join(folder, fn)
+                                if fp not in paths:
+                                    paths.append(fp)
+                    except Exception:
+                        pass
+
             for p in paths:
                 if os.path.exists(p):
                     try:
-                        with open(p, "r") as f:
+                        with open(p, "r", encoding="utf-8", errors="ignore") as f:
                             d = json.load(f)
                             items = d.get("items", [])
                             last_scan = d.get("last_scan") or d.get("timestamp")
@@ -5786,9 +5826,12 @@ class M59CompanionApp(QMainWindow):
                             self.vault_last_scan[vt] = last_scan
                             self.update_vault_table(vt)
                             loaded = True
+                            if sn and "unknown_vault_" in p and sn != "unknown":
+                                self.save_vault_cache_file(vt, items, last_scan)
                             break
                     except Exception as ex:
                         print(f"[M59-VAULT] Failed loading vault cache from {p}: {ex}", flush=True)
+
             if not loaded:
                 self.vault_data[vt] = []
                 self.vault_last_scan[vt] = "No scan data"
@@ -5831,9 +5874,14 @@ class M59CompanionApp(QMainWindow):
         for group in [getattr(self, 'vault_widgets', {}), getattr(self, 'vault_page_widgets', {})]:
             if vt in group:
                 group[vt]["btn"].setEnabled(True)
-        if inv is not None:
+        if inv is not None and len(inv) > 0:
             self.vault_data[vt] = inv
             self.vault_last_scan[vt] = last_scan_str
+            self.save_vault_cache_file(vt, inv, last_scan_str)
+        elif inv is not None and "Scan failed" not in last_scan_str and "Scan error" not in last_scan_str:
+            self.vault_data[vt] = inv
+            self.vault_last_scan[vt] = last_scan_str
+            self.save_vault_cache_file(vt, inv, last_scan_str)
         self.update_vault_table(vt)
 
     # ==================================================================
@@ -7048,6 +7096,11 @@ class M59CompanionApp(QMainWindow):
         u_desc.setStyleSheet("font-size: 12px; color: #64748b;")
         uc_layout.addWidget(u_desc)
 
+        u_notice = QLabel("⚠️ <b>Setup Note:</b> Ensure M59 Companion runs inside its own dedicated folder (e.g., <code>C:\\M59Companion\\</code>) so settings and logs persist properly.")
+        u_notice.setWordWrap(True)
+        u_notice.setStyleSheet("font-size: 11px; color: #c7d2fe; background-color: #1e1b4b; border: 1px solid #4338ca; border-radius: 6px; padding: 8px 10px;")
+        uc_layout.addWidget(u_notice)
+
         u_btn_row = QHBoxLayout()
         u_btn_row.setSpacing(10)
 
@@ -7056,7 +7109,13 @@ class M59CompanionApp(QMainWindow):
         check_upd_btn.clicked.connect(self.trigger_manual_update_check)
         u_btn_row.addWidget(check_upd_btn)
 
-        gh_btn = QPushButton("🌐 Open Releases on GitHub")
+        exe_upd_btn = QPushButton("🌐 Download Raw EXE")
+        exe_upd_btn.setProperty("class", "WebBtnSecondary")
+        exe_upd_btn.setToolTip("Opens your browser directly to download M59Companion.exe")
+        exe_upd_btn.clicked.connect(lambda: m59_updater.open_browser(m59_updater.REPO_URLS[0]["exe_url"]))
+        u_btn_row.addWidget(exe_upd_btn)
+
+        gh_btn = QPushButton("🌐 Open GitHub Repo")
         gh_btn.setProperty("class", "WebBtnSecondary")
         gh_btn.clicked.connect(lambda: m59_updater.open_browser())
         u_btn_row.addWidget(gh_btn)

@@ -1629,6 +1629,34 @@
           "type": "tell",
           "text": "i think  my issue is with the parrleles desktop.    where you ill give ya key",
           "raw": "Markandeya tells you, \" i think  my issue is with the parrleles desktop.    where you ill give ya key \""
+        },
+        {
+          "ts": "11:23:47",
+          "direction": "in",
+          "type": "tell",
+          "text": "just go to limping toad or   the aires geust house an  say rent room   you have  to have 5 k on you",
+          "raw": "Markandeya tells you, \"just go to limping toad or   the aires geust house an  say rent room   you have  to have 5 k on you\""
+        },
+        {
+          "ts": "11:24:13",
+          "direction": "in",
+          "type": "tell",
+          "text": "but the room wont have a personal chest . ya have to buy that separte",
+          "raw": "Markandeya tells you, \" but the room wont have a personal chest . ya have to buy that separte\""
+        },
+        {
+          "ts": "11:25:16",
+          "direction": "out",
+          "type": "tell",
+          "text": "oh thats easy i never tried that",
+          "raw": "You tell Markandeya, \"oh thats easy i never tried that\""
+        },
+        {
+          "ts": "11:27:00",
+          "direction": "in",
+          "type": "tell",
+          "text": "there  is another posibity  the room has a attendent that is notorius hard to navagte  may be you can fix  that  its brutal",
+          "raw": "Markandeya tells you, \"there  is another posibity  the room has a attendent that is notorius hard to navagte  may be you can fix  that  its brutal\""
         }
       ]
     },

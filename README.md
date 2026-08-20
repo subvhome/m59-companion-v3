@@ -6,7 +6,7 @@ A modern PySide6/Qt companion dashboard for Meridian 59 featuring real-time clie
 
 ### 📥 Direct Download
 
-- **🚀 Latest Release**: [Download M59Companion.exe (v3.1.2)](https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion.exe)
+- **🚀 Latest Release**: [Download M59Companion.exe (v3.1.3)](https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion.exe)
 
 ---
 
