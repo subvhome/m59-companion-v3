@@ -86,6 +86,104 @@
           "type": "tell",
           "text": "DOOM, \"DOOM tet",
           "raw": "You tell MF DOOM, \"DOOM tet\""
+        },
+        {
+          "ts": "13:06:22",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"test",
+          "raw": "You tell MF DOOM, \"test\""
+        },
+        {
+          "ts": "23:56:49",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"test",
+          "raw": "You tell MF DOOM, \"test\""
+        },
+        {
+          "ts": "23:08:39",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"DOOM test",
+          "raw": "You tell MF DOOM, \"DOOM test\""
+        },
+        {
+          "ts": "23:30:21",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"DOOM test",
+          "raw": "You tell MF DOOM, \"DOOM test\""
+        },
+        {
+          "ts": "23:52:32",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \" test",
+          "raw": "You tell MF DOOM, \" test\""
+        },
+        {
+          "ts": "23:54:15",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"DOOM tet",
+          "raw": "You tell MF DOOM, \"DOOM tet\""
+        },
+        {
+          "ts": "13:06:22",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"test",
+          "raw": "You tell MF DOOM, \"test\""
+        },
+        {
+          "ts": "23:56:49",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"test",
+          "raw": "You tell MF DOOM, \"test\""
+        },
+        {
+          "ts": "23:08:39",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"DOOM test",
+          "raw": "You tell MF DOOM, \"DOOM test\""
+        },
+        {
+          "ts": "23:30:21",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"DOOM test",
+          "raw": "You tell MF DOOM, \"DOOM test\""
+        },
+        {
+          "ts": "23:52:32",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \" test",
+          "raw": "You tell MF DOOM, \" test\""
+        },
+        {
+          "ts": "23:54:15",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \"DOOM tet",
+          "raw": "You tell MF DOOM, \"DOOM tet\""
+        },
+        {
+          "ts": "11:14:16",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \" test",
+          "raw": "You tell MF DOOM, \" test\""
+        },
+        {
+          "ts": "11:14:35",
+          "direction": "out",
+          "type": "tell",
+          "text": "DOOM, \" test",
+          "raw": "You tell MF DOOM, \" test\""
         }
       ]
     },
@@ -154,6 +252,118 @@
           "type": "tell",
           "text": "DOOM tet",
           "raw": "MF DOOM tells you, \"DOOM tet\""
+        },
+        {
+          "ts": "13:06:22",
+          "direction": "in",
+          "type": "tell",
+          "text": "test",
+          "raw": "MF DOOM tells you, \"test\""
+        },
+        {
+          "ts": "23:56:49",
+          "direction": "in",
+          "type": "tell",
+          "text": "test",
+          "raw": "MF DOOM tells you, \"test\""
+        },
+        {
+          "ts": "23:08:39",
+          "direction": "in",
+          "type": "tell",
+          "text": "DOOM test",
+          "raw": "MF DOOM tells you, \"DOOM test\""
+        },
+        {
+          "ts": "23:30:21",
+          "direction": "in",
+          "type": "tell",
+          "text": "DOOM test",
+          "raw": "MF DOOM tells you, \"DOOM test\""
+        },
+        {
+          "ts": "23:52:32",
+          "direction": "in",
+          "type": "tell",
+          "text": "test",
+          "raw": "MF DOOM tells you, \" test\""
+        },
+        {
+          "ts": "23:54:15",
+          "direction": "in",
+          "type": "tell",
+          "text": "DOOM tet",
+          "raw": "MF DOOM tells you, \"DOOM tet\""
+        },
+        {
+          "ts": "13:06:22",
+          "direction": "in",
+          "type": "tell",
+          "text": "test",
+          "raw": "MF DOOM tells you, \"test\""
+        },
+        {
+          "ts": "23:56:49",
+          "direction": "in",
+          "type": "tell",
+          "text": "test",
+          "raw": "MF DOOM tells you, \"test\""
+        },
+        {
+          "ts": "23:08:39",
+          "direction": "in",
+          "type": "tell",
+          "text": "DOOM test",
+          "raw": "MF DOOM tells you, \"DOOM test\""
+        },
+        {
+          "ts": "23:30:21",
+          "direction": "in",
+          "type": "tell",
+          "text": "DOOM test",
+          "raw": "MF DOOM tells you, \"DOOM test\""
+        },
+        {
+          "ts": "23:52:32",
+          "direction": "in",
+          "type": "tell",
+          "text": "test",
+          "raw": "MF DOOM tells you, \" test\""
+        },
+        {
+          "ts": "23:54:15",
+          "direction": "in",
+          "type": "tell",
+          "text": "DOOM tet",
+          "raw": "MF DOOM tells you, \"DOOM tet\""
+        },
+        {
+          "ts": "11:14:16",
+          "direction": "out",
+          "type": "tell",
+          "text": "test",
+          "raw": "You tell MF DOOM, 'test'"
+        },
+        {
+          "ts": "11:14:16",
+          "direction": "in",
+          "type": "tell",
+          "text": "test",
+          "raw": "MF DOOM tells you, \" test\""
+        },
+        {
+          "ts": "11:14:34",
+          "direction": "out",
+          "type": "tell",
+          "text": "test",
+          "raw": "You tell MF DOOM, 'test'"
+        },
+        {
+          "ts": "11:14:35",
+          "direction": "in",
+          "type": "tell",
+          "text": "test",
+          "raw": "MF DOOM tells you, \" test\""
         }
       ]
     },
@@ -320,6 +530,1766 @@
           "type": "tell",
           "text": "how do i filter in floating box",
           "raw": "Markandeya tells you, \" how do i filter in floating box\""
+        },
+        {
+          "ts": "17:13:47",
+          "direction": "in",
+          "type": "tell",
+          "text": "sup  Homey",
+          "raw": "Markandeya tells you, \"  sup  Homey\""
+        },
+        {
+          "ts": "17:13:53",
+          "direction": "out",
+          "type": "tell",
+          "text": "hows it going",
+          "raw": "You tell Markandeya, \"hows it going\""
+        },
+        {
+          "ts": "17:14:23",
+          "direction": "in",
+          "type": "tell",
+          "text": "have ellusion now   kina fun",
+          "raw": "Markandeya tells you, \"have ellusion now   kina fun\""
+        },
+        {
+          "ts": "17:15:19",
+          "direction": "out",
+          "type": "tell",
+          "text": "that sounds dope.. i havent built at all.. between my son and building the app.. im just at the same level i was since i started building this thing",
+          "raw": "You tell Markandeya, \"that sounds dope.. i havent built at all.. between my son and building the app.. im just at the same level i was since i started building this thing\""
+        },
+        {
+          "ts": "17:15:54",
+          "direction": "out",
+          "type": "tell",
+          "text": "i come in ... i check frisconar.. the crate... build a bit of the app then log out",
+          "raw": "You tell Markandeya, \"i come in ... i check frisconar.. the crate... build a bit of the app then log out\""
+        },
+        {
+          "ts": "17:16:23",
+          "direction": "in",
+          "type": "tell",
+          "text": "why friscoanrs?",
+          "raw": "Markandeya tells you, \"why friscoanrs?\""
+        },
+        {
+          "ts": "17:16:36",
+          "direction": "out",
+          "type": "tell",
+          "text": "what you think about game map unlock and annotations?",
+          "raw": "You tell Markandeya, \"what you think about game map unlock and annotations?\""
+        },
+        {
+          "ts": "17:16:53",
+          "direction": "out",
+          "type": "tell",
+          "text": "frisc gave me 2 roses... but i lost em all when i got pked.. hence this app",
+          "raw": "You tell Markandeya, \"frisc gave me 2 roses... but i lost em all when i got pked.. hence this app\""
+        },
+        {
+          "ts": "17:17:39",
+          "direction": "in",
+          "type": "tell",
+          "text": "i have to get new version    today   how do you get a rose out of  frisconar?",
+          "raw": "Markandeya tells you, \"i have to get new version    today   how do you get a rose out of  frisconar?\""
+        },
+        {
+          "ts": "17:18:03",
+          "direction": "out",
+          "type": "tell",
+          "text": "he asked me to get the fungus disease thing and he gave me one!",
+          "raw": "You tell Markandeya, \"he asked me to get the fungus disease thing and he gave me one!\""
+        },
+        {
+          "ts": "17:21:26",
+          "direction": "in",
+          "type": "tell",
+          "text": "what? ya hang around friscaonrs and he ask you  for something>",
+          "raw": "Markandeya tells you, \" what? ya hang around friscaonrs and he ask you  for something>\""
+        },
+        {
+          "ts": "17:22:49",
+          "direction": "in",
+          "type": "tell",
+          "text": "alot better in frisconars  thats what iom doing now",
+          "raw": "Markandeya tells you, \" alot better in frisconars  thats what iom doing now\""
+        },
+        {
+          "ts": "17:23:46",
+          "direction": "out",
+          "type": "tell",
+          "text": "yea you just walk in and he tells you hes not feeling well",
+          "raw": "You tell Markandeya, \"yea you just walk in and he tells you hes not feeling well\""
+        },
+        {
+          "ts": "17:24:15",
+          "direction": "out",
+          "type": "tell",
+          "text": "then you a little errand to talk to 2 people then you return a vile of coke back to friconar and hes good",
+          "raw": "You tell Markandeya, \"then you a little errand to talk to 2 people then you return a vile of coke back to friconar and hes good\""
+        },
+        {
+          "ts": "17:24:41",
+          "direction": "out",
+          "type": "tell",
+          "text": "its actually a vile of sacchaqua potion.. which is a white vile",
+          "raw": "You tell Markandeya, \"its actually a vile of sacchaqua potion.. which is a white vile\""
+        },
+        {
+          "ts": "17:25:04",
+          "direction": "in",
+          "type": "tell",
+          "text": "digital coke    obviously",
+          "raw": "Markandeya tells you, \"digital coke    obviously\""
+        },
+        {
+          "ts": "17:27:32",
+          "direction": "in",
+          "type": "tell",
+          "text": "you have elusion?",
+          "raw": "Markandeya tells you, \"you have elusion?\""
+        },
+        {
+          "ts": "17:27:56",
+          "direction": "out",
+          "type": "tell",
+          "text": "i have no magic.. just super strength... soon as i finish WC ill get kraanan",
+          "raw": "You tell Markandeya, \"i have no magic.. just super strength... soon as i finish WC ill get kraanan\""
+        },
+        {
+          "ts": "17:28:38",
+          "direction": "out",
+          "type": "tell",
+          "text": "maybe ill make my second account a riija mule later when i finally start playing again",
+          "raw": "You tell Markandeya, \"maybe ill make my second account a riija mule later when i finally start playing again\""
+        },
+        {
+          "ts": "17:32:03",
+          "direction": "in",
+          "type": "tell",
+          "text": "the quick chat is nice once you get use to it",
+          "raw": "Markandeya tells you, \" the quick chat is nice once you get use to it\""
+        },
+        {
+          "ts": "11:44:54",
+          "direction": "in",
+          "type": "tell",
+          "text": "this thing is gonna blow up",
+          "raw": "Markandeya tells you, \" this thing is gonna blow up\""
+        },
+        {
+          "ts": "11:48:24",
+          "direction": "in",
+          "type": "tell",
+          "text": "<----- hyped on coffee and pot",
+          "raw": "Markandeya tells you, \"  <----- hyped on coffee and pot\""
+        },
+        {
+          "ts": "12:45:07",
+          "direction": "out",
+          "type": "tell",
+          "text": "bug implentation of shortcuts coming. and they are sticky.. :)",
+          "raw": "You tell Markandeya, \"bug implentation of shortcuts coming. and they are sticky.. :)\""
+        },
+        {
+          "ts": "12:45:51",
+          "direction": "in",
+          "type": "tell",
+          "text": "what bug imp?\\",
+          "raw": "Markandeya tells you, \"what bug imp?\\\""
+        },
+        {
+          "ts": "12:46:41",
+          "direction": "in",
+          "type": "tell",
+          "text": "its faster than rescue",
+          "raw": "Markandeya tells you, \"its faster than rescue\""
+        },
+        {
+          "ts": "12:47:02",
+          "direction": "in",
+          "type": "tell",
+          "text": "and better  you  have your choice",
+          "raw": "Markandeya tells you, \"and better  you  have your choice\""
+        },
+        {
+          "ts": "13:05:21",
+          "direction": "out",
+          "type": "tell",
+          "text": "not bugs.. feature added to extend on the elusion",
+          "raw": "You tell Markandeya, \"not bugs.. feature added to extend on the elusion\""
+        },
+        {
+          "ts": "13:06:37",
+          "direction": "in",
+          "type": "tell",
+          "text": "dude   with it i can rescue in a fight to the place i want and alot faster than rescue",
+          "raw": "Markandeya tells you, \"  dude   with it i can rescue in a fight to the place i want and alot faster than rescue\""
+        },
+        {
+          "ts": "13:08:04",
+          "direction": "in",
+          "type": "tell",
+          "text": "could you  make an inter active add on?  ya know like iive feed",
+          "raw": "Markandeya tells you, \" could you  make an inter active add on?  ya know like iive feed \""
+        },
+        {
+          "ts": "13:08:30",
+          "direction": "in",
+          "type": "tell",
+          "text": "someting like who's loged on runs in realtimer",
+          "raw": "Markandeya tells you, \" someting like who's loged on runs in realtimer\""
+        },
+        {
+          "ts": "13:10:01",
+          "direction": "in",
+          "type": "tell",
+          "text": "did you ever play  EverQuest?",
+          "raw": "Markandeya tells you, \" did you ever play  EverQuest?\""
+        },
+        {
+          "ts": "13:12:47",
+          "direction": "out",
+          "type": "tell",
+          "text": "like a login notification? not sure if that will be frown on..",
+          "raw": "You tell Markandeya, \"like a login notification? not sure if that will be frown on..\""
+        },
+        {
+          "ts": "13:13:36",
+          "direction": "out",
+          "type": "tell",
+          "text": "i was thinking of streaming the chat into discord or having a discord bot loaded so you can post acheivements like toughers or guild war victories all customizable :)",
+          "raw": "You tell Markandeya, \"i was thinking of streaming the chat into discord or having a discord bot loaded so you can post acheivements like toughers or guild war victories all customizable :) \""
+        },
+        {
+          "ts": "13:16:03",
+          "direction": "in",
+          "type": "tell",
+          "text": "if you ever played EQ  rember the Bazarr?",
+          "raw": "Markandeya tells you, \" if you ever played EQ  rember the Bazarr?\""
+        },
+        {
+          "ts": "13:16:32",
+          "direction": "out",
+          "type": "tell",
+          "text": "never did EQ..  are you referring to seeing other Companion App users?",
+          "raw": "You tell Markandeya, \"never did EQ..  are you referring to seeing other Companion App users?\""
+        },
+        {
+          "ts": "22:41:37",
+          "direction": "in",
+          "type": "tell",
+          "text": "rember how you had the short cuts at first  where i could cast two spells back to back ?",
+          "raw": "Markandeya tells you, \"  rember how you had the short cuts at first  where i could cast two spells back to back ?\""
+        },
+        {
+          "ts": "22:59:13",
+          "direction": "in",
+          "type": "tell",
+          "text": "busy?",
+          "raw": "Markandeya tells you, \" busy?\""
+        },
+        {
+          "ts": "23:03:01",
+          "direction": "in",
+          "type": "tell",
+          "text": "is there any way  You could  put  back  One short cut button < that allowed 2 cast at once?  or can i set it up some way on my comandalias.    For  when pker is auto  up  AOG and Free action",
+          "raw": "Markandeya tells you, \" is there any way  You could  put  back  One short cut button < that allowed 2 cast at once?  or can i set it up some way on my comandalias.    For  when pker is auto  up  AOG and Free action\""
+        },
+        {
+          "ts": "23:03:30",
+          "direction": "in",
+          "type": "tell",
+          "text": "that was real handy",
+          "raw": "Markandeya tells you, \"that was real handy  \""
+        },
+        {
+          "ts": "23:16:40",
+          "direction": "in",
+          "type": "tell",
+          "text": "cool  willl   they tell you?",
+          "raw": "Markandeya tells you, \"   cool  willl   they tell you?\""
+        },
+        {
+          "ts": "13:01:36",
+          "direction": "in",
+          "type": "tell",
+          "text": "is there anyway to run a sepereate chat window in game ?  maybe tough  windows or something? I keep loosing  text in battle spam",
+          "raw": "Markandeya tells you, \" is there anyway to run a sepereate chat window in game ?  maybe tough  windows or something? I keep loosing  text in battle spam\""
+        },
+        {
+          "ts": "13:04:27",
+          "direction": "out",
+          "type": "tell",
+          "text": "this is interesting..",
+          "raw": "You tell Markandeya, \"this is interesting.. \""
+        },
+        {
+          "ts": "13:05:08",
+          "direction": "in",
+          "type": "tell",
+          "text": "doom its a winner    for sure",
+          "raw": "Markandeya tells you, \"doom its a winner    for sure\""
+        },
+        {
+          "ts": "13:16:08",
+          "direction": "out",
+          "type": "tell",
+          "text": "about a floating chat box with the filters this way you can float it like the  buttons.. and it can over lay the chat?you can resize it? maybe?",
+          "raw": "You tell Markandeya, \"about a floating chat box with the filters this way you can float it like the  buttons.. and it can over lay the chat?you can resize it? maybe?\""
+        },
+        {
+          "ts": "13:17:10",
+          "direction": "in",
+          "type": "tell",
+          "text": "yes    thats  how  it was on Everquest",
+          "raw": "Markandeya tells you, \" yes    thats  how  it was on Everquest\""
+        },
+        {
+          "ts": "13:17:44",
+          "direction": "in",
+          "type": "tell",
+          "text": "will you be able to have separte chats open at once  if so  color them",
+          "raw": "Markandeya tells you, \"  will you be able to have separte chats open at once  if so  color them\""
+        },
+        {
+          "ts": "13:21:48",
+          "direction": "out",
+          "type": "tell",
+          "text": "it will just be the normal communications tab chat box.. but floatabl and dockable in the game.. this way you can do the filters and see either only communications or fight spam",
+          "raw": "You tell Markandeya, \"it will just be the normal communications tab chat box.. but floatabl and dockable in the game.. this way you can do the filters and see either only communications or fight spam\""
+        },
+        {
+          "ts": "13:23:50",
+          "direction": "in",
+          "type": "tell",
+          "text": "will  it   be privt chat or  bcast",
+          "raw": "Markandeya tells you, \" will  it   be privt chat or  bcast \""
+        },
+        {
+          "ts": "19:13:46",
+          "direction": "in",
+          "type": "tell",
+          "text": "you think you be able to make some kind of reges tracker?",
+          "raw": "Markandeya tells you, \"  you think you be able to make some kind of reges tracker?\""
+        },
+        {
+          "ts": "19:14:53",
+          "direction": "out",
+          "type": "tell",
+          "text": "i have a working hovering chat that you can place over the existing chat and filter out tells combat gains and system info. :)",
+          "raw": "You tell Markandeya, \"i have a working hovering chat that you can place over the existing chat and filter out tells combat gains and system info. :)\""
+        },
+        {
+          "ts": "19:18:03",
+          "direction": "in",
+          "type": "tell",
+          "text": "its avaible now?",
+          "raw": "Markandeya tells you, \"its avaible now?\""
+        },
+        {
+          "ts": "19:25:00",
+          "direction": "in",
+          "type": "tell",
+          "text": "can you make a auto attack button  , with lock  key or some thing?  right now i have  a stack of nickels  i place on my attack key when i  ifw",
+          "raw": "Markandeya tells you, \"can you make a auto attack button  , with lock  key or some thing?  right now i have  a stack of nickels  i place on my attack key when i  ifw\""
+        },
+        {
+          "ts": "16:46:04",
+          "direction": "in",
+          "type": "tell",
+          "text": "you live in france  right?",
+          "raw": "Markandeya tells you, \"you live in france  right?\""
+        },
+        {
+          "ts": "22:57:20",
+          "direction": "in",
+          "type": "tell",
+          "text": "sup homey",
+          "raw": "Markandeya tells you, \" sup homey\""
+        },
+        {
+          "ts": "22:59:58",
+          "direction": "out",
+          "type": "tell",
+          "text": "heya bro",
+          "raw": "You tell Markandeya, \"heya bro\""
+        },
+        {
+          "ts": "23:01:20",
+          "direction": "in",
+          "type": "tell",
+          "text": "not bad   but can you eliminate the  timestamp  and make translusent?",
+          "raw": "Markandeya tells you, \"  not bad   but can you eliminate the  timestamp  and make translusent?\""
+        },
+        {
+          "ts": "23:02:17",
+          "direction": "out",
+          "type": "tell",
+          "text": "not sure what you mean. have you tried the beta yet?",
+          "raw": "You tell Markandeya, \"not sure what you mean. have you tried the beta yet?\""
+        },
+        {
+          "ts": "23:03:24",
+          "direction": "in",
+          "type": "tell",
+          "text": "the one i have now has text screen on cummunications ?  wait let me download  from gitt  site    my update dont work right",
+          "raw": "Markandeya tells you, \"the one i have now has text screen on cummunications ?  wait let me download  from gitt  site    my update dont work right\""
+        },
+        {
+          "ts": "23:03:38",
+          "direction": "in",
+          "type": "tell",
+          "text": "whats the  Url again",
+          "raw": "Markandeya tells you, \" whats the  Url again\""
+        },
+        {
+          "ts": "23:04:39",
+          "direction": "out",
+          "type": "tell",
+          "text": "https://github.com/subvhome/m59-companion you will see a beta link..",
+          "raw": "You tell Markandeya, \"https://github.com/subvhome/m59-companion you will see a beta link.. \""
+        },
+        {
+          "ts": "23:06:55",
+          "direction": "in",
+          "type": "tell",
+          "text": "getting beta now",
+          "raw": "Markandeya tells you, \" getting beta now\""
+        },
+        {
+          "ts": "23:08:04",
+          "direction": "out",
+          "type": "tell",
+          "text": "testing dm",
+          "raw": "You tell Markandeya, \"testing dm\""
+        },
+        {
+          "ts": "23:08:12",
+          "direction": "out",
+          "type": "tell",
+          "text": "noice",
+          "raw": "You tell Markandeya, \"noice\""
+        },
+        {
+          "ts": "23:09:47",
+          "direction": "in",
+          "type": "tell",
+          "text": "whow     let me look around  looks  great so far  :)",
+          "raw": "Markandeya tells you, \"  whow     let me look around  looks  great so far  :)\""
+        },
+        {
+          "ts": "23:10:27",
+          "direction": "out",
+          "type": "tell",
+          "text": "new version coming out with that DM thing you mentioned.. well my idea of it.",
+          "raw": "You tell Markandeya, \"new version coming out with that DM thing you mentioned.. well my idea of it.\""
+        },
+        {
+          "ts": "23:11:39",
+          "direction": "in",
+          "type": "tell",
+          "text": "i have  figure this one out   gonna take a minut",
+          "raw": "Markandeya tells you, \"i have  figure this one out   gonna take a minut\""
+        },
+        {
+          "ts": "23:17:22",
+          "direction": "out",
+          "type": "tell",
+          "text": "its the same thing but main is customizable. move tiles around. etc..  still early beta.. need to make it prettier.. customizable..  new features is a floating chatbox.. and IM windows.  let me know if you have questions",
+          "raw": "You tell Markandeya, \"its the same thing but main is customizable. move tiles around. etc..  still early beta.. need to make it prettier.. customizable..  new features is a floating chatbox.. and IM windows.  let me know if you have questions\""
+        },
+        {
+          "ts": "23:19:49",
+          "direction": "in",
+          "type": "tell",
+          "text": "gonna have to play around with to figure out ,  my windows some are too large and i have so many hot buttons  the go off screen .im gonna have to play around  an figur it out",
+          "raw": "Markandeya tells you, \"gonna have to play around with to figure out ,  my windows some are too large and i have so many hot buttons  the go off screen .im gonna have to play around  an figur it out\""
+        },
+        {
+          "ts": "23:20:27",
+          "direction": "out",
+          "type": "tell",
+          "text": "your buttons didn't import correctly? like off the UI?",
+          "raw": "You tell Markandeya, \"your buttons didn't import correctly? like off the UI?\""
+        },
+        {
+          "ts": "23:22:37",
+          "direction": "in",
+          "type": "tell",
+          "text": "im having trouble gettin it to fit in my screen",
+          "raw": "Markandeya tells you, \"im having trouble gettin it to fit in my screen  \""
+        },
+        {
+          "ts": "23:23:42",
+          "direction": "out",
+          "type": "tell",
+          "text": "its too big?  would you happen to know your screen resolution?  it seems like my developing machine may not have as high a resolution then your machine..",
+          "raw": "You tell Markandeya, \"its too big?  would you happen to know your screen resolution?  it seems like my developing machine may not have as high a resolution then your machine..\""
+        },
+        {
+          "ts": "23:28:51",
+          "direction": "in",
+          "type": "tell",
+          "text": "ok  found issue  i had two open at once",
+          "raw": "Markandeya tells you, \"  ok  found issue  i had two open at once  \""
+        },
+        {
+          "ts": "23:30:26",
+          "direction": "in",
+          "type": "tell",
+          "text": "how do i filter in floating box",
+          "raw": "Markandeya tells you, \" how do i filter in floating box\""
+        },
+        {
+          "ts": "17:13:47",
+          "direction": "in",
+          "type": "tell",
+          "text": "sup  Homey",
+          "raw": "Markandeya tells you, \"  sup  Homey\""
+        },
+        {
+          "ts": "17:13:53",
+          "direction": "out",
+          "type": "tell",
+          "text": "hows it going",
+          "raw": "You tell Markandeya, \"hows it going\""
+        },
+        {
+          "ts": "17:14:23",
+          "direction": "in",
+          "type": "tell",
+          "text": "have ellusion now   kina fun",
+          "raw": "Markandeya tells you, \"have ellusion now   kina fun\""
+        },
+        {
+          "ts": "17:15:19",
+          "direction": "out",
+          "type": "tell",
+          "text": "that sounds dope.. i havent built at all.. between my son and building the app.. im just at the same level i was since i started building this thing",
+          "raw": "You tell Markandeya, \"that sounds dope.. i havent built at all.. between my son and building the app.. im just at the same level i was since i started building this thing\""
+        },
+        {
+          "ts": "17:15:54",
+          "direction": "out",
+          "type": "tell",
+          "text": "i come in ... i check frisconar.. the crate... build a bit of the app then log out",
+          "raw": "You tell Markandeya, \"i come in ... i check frisconar.. the crate... build a bit of the app then log out\""
+        },
+        {
+          "ts": "17:16:23",
+          "direction": "in",
+          "type": "tell",
+          "text": "why friscoanrs?",
+          "raw": "Markandeya tells you, \"why friscoanrs?\""
+        },
+        {
+          "ts": "17:16:36",
+          "direction": "out",
+          "type": "tell",
+          "text": "what you think about game map unlock and annotations?",
+          "raw": "You tell Markandeya, \"what you think about game map unlock and annotations?\""
+        },
+        {
+          "ts": "17:16:53",
+          "direction": "out",
+          "type": "tell",
+          "text": "frisc gave me 2 roses... but i lost em all when i got pked.. hence this app",
+          "raw": "You tell Markandeya, \"frisc gave me 2 roses... but i lost em all when i got pked.. hence this app\""
+        },
+        {
+          "ts": "17:17:39",
+          "direction": "in",
+          "type": "tell",
+          "text": "i have to get new version    today   how do you get a rose out of  frisconar?",
+          "raw": "Markandeya tells you, \"i have to get new version    today   how do you get a rose out of  frisconar?\""
+        },
+        {
+          "ts": "17:18:03",
+          "direction": "out",
+          "type": "tell",
+          "text": "he asked me to get the fungus disease thing and he gave me one!",
+          "raw": "You tell Markandeya, \"he asked me to get the fungus disease thing and he gave me one!\""
+        },
+        {
+          "ts": "17:21:26",
+          "direction": "in",
+          "type": "tell",
+          "text": "what? ya hang around friscaonrs and he ask you  for something>",
+          "raw": "Markandeya tells you, \" what? ya hang around friscaonrs and he ask you  for something>\""
+        },
+        {
+          "ts": "17:22:49",
+          "direction": "in",
+          "type": "tell",
+          "text": "alot better in frisconars  thats what iom doing now",
+          "raw": "Markandeya tells you, \" alot better in frisconars  thats what iom doing now\""
+        },
+        {
+          "ts": "17:23:46",
+          "direction": "out",
+          "type": "tell",
+          "text": "yea you just walk in and he tells you hes not feeling well",
+          "raw": "You tell Markandeya, \"yea you just walk in and he tells you hes not feeling well\""
+        },
+        {
+          "ts": "17:24:15",
+          "direction": "out",
+          "type": "tell",
+          "text": "then you a little errand to talk to 2 people then you return a vile of coke back to friconar and hes good",
+          "raw": "You tell Markandeya, \"then you a little errand to talk to 2 people then you return a vile of coke back to friconar and hes good\""
+        },
+        {
+          "ts": "17:24:41",
+          "direction": "out",
+          "type": "tell",
+          "text": "its actually a vile of sacchaqua potion.. which is a white vile",
+          "raw": "You tell Markandeya, \"its actually a vile of sacchaqua potion.. which is a white vile\""
+        },
+        {
+          "ts": "17:25:04",
+          "direction": "in",
+          "type": "tell",
+          "text": "digital coke    obviously",
+          "raw": "Markandeya tells you, \"digital coke    obviously\""
+        },
+        {
+          "ts": "17:27:32",
+          "direction": "in",
+          "type": "tell",
+          "text": "you have elusion?",
+          "raw": "Markandeya tells you, \"you have elusion?\""
+        },
+        {
+          "ts": "17:27:56",
+          "direction": "out",
+          "type": "tell",
+          "text": "i have no magic.. just super strength... soon as i finish WC ill get kraanan",
+          "raw": "You tell Markandeya, \"i have no magic.. just super strength... soon as i finish WC ill get kraanan\""
+        },
+        {
+          "ts": "17:28:38",
+          "direction": "out",
+          "type": "tell",
+          "text": "maybe ill make my second account a riija mule later when i finally start playing again",
+          "raw": "You tell Markandeya, \"maybe ill make my second account a riija mule later when i finally start playing again\""
+        },
+        {
+          "ts": "17:32:03",
+          "direction": "in",
+          "type": "tell",
+          "text": "the quick chat is nice once you get use to it",
+          "raw": "Markandeya tells you, \" the quick chat is nice once you get use to it\""
+        },
+        {
+          "ts": "11:44:54",
+          "direction": "in",
+          "type": "tell",
+          "text": "this thing is gonna blow up",
+          "raw": "Markandeya tells you, \" this thing is gonna blow up\""
+        },
+        {
+          "ts": "11:48:24",
+          "direction": "in",
+          "type": "tell",
+          "text": "<----- hyped on coffee and pot",
+          "raw": "Markandeya tells you, \"  <----- hyped on coffee and pot\""
+        },
+        {
+          "ts": "12:45:07",
+          "direction": "out",
+          "type": "tell",
+          "text": "bug implentation of shortcuts coming. and they are sticky.. :)",
+          "raw": "You tell Markandeya, \"bug implentation of shortcuts coming. and they are sticky.. :)\""
+        },
+        {
+          "ts": "12:45:51",
+          "direction": "in",
+          "type": "tell",
+          "text": "what bug imp?\\",
+          "raw": "Markandeya tells you, \"what bug imp?\\\""
+        },
+        {
+          "ts": "12:46:41",
+          "direction": "in",
+          "type": "tell",
+          "text": "its faster than rescue",
+          "raw": "Markandeya tells you, \"its faster than rescue\""
+        },
+        {
+          "ts": "12:47:02",
+          "direction": "in",
+          "type": "tell",
+          "text": "and better  you  have your choice",
+          "raw": "Markandeya tells you, \"and better  you  have your choice\""
+        },
+        {
+          "ts": "13:05:21",
+          "direction": "out",
+          "type": "tell",
+          "text": "not bugs.. feature added to extend on the elusion",
+          "raw": "You tell Markandeya, \"not bugs.. feature added to extend on the elusion\""
+        },
+        {
+          "ts": "13:06:37",
+          "direction": "in",
+          "type": "tell",
+          "text": "dude   with it i can rescue in a fight to the place i want and alot faster than rescue",
+          "raw": "Markandeya tells you, \"  dude   with it i can rescue in a fight to the place i want and alot faster than rescue\""
+        },
+        {
+          "ts": "13:08:04",
+          "direction": "in",
+          "type": "tell",
+          "text": "could you  make an inter active add on?  ya know like iive feed",
+          "raw": "Markandeya tells you, \" could you  make an inter active add on?  ya know like iive feed \""
+        },
+        {
+          "ts": "13:08:30",
+          "direction": "in",
+          "type": "tell",
+          "text": "someting like who's loged on runs in realtimer",
+          "raw": "Markandeya tells you, \" someting like who's loged on runs in realtimer\""
+        },
+        {
+          "ts": "13:10:01",
+          "direction": "in",
+          "type": "tell",
+          "text": "did you ever play  EverQuest?",
+          "raw": "Markandeya tells you, \" did you ever play  EverQuest?\""
+        },
+        {
+          "ts": "13:12:47",
+          "direction": "out",
+          "type": "tell",
+          "text": "like a login notification? not sure if that will be frown on..",
+          "raw": "You tell Markandeya, \"like a login notification? not sure if that will be frown on..\""
+        },
+        {
+          "ts": "13:13:36",
+          "direction": "out",
+          "type": "tell",
+          "text": "i was thinking of streaming the chat into discord or having a discord bot loaded so you can post acheivements like toughers or guild war victories all customizable :)",
+          "raw": "You tell Markandeya, \"i was thinking of streaming the chat into discord or having a discord bot loaded so you can post acheivements like toughers or guild war victories all customizable :) \""
+        },
+        {
+          "ts": "13:16:03",
+          "direction": "in",
+          "type": "tell",
+          "text": "if you ever played EQ  rember the Bazarr?",
+          "raw": "Markandeya tells you, \" if you ever played EQ  rember the Bazarr?\""
+        },
+        {
+          "ts": "13:16:32",
+          "direction": "out",
+          "type": "tell",
+          "text": "never did EQ..  are you referring to seeing other Companion App users?",
+          "raw": "You tell Markandeya, \"never did EQ..  are you referring to seeing other Companion App users?\""
+        },
+        {
+          "ts": "22:41:37",
+          "direction": "in",
+          "type": "tell",
+          "text": "rember how you had the short cuts at first  where i could cast two spells back to back ?",
+          "raw": "Markandeya tells you, \"  rember how you had the short cuts at first  where i could cast two spells back to back ?\""
+        },
+        {
+          "ts": "22:59:13",
+          "direction": "in",
+          "type": "tell",
+          "text": "busy?",
+          "raw": "Markandeya tells you, \" busy?\""
+        },
+        {
+          "ts": "23:03:01",
+          "direction": "in",
+          "type": "tell",
+          "text": "is there any way  You could  put  back  One short cut button < that allowed 2 cast at once?  or can i set it up some way on my comandalias.    For  when pker is auto  up  AOG and Free action",
+          "raw": "Markandeya tells you, \" is there any way  You could  put  back  One short cut button < that allowed 2 cast at once?  or can i set it up some way on my comandalias.    For  when pker is auto  up  AOG and Free action\""
+        },
+        {
+          "ts": "23:03:30",
+          "direction": "in",
+          "type": "tell",
+          "text": "that was real handy",
+          "raw": "Markandeya tells you, \"that was real handy  \""
+        },
+        {
+          "ts": "23:16:40",
+          "direction": "in",
+          "type": "tell",
+          "text": "cool  willl   they tell you?",
+          "raw": "Markandeya tells you, \"   cool  willl   they tell you?\""
+        },
+        {
+          "ts": "13:01:36",
+          "direction": "in",
+          "type": "tell",
+          "text": "is there anyway to run a sepereate chat window in game ?  maybe tough  windows or something? I keep loosing  text in battle spam",
+          "raw": "Markandeya tells you, \" is there anyway to run a sepereate chat window in game ?  maybe tough  windows or something? I keep loosing  text in battle spam\""
+        },
+        {
+          "ts": "13:04:27",
+          "direction": "out",
+          "type": "tell",
+          "text": "this is interesting..",
+          "raw": "You tell Markandeya, \"this is interesting.. \""
+        },
+        {
+          "ts": "13:05:08",
+          "direction": "in",
+          "type": "tell",
+          "text": "doom its a winner    for sure",
+          "raw": "Markandeya tells you, \"doom its a winner    for sure\""
+        },
+        {
+          "ts": "13:16:08",
+          "direction": "out",
+          "type": "tell",
+          "text": "about a floating chat box with the filters this way you can float it like the  buttons.. and it can over lay the chat?you can resize it? maybe?",
+          "raw": "You tell Markandeya, \"about a floating chat box with the filters this way you can float it like the  buttons.. and it can over lay the chat?you can resize it? maybe?\""
+        },
+        {
+          "ts": "13:17:10",
+          "direction": "in",
+          "type": "tell",
+          "text": "yes    thats  how  it was on Everquest",
+          "raw": "Markandeya tells you, \" yes    thats  how  it was on Everquest\""
+        },
+        {
+          "ts": "13:17:44",
+          "direction": "in",
+          "type": "tell",
+          "text": "will you be able to have separte chats open at once  if so  color them",
+          "raw": "Markandeya tells you, \"  will you be able to have separte chats open at once  if so  color them\""
+        },
+        {
+          "ts": "13:21:48",
+          "direction": "out",
+          "type": "tell",
+          "text": "it will just be the normal communications tab chat box.. but floatabl and dockable in the game.. this way you can do the filters and see either only communications or fight spam",
+          "raw": "You tell Markandeya, \"it will just be the normal communications tab chat box.. but floatabl and dockable in the game.. this way you can do the filters and see either only communications or fight spam\""
+        },
+        {
+          "ts": "13:23:50",
+          "direction": "in",
+          "type": "tell",
+          "text": "will  it   be privt chat or  bcast",
+          "raw": "Markandeya tells you, \" will  it   be privt chat or  bcast \""
+        },
+        {
+          "ts": "19:13:46",
+          "direction": "in",
+          "type": "tell",
+          "text": "you think you be able to make some kind of reges tracker?",
+          "raw": "Markandeya tells you, \"  you think you be able to make some kind of reges tracker?\""
+        },
+        {
+          "ts": "19:14:53",
+          "direction": "out",
+          "type": "tell",
+          "text": "i have a working hovering chat that you can place over the existing chat and filter out tells combat gains and system info. :)",
+          "raw": "You tell Markandeya, \"i have a working hovering chat that you can place over the existing chat and filter out tells combat gains and system info. :)\""
+        },
+        {
+          "ts": "19:18:03",
+          "direction": "in",
+          "type": "tell",
+          "text": "its avaible now?",
+          "raw": "Markandeya tells you, \"its avaible now?\""
+        },
+        {
+          "ts": "19:25:00",
+          "direction": "in",
+          "type": "tell",
+          "text": "can you make a auto attack button  , with lock  key or some thing?  right now i have  a stack of nickels  i place on my attack key when i  ifw",
+          "raw": "Markandeya tells you, \"can you make a auto attack button  , with lock  key or some thing?  right now i have  a stack of nickels  i place on my attack key when i  ifw\""
+        },
+        {
+          "ts": "16:46:04",
+          "direction": "in",
+          "type": "tell",
+          "text": "you live in france  right?",
+          "raw": "Markandeya tells you, \"you live in france  right?\""
+        },
+        {
+          "ts": "22:57:20",
+          "direction": "in",
+          "type": "tell",
+          "text": "sup homey",
+          "raw": "Markandeya tells you, \" sup homey\""
+        },
+        {
+          "ts": "22:59:58",
+          "direction": "out",
+          "type": "tell",
+          "text": "heya bro",
+          "raw": "You tell Markandeya, \"heya bro\""
+        },
+        {
+          "ts": "23:01:20",
+          "direction": "in",
+          "type": "tell",
+          "text": "not bad   but can you eliminate the  timestamp  and make translusent?",
+          "raw": "Markandeya tells you, \"  not bad   but can you eliminate the  timestamp  and make translusent?\""
+        },
+        {
+          "ts": "23:02:17",
+          "direction": "out",
+          "type": "tell",
+          "text": "not sure what you mean. have you tried the beta yet?",
+          "raw": "You tell Markandeya, \"not sure what you mean. have you tried the beta yet?\""
+        },
+        {
+          "ts": "23:03:24",
+          "direction": "in",
+          "type": "tell",
+          "text": "the one i have now has text screen on cummunications ?  wait let me download  from gitt  site    my update dont work right",
+          "raw": "Markandeya tells you, \"the one i have now has text screen on cummunications ?  wait let me download  from gitt  site    my update dont work right\""
+        },
+        {
+          "ts": "23:03:38",
+          "direction": "in",
+          "type": "tell",
+          "text": "whats the  Url again",
+          "raw": "Markandeya tells you, \" whats the  Url again\""
+        },
+        {
+          "ts": "23:04:39",
+          "direction": "out",
+          "type": "tell",
+          "text": "https://github.com/subvhome/m59-companion you will see a beta link..",
+          "raw": "You tell Markandeya, \"https://github.com/subvhome/m59-companion you will see a beta link.. \""
+        },
+        {
+          "ts": "23:06:55",
+          "direction": "in",
+          "type": "tell",
+          "text": "getting beta now",
+          "raw": "Markandeya tells you, \" getting beta now\""
+        },
+        {
+          "ts": "23:08:04",
+          "direction": "out",
+          "type": "tell",
+          "text": "testing dm",
+          "raw": "You tell Markandeya, \"testing dm\""
+        },
+        {
+          "ts": "23:08:12",
+          "direction": "out",
+          "type": "tell",
+          "text": "noice",
+          "raw": "You tell Markandeya, \"noice\""
+        },
+        {
+          "ts": "23:09:47",
+          "direction": "in",
+          "type": "tell",
+          "text": "whow     let me look around  looks  great so far  :)",
+          "raw": "Markandeya tells you, \"  whow     let me look around  looks  great so far  :)\""
+        },
+        {
+          "ts": "23:10:27",
+          "direction": "out",
+          "type": "tell",
+          "text": "new version coming out with that DM thing you mentioned.. well my idea of it.",
+          "raw": "You tell Markandeya, \"new version coming out with that DM thing you mentioned.. well my idea of it.\""
+        },
+        {
+          "ts": "23:11:39",
+          "direction": "in",
+          "type": "tell",
+          "text": "i have  figure this one out   gonna take a minut",
+          "raw": "Markandeya tells you, \"i have  figure this one out   gonna take a minut\""
+        },
+        {
+          "ts": "23:17:22",
+          "direction": "out",
+          "type": "tell",
+          "text": "its the same thing but main is customizable. move tiles around. etc..  still early beta.. need to make it prettier.. customizable..  new features is a floating chatbox.. and IM windows.  let me know if you have questions",
+          "raw": "You tell Markandeya, \"its the same thing but main is customizable. move tiles around. etc..  still early beta.. need to make it prettier.. customizable..  new features is a floating chatbox.. and IM windows.  let me know if you have questions\""
+        },
+        {
+          "ts": "23:19:49",
+          "direction": "in",
+          "type": "tell",
+          "text": "gonna have to play around with to figure out ,  my windows some are too large and i have so many hot buttons  the go off screen .im gonna have to play around  an figur it out",
+          "raw": "Markandeya tells you, \"gonna have to play around with to figure out ,  my windows some are too large and i have so many hot buttons  the go off screen .im gonna have to play around  an figur it out\""
+        },
+        {
+          "ts": "23:20:27",
+          "direction": "out",
+          "type": "tell",
+          "text": "your buttons didn't import correctly? like off the UI?",
+          "raw": "You tell Markandeya, \"your buttons didn't import correctly? like off the UI?\""
+        },
+        {
+          "ts": "23:22:37",
+          "direction": "in",
+          "type": "tell",
+          "text": "im having trouble gettin it to fit in my screen",
+          "raw": "Markandeya tells you, \"im having trouble gettin it to fit in my screen  \""
+        },
+        {
+          "ts": "23:23:42",
+          "direction": "out",
+          "type": "tell",
+          "text": "its too big?  would you happen to know your screen resolution?  it seems like my developing machine may not have as high a resolution then your machine..",
+          "raw": "You tell Markandeya, \"its too big?  would you happen to know your screen resolution?  it seems like my developing machine may not have as high a resolution then your machine..\""
+        },
+        {
+          "ts": "23:28:51",
+          "direction": "in",
+          "type": "tell",
+          "text": "ok  found issue  i had two open at once",
+          "raw": "Markandeya tells you, \"  ok  found issue  i had two open at once  \""
+        },
+        {
+          "ts": "23:30:26",
+          "direction": "in",
+          "type": "tell",
+          "text": "how do i filter in floating box",
+          "raw": "Markandeya tells you, \" how do i filter in floating box\""
+        },
+        {
+          "ts": "11:13:54",
+          "direction": "out",
+          "type": "tell",
+          "text": "there is a new version coming up minor fixes. like in app DM now dont auto close",
+          "raw": "You tell Markandeya, 'there is a new version coming up minor fixes. like in app DM now dont auto close'"
+        },
+        {
+          "ts": "11:13:55",
+          "direction": "out",
+          "type": "tell",
+          "text": "there is a new version coming up minor fixes. like in app DM now dont auto close",
+          "raw": "You tell Markandeya, \" there is a new version coming up minor fixes. like in app DM now dont auto close\""
+        },
+        {
+          "ts": "11:15:09",
+          "direction": "out",
+          "type": "tell",
+          "text": "https://github.com/subvhome/m59-companion-v3",
+          "raw": "You tell Markandeya, 'https://github.com/subvhome/m59-companion-v3'"
+        },
+        {
+          "ts": "11:15:10",
+          "direction": "out",
+          "type": "tell",
+          "text": "https://github.com/subvhome/m59-companion-v3",
+          "raw": "You tell Markandeya, \" https://github.com/subvhome/m59-companion-v3\""
+        },
+        {
+          "ts": "11:15:52",
+          "direction": "in",
+          "type": "tell",
+          "text": "cool  im gonna download   and not try  upgrade  . that never gose well",
+          "raw": "Markandeya tells you, \"cool  im gonna download   and not try  upgrade  . that never gose well\""
+        },
+        {
+          "ts": "11:16:34",
+          "direction": "out",
+          "type": "tell",
+          "text": "upgrade works for almost everyone but whatever works for you.. perhaps i can put a link on the app so you can just click it and open browser to the download irectly",
+          "raw": "You tell Markandeya, 'upgrade works for almost everyone but whatever works for you.. perhaps i can put a link on the app so you can just click it and open browser to the download irectly'"
+        },
+        {
+          "ts": "11:16:35",
+          "direction": "out",
+          "type": "tell",
+          "text": "upgrade works for almost everyone but whatever works for you.. perhaps i can put a link on the app so you can just click it and open browser to the download irectly",
+          "raw": "You tell Markandeya, \" upgrade works for almost everyone but whatever works for you.. perhaps i can put a link on the app so you can just click it and open browser to the download irectly\""
+        },
+        {
+          "ts": "11:16:46",
+          "direction": "in",
+          "type": "tell",
+          "text": "is there any way to monitor personal chest in rooms?",
+          "raw": "Markandeya tells you, \"is there any way to monitor personal chest in rooms?\""
+        },
+        {
+          "ts": "11:17:04",
+          "direction": "out",
+          "type": "tell",
+          "text": "until i can get access to a room, no the app doesn't have it",
+          "raw": "You tell Markandeya, 'until i can get access to a room, no the app doesn't have it'"
+        },
+        {
+          "ts": "11:17:05",
+          "direction": "out",
+          "type": "tell",
+          "text": "until i can get access to a room, no the app doesn't have it",
+          "raw": "You tell Markandeya, \" until i can get access to a room, no the app doesn't have it\""
+        },
+        {
+          "ts": "11:17:48",
+          "direction": "in",
+          "type": "tell",
+          "text": "i think  my issue is with the parrleles desktop.    where you ill give ya key",
+          "raw": "Markandeya tells you, \" i think  my issue is with the parrleles desktop.    where you ill give ya key \""
+        }
+      ]
+    },
+    "baron von mannor": {
+      "player_name": "Baron Von Mannor",
+      "messages": [
+        {
+          "ts": "23:48:35",
+          "direction": "in",
+          "type": "tell",
+          "text": "can you give me the companion app link??",
+          "raw": "Baron Von Mannor tells you, \"can you give me the companion app link??\""
+        },
+        {
+          "ts": "23:48:35",
+          "direction": "in",
+          "type": "tell",
+          "text": "can you give me the companion app link??",
+          "raw": "Baron Von Mannor tells you, \"can you give me the companion app link??\""
+        }
+      ]
+    },
+    "frisconar": {
+      "player_name": "Frisconar",
+      "messages": [
+        {
+          "ts": "17:13:15",
+          "direction": "in",
+          "type": "tell",
+          "text": "Thank god you're here!  I think I'm dying!  I've got paragolisys!  Go to Pietro and ask him about a cure for it!",
+          "raw": "Frisconar tells you, \"Thank god you're here!  I think I'm dying!  I've got paragolisys!  Go to Pietro and ask him about a cure for it!\""
+        },
+        {
+          "ts": "17:22:19",
+          "direction": "in",
+          "type": "tell",
+          "text": "Oh, thank the gods!  I ... I was seeing stars!  The light at the end of the tunnel!  I'm alive!  Here, take this wand - I owe it to you for saving my life!",
+          "raw": "Frisconar tells you, \"Oh, thank the gods!  I ... I was seeing stars!  The light at the end of the tunnel!  I'm alive!  Here, take this wand - I owe it to you for saving my life!\""
+        },
+        {
+          "ts": "17:13:15",
+          "direction": "in",
+          "type": "tell",
+          "text": "Thank god you're here!  I think I'm dying!  I've got paragolisys!  Go to Pietro and ask him about a cure for it!",
+          "raw": "Frisconar tells you, \"Thank god you're here!  I think I'm dying!  I've got paragolisys!  Go to Pietro and ask him about a cure for it!\""
+        },
+        {
+          "ts": "17:22:19",
+          "direction": "in",
+          "type": "tell",
+          "text": "Oh, thank the gods!  I ... I was seeing stars!  The light at the end of the tunnel!  I'm alive!  Here, take this wand - I owe it to you for saving my life!",
+          "raw": "Frisconar tells you, \"Oh, thank the gods!  I ... I was seeing stars!  The light at the end of the tunnel!  I'm alive!  Here, take this wand - I owe it to you for saving my life!\""
+        }
+      ]
+    },
+    "pietro": {
+      "player_name": "Pietro",
+      "messages": [
+        {
+          "ts": "17:17:34",
+          "direction": "in",
+          "type": "tell",
+          "text": "Ah, he's dying, eh?  Well, why don't you go to Joguer and say that Frisconar needs another Sacchaqua potion.",
+          "raw": "Pietro tells you, \"Ah, he's dying, eh?  Well, why don't you go to Joguer and say that Frisconar needs another Sacchaqua potion.\""
+        },
+        {
+          "ts": "17:17:34",
+          "direction": "in",
+          "type": "tell",
+          "text": "Ah, he's dying, eh?  Well, why don't you go to Joguer and say that Frisconar needs another Sacchaqua potion.",
+          "raw": "Pietro tells you, \"Ah, he's dying, eh?  Well, why don't you go to Joguer and say that Frisconar needs another Sacchaqua potion.\""
+        }
+      ]
+    },
+    "joguer": {
+      "player_name": "Joguer",
+      "messages": [
+        {
+          "ts": "17:20:16",
+          "direction": "in",
+          "type": "tell",
+          "text": "How very amusing.  You would think an accomplished Apothecary like Frisconar would know that this is nothing more than sugar water.  Well, take this to him.",
+          "raw": "Joguer tells you, \"How very amusing.  You would think an accomplished Apothecary like Frisconar would know that this is nothing more than sugar water.  Well, take this to him.\""
+        },
+        {
+          "ts": "17:20:16",
+          "direction": "in",
+          "type": "tell",
+          "text": "How very amusing.  You would think an accomplished Apothecary like Frisconar would know that this is nothing more than sugar water.  Well, take this to him.",
+          "raw": "Joguer tells you, \"How very amusing.  You would think an accomplished Apothecary like Frisconar would know that this is nothing more than sugar water.  Well, take this to him.\""
+        }
+      ]
+    },
+    "kormach": {
+      "player_name": "kormach",
+      "messages": [
+        {
+          "ts": "16:14:56",
+          "direction": "out",
+          "type": "tell",
+          "text": "https://github.com/subvhome/m59-companion",
+          "raw": "You tell kormach, \"https://github.com/subvhome/m59-companion\""
+        },
+        {
+          "ts": "16:15:10",
+          "direction": "out",
+          "type": "tell",
+          "text": "this is my tool",
+          "raw": "You tell kormach, \"this is my tool\""
+        },
+        {
+          "ts": "16:15:32",
+          "direction": "out",
+          "type": "tell",
+          "text": "useful for everyone",
+          "raw": "You tell kormach, \"useful for everyone\""
+        },
+        {
+          "ts": "16:25:02",
+          "direction": "out",
+          "type": "tell",
+          "text": "first you are using broadcast to communicate with me.. when someone sends you a \"tell\" you can respond by typing t.. this will auto type tell in the chat box then you can right their name.. for example im \"MF DOOM\" you can tell me using t \"tell mf hey!\" since im the only person starting with mf it will work.. but if there is someone else with mf you need to type my name in \"\"",
+          "raw": "You tell kormach, \"first you are using broadcast to communicate with me.. when someone sends you a \"tell\" you can respond by typing t.. this will auto type tell in the chat box then you can right their name.. for example im \"MF DOOM\" you can tell me using t \"tell mf hey!\" since im the only person starting with mf it will work.. but if there is someone else with mf you need to type my name in \"\"\""
+        },
+        {
+          "ts": "16:25:46",
+          "direction": "out",
+          "type": "tell",
+          "text": "you can also press \"F\" to say something you can press \"Y\" to yell something.. \";\" to emote something.",
+          "raw": "You tell kormach, \"you can also press \"F\" to say something you can press \"Y\" to yell something.. \";\" to emote something. \""
+        },
+        {
+          "ts": "16:26:22",
+          "direction": "in",
+          "type": "tell",
+          "text": "check",
+          "raw": "kormach tells you, \"check\""
+        },
+        {
+          "ts": "16:26:30",
+          "direction": "in",
+          "type": "tell",
+          "text": "ahh okay wow",
+          "raw": "kormach tells you, \"ahh okay wow \""
+        },
+        {
+          "ts": "16:27:14",
+          "direction": "out",
+          "type": "tell",
+          "text": "as for my tool.. its not a mod.. its a helper companaion. if you go to the site.. and scroll down you will see a link saying download. you save this to your desktop or anywhere organized and run it... it will create folders so maybe put it in a folder so things stay organized. it has a GPS, a map tool, progress tracker, a who list to be aware of murderes. and much more",
+          "raw": "You tell kormach, \"as for my tool.. its not a mod.. its a helper companaion. if you go to the site.. and scroll down you will see a link saying download. you save this to your desktop or anywhere organized and run it... it will create folders so maybe put it in a folder so things stay organized. it has a GPS, a map tool, progress tracker, a who list to be aware of murderes. and much more\""
+        },
+        {
+          "ts": "16:27:15",
+          "direction": "in",
+          "type": "tell",
+          "text": "how far does yelling go",
+          "raw": "kormach tells you, \"how far does yelling go\""
+        },
+        {
+          "ts": "16:27:31",
+          "direction": "out",
+          "type": "tell",
+          "text": "yelling goes like 1-2 rooms in every direction",
+          "raw": "You tell kormach, \"yelling goes like 1-2 rooms in every direction\""
+        },
+        {
+          "ts": "16:28:01",
+          "direction": "in",
+          "type": "tell",
+          "text": "nice thanks for the help",
+          "raw": "kormach tells you, \"nice thanks for the help\""
+        },
+        {
+          "ts": "16:28:21",
+          "direction": "in",
+          "type": "tell",
+          "text": "what a crazy game",
+          "raw": "kormach tells you, \"what a crazy game\""
+        },
+        {
+          "ts": "16:28:24",
+          "direction": "out",
+          "type": "tell",
+          "text": "if you dont want to download it thats cool but at least scroll down and look at th epictures.. lots of goodies to help you not get murdered",
+          "raw": "You tell kormach, \"if you dont want to download it thats cool but at least scroll down and look at th epictures.. lots of goodies to help you not get murdered\""
+        },
+        {
+          "ts": "16:28:53",
+          "direction": "out",
+          "type": "tell",
+          "text": "im always improving it... yea i played this game whenit first came out when i was 14 years old :)",
+          "raw": "You tell kormach, \"im always improving it... yea i played this game whenit first came out when i was 14 years old :)\""
+        },
+        {
+          "ts": "16:28:59",
+          "direction": "in",
+          "type": "tell",
+          "text": "yeah for sure",
+          "raw": "kormach tells you, \"yeah for sure\""
+        },
+        {
+          "ts": "16:29:46",
+          "direction": "in",
+          "type": "tell",
+          "text": "oh thats awesine i wish i knew about it back then",
+          "raw": "kormach tells you, \"oh thats awesine i wish i knew about it back then \""
+        },
+        {
+          "ts": "16:30:03",
+          "direction": "in",
+          "type": "tell",
+          "text": "im 34 now the old game i knew about was everquest becuase my aunts and uncles",
+          "raw": "kormach tells you, \"im 34 now the old game i knew about was everquest becuase my aunts and uncles\""
+        },
+        {
+          "ts": "16:30:28",
+          "direction": "out",
+          "type": "tell",
+          "text": "what else can i tell you. when you hit 30+ HP you can be murdered.. so keep an eye on the \"who\" list.. \"CTRL+W\"",
+          "raw": "You tell kormach, \"what else can i tell you. when you hit 30+ HP you can be murdered.. so keep an eye on the \"who\" list.. \"CTRL+W\"\""
+        },
+        {
+          "ts": "16:31:00",
+          "direction": "out",
+          "type": "tell",
+          "text": "this is the main  feature of my app.. my who list is live and always visible.. the in game who list stops you from playing so its one or the other.",
+          "raw": "You tell kormach, \"this is the main  feature of my app.. my who list is live and always visible.. the in game who list stops you from playing so its one or the other.\""
+        },
+        {
+          "ts": "16:31:11",
+          "direction": "in",
+          "type": "tell",
+          "text": "yeah i know that im actually 56 hp havnt beenb murdered yet",
+          "raw": "kormach tells you, \"yeah i know that im actually 56 hp havnt beenb murdered yet\""
+        },
+        {
+          "ts": "16:31:44",
+          "direction": "out",
+          "type": "tell",
+          "text": "lucky you... do the frisconar errands when he tells you he is sick.. he will probably give you a rose.. those are valuable",
+          "raw": "You tell kormach, \"lucky you... do the frisconar errands when he tells you he is sick.. he will probably give you a rose.. those are valuable\""
+        },
+        {
+          "ts": "16:32:09",
+          "direction": "in",
+          "type": "tell",
+          "text": "yes i havnt figured out any quests yet",
+          "raw": "kormach tells you, \"yes i havnt figured out any quests yet\""
+        },
+        {
+          "ts": "16:32:16",
+          "direction": "in",
+          "type": "tell",
+          "text": "thats good to know",
+          "raw": "kormach tells you, \"thats good to know\""
+        },
+        {
+          "ts": "16:32:37",
+          "direction": "out",
+          "type": "tell",
+          "text": "im happy to help with questions.. feel free to mail me or dm.. have fun!",
+          "raw": "You tell kormach, \"im happy to help with questions.. feel free to mail me or dm.. have fun!\""
+        },
+        {
+          "ts": "16:32:50",
+          "direction": "in",
+          "type": "tell",
+          "text": "hey thanks buddy much apprecited",
+          "raw": "kormach tells you, \"hey thanks buddy much apprecited\""
+        },
+        {
+          "ts": "16:14:56",
+          "direction": "out",
+          "type": "tell",
+          "text": "https://github.com/subvhome/m59-companion",
+          "raw": "You tell kormach, \"https://github.com/subvhome/m59-companion\""
+        },
+        {
+          "ts": "16:15:10",
+          "direction": "out",
+          "type": "tell",
+          "text": "this is my tool",
+          "raw": "You tell kormach, \"this is my tool\""
+        },
+        {
+          "ts": "16:15:32",
+          "direction": "out",
+          "type": "tell",
+          "text": "useful for everyone",
+          "raw": "You tell kormach, \"useful for everyone\""
+        },
+        {
+          "ts": "16:25:02",
+          "direction": "out",
+          "type": "tell",
+          "text": "first you are using broadcast to communicate with me.. when someone sends you a \"tell\" you can respond by typing t.. this will auto type tell in the chat box then you can right their name.. for example im \"MF DOOM\" you can tell me using t \"tell mf hey!\" since im the only person starting with mf it will work.. but if there is someone else with mf you need to type my name in \"\"",
+          "raw": "You tell kormach, \"first you are using broadcast to communicate with me.. when someone sends you a \"tell\" you can respond by typing t.. this will auto type tell in the chat box then you can right their name.. for example im \"MF DOOM\" you can tell me using t \"tell mf hey!\" since im the only person starting with mf it will work.. but if there is someone else with mf you need to type my name in \"\"\""
+        },
+        {
+          "ts": "16:25:46",
+          "direction": "out",
+          "type": "tell",
+          "text": "you can also press \"F\" to say something you can press \"Y\" to yell something.. \";\" to emote something.",
+          "raw": "You tell kormach, \"you can also press \"F\" to say something you can press \"Y\" to yell something.. \";\" to emote something. \""
+        },
+        {
+          "ts": "16:26:22",
+          "direction": "in",
+          "type": "tell",
+          "text": "check",
+          "raw": "kormach tells you, \"check\""
+        },
+        {
+          "ts": "16:26:30",
+          "direction": "in",
+          "type": "tell",
+          "text": "ahh okay wow",
+          "raw": "kormach tells you, \"ahh okay wow \""
+        },
+        {
+          "ts": "16:27:14",
+          "direction": "out",
+          "type": "tell",
+          "text": "as for my tool.. its not a mod.. its a helper companaion. if you go to the site.. and scroll down you will see a link saying download. you save this to your desktop or anywhere organized and run it... it will create folders so maybe put it in a folder so things stay organized. it has a GPS, a map tool, progress tracker, a who list to be aware of murderes. and much more",
+          "raw": "You tell kormach, \"as for my tool.. its not a mod.. its a helper companaion. if you go to the site.. and scroll down you will see a link saying download. you save this to your desktop or anywhere organized and run it... it will create folders so maybe put it in a folder so things stay organized. it has a GPS, a map tool, progress tracker, a who list to be aware of murderes. and much more\""
+        },
+        {
+          "ts": "16:27:15",
+          "direction": "in",
+          "type": "tell",
+          "text": "how far does yelling go",
+          "raw": "kormach tells you, \"how far does yelling go\""
+        },
+        {
+          "ts": "16:27:31",
+          "direction": "out",
+          "type": "tell",
+          "text": "yelling goes like 1-2 rooms in every direction",
+          "raw": "You tell kormach, \"yelling goes like 1-2 rooms in every direction\""
+        },
+        {
+          "ts": "16:28:01",
+          "direction": "in",
+          "type": "tell",
+          "text": "nice thanks for the help",
+          "raw": "kormach tells you, \"nice thanks for the help\""
+        },
+        {
+          "ts": "16:28:21",
+          "direction": "in",
+          "type": "tell",
+          "text": "what a crazy game",
+          "raw": "kormach tells you, \"what a crazy game\""
+        },
+        {
+          "ts": "16:28:24",
+          "direction": "out",
+          "type": "tell",
+          "text": "if you dont want to download it thats cool but at least scroll down and look at th epictures.. lots of goodies to help you not get murdered",
+          "raw": "You tell kormach, \"if you dont want to download it thats cool but at least scroll down and look at th epictures.. lots of goodies to help you not get murdered\""
+        },
+        {
+          "ts": "16:28:53",
+          "direction": "out",
+          "type": "tell",
+          "text": "im always improving it... yea i played this game whenit first came out when i was 14 years old :)",
+          "raw": "You tell kormach, \"im always improving it... yea i played this game whenit first came out when i was 14 years old :)\""
+        },
+        {
+          "ts": "16:28:59",
+          "direction": "in",
+          "type": "tell",
+          "text": "yeah for sure",
+          "raw": "kormach tells you, \"yeah for sure\""
+        },
+        {
+          "ts": "16:29:46",
+          "direction": "in",
+          "type": "tell",
+          "text": "oh thats awesine i wish i knew about it back then",
+          "raw": "kormach tells you, \"oh thats awesine i wish i knew about it back then \""
+        },
+        {
+          "ts": "16:30:03",
+          "direction": "in",
+          "type": "tell",
+          "text": "im 34 now the old game i knew about was everquest becuase my aunts and uncles",
+          "raw": "kormach tells you, \"im 34 now the old game i knew about was everquest becuase my aunts and uncles\""
+        },
+        {
+          "ts": "16:30:28",
+          "direction": "out",
+          "type": "tell",
+          "text": "what else can i tell you. when you hit 30+ HP you can be murdered.. so keep an eye on the \"who\" list.. \"CTRL+W\"",
+          "raw": "You tell kormach, \"what else can i tell you. when you hit 30+ HP you can be murdered.. so keep an eye on the \"who\" list.. \"CTRL+W\"\""
+        },
+        {
+          "ts": "16:31:00",
+          "direction": "out",
+          "type": "tell",
+          "text": "this is the main  feature of my app.. my who list is live and always visible.. the in game who list stops you from playing so its one or the other.",
+          "raw": "You tell kormach, \"this is the main  feature of my app.. my who list is live and always visible.. the in game who list stops you from playing so its one or the other.\""
+        },
+        {
+          "ts": "16:31:11",
+          "direction": "in",
+          "type": "tell",
+          "text": "yeah i know that im actually 56 hp havnt beenb murdered yet",
+          "raw": "kormach tells you, \"yeah i know that im actually 56 hp havnt beenb murdered yet\""
+        },
+        {
+          "ts": "16:31:44",
+          "direction": "out",
+          "type": "tell",
+          "text": "lucky you... do the frisconar errands when he tells you he is sick.. he will probably give you a rose.. those are valuable",
+          "raw": "You tell kormach, \"lucky you... do the frisconar errands when he tells you he is sick.. he will probably give you a rose.. those are valuable\""
+        },
+        {
+          "ts": "16:32:09",
+          "direction": "in",
+          "type": "tell",
+          "text": "yes i havnt figured out any quests yet",
+          "raw": "kormach tells you, \"yes i havnt figured out any quests yet\""
+        },
+        {
+          "ts": "16:32:16",
+          "direction": "in",
+          "type": "tell",
+          "text": "thats good to know",
+          "raw": "kormach tells you, \"thats good to know\""
+        },
+        {
+          "ts": "16:32:37",
+          "direction": "out",
+          "type": "tell",
+          "text": "im happy to help with questions.. feel free to mail me or dm.. have fun!",
+          "raw": "You tell kormach, \"im happy to help with questions.. feel free to mail me or dm.. have fun!\""
+        },
+        {
+          "ts": "16:32:50",
+          "direction": "in",
+          "type": "tell",
+          "text": "hey thanks buddy much apprecited",
+          "raw": "kormach tells you, \"hey thanks buddy much apprecited\""
+        }
+      ]
+    },
+    "royal": {
+      "player_name": "Royal",
+      "messages": [
+        {
+          "ts": "09:12:19",
+          "direction": "out",
+          "type": "tell",
+          "text": "Guard, \"ill be right there",
+          "raw": "You tell Royal Guard, \"ill be right there\""
+        },
+        {
+          "ts": "09:12:19",
+          "direction": "out",
+          "type": "tell",
+          "text": "Guard, \"ill be right there",
+          "raw": "You tell Royal Guard, \"ill be right there\""
+        }
+      ]
+    },
+    "lobohotpants": {
+      "player_name": "Lobohotpants",
+      "messages": [
+        {
+          "ts": "22:23:11",
+          "direction": "out",
+          "type": "tell",
+          "text": "completely new interface coming out soon of the app ..",
+          "raw": "You tell Lobohotpants, \"completely new interface coming out soon of the app .. \""
+        },
+        {
+          "ts": "23:44:19",
+          "direction": "out",
+          "type": "tell",
+          "text": "you got a lot of time online..",
+          "raw": "You tell Lobohotpants, \"you got a lot of time online..\""
+        },
+        {
+          "ts": "23:44:45",
+          "direction": "out",
+          "type": "tell",
+          "text": "everytime i come on.. your on.. maybe i can put a time tracker.. how many hours the app detects game play?",
+          "raw": "You tell Lobohotpants, \"everytime i come on.. your on.. maybe i can put a time tracker.. how many hours the app detects game play?\""
+        },
+        {
+          "ts": "22:23:11",
+          "direction": "out",
+          "type": "tell",
+          "text": "completely new interface coming out soon of the app ..",
+          "raw": "You tell Lobohotpants, \"completely new interface coming out soon of the app .. \""
+        },
+        {
+          "ts": "23:44:19",
+          "direction": "out",
+          "type": "tell",
+          "text": "you got a lot of time online..",
+          "raw": "You tell Lobohotpants, \"you got a lot of time online..\""
+        },
+        {
+          "ts": "23:44:45",
+          "direction": "out",
+          "type": "tell",
+          "text": "everytime i come on.. your on.. maybe i can put a time tracker.. how many hours the app detects game play?",
+          "raw": "You tell Lobohotpants, \"everytime i come on.. your on.. maybe i can put a time tracker.. how many hours the app detects game play?\""
+        }
+      ]
+    },
+    "desonator": {
+      "player_name": "Desonator",
+      "messages": [
+        {
+          "ts": "12:53:09",
+          "direction": "in",
+          "type": "tell",
+          "text": "ach du bist auch noch deutscher :)",
+          "raw": "Desonator tells you, \"ach du bist auch noch deutscher :)\""
+        },
+        {
+          "ts": "12:53:43",
+          "direction": "out",
+          "type": "tell",
+          "text": "it should work for german clients.. maybe the vault has an issue which i will fix soon",
+          "raw": "You tell Desonator, \"it should work for german clients.. maybe the vault has an issue which i will fix soon\""
+        },
+        {
+          "ts": "12:53:59",
+          "direction": "in",
+          "type": "tell",
+          "text": "i thought your german :)",
+          "raw": "Desonator tells you, \"i thought your german :)\""
+        },
+        {
+          "ts": "12:54:15",
+          "direction": "out",
+          "type": "tell",
+          "text": "nope.. i took a wild guess on what you said lol",
+          "raw": "You tell Desonator, \"nope.. i took a wild guess on what you said lol\""
+        },
+        {
+          "ts": "12:53:09",
+          "direction": "in",
+          "type": "tell",
+          "text": "ach du bist auch noch deutscher :)",
+          "raw": "Desonator tells you, \"ach du bist auch noch deutscher :)\""
+        },
+        {
+          "ts": "12:53:43",
+          "direction": "out",
+          "type": "tell",
+          "text": "it should work for german clients.. maybe the vault has an issue which i will fix soon",
+          "raw": "You tell Desonator, \"it should work for german clients.. maybe the vault has an issue which i will fix soon\""
+        },
+        {
+          "ts": "12:53:59",
+          "direction": "in",
+          "type": "tell",
+          "text": "i thought your german :)",
+          "raw": "Desonator tells you, \"i thought your german :)\""
+        },
+        {
+          "ts": "12:54:15",
+          "direction": "out",
+          "type": "tell",
+          "text": "nope.. i took a wild guess on what you said lol",
+          "raw": "You tell Desonator, \"nope.. i took a wild guess on what you said lol\""
+        }
+      ]
+    },
+    "condotoo": {
+      "player_name": "CONDOTOO",
+      "messages": [
+        {
+          "ts": "14:10:28",
+          "direction": "in",
+          "type": "tell",
+          "text": "is there any way to track the  reges  I use? to  see which reges i use the most of to resupply  acuratley",
+          "raw": "CONDOTOO tells you, \"  is there any way to track the  reges  I use? to  see which reges i use the most of to resupply  acuratley\""
+        },
+        {
+          "ts": "14:10:59",
+          "direction": "in",
+          "type": "tell",
+          "text": "<mark",
+          "raw": "CONDOTOO tells you, \" <mark\""
+        },
+        {
+          "ts": "14:20:51",
+          "direction": "out",
+          "type": "tell",
+          "text": "maybe.. there might be a metric there",
+          "raw": "You tell CONDOTOO, \"maybe.. there might be a metric there\""
+        },
+        {
+          "ts": "14:27:55",
+          "direction": "in",
+          "type": "tell",
+          "text": "its for Load outs.  like  when i go to brax  or  thrashers or   shadow beast.   say  i go to Braxx  i have to figure out  reges  each spell use  different quainity off different or the same reges  alot of math  to figure out   usage.",
+          "raw": "CONDOTOO tells you, \"its for Load outs.  like  when i go to brax  or  thrashers or   shadow beast.   say  i go to Braxx  i have to figure out  reges  each spell use  different quainity off different or the same reges  alot of math  to figure out   usage.\""
+        },
+        {
+          "ts": "14:29:06",
+          "direction": "in",
+          "type": "tell",
+          "text": "i actualy use  paper an pencil  to do on desk",
+          "raw": "CONDOTOO tells you, \" i actualy use  paper an pencil  to do on desk\""
+        },
+        {
+          "ts": "14:31:31",
+          "direction": "in",
+          "type": "tell",
+          "text": "when i talk to you on this char    i dont loose   chat  an mark  can keep killing",
+          "raw": "CONDOTOO tells you, \" when i talk to you on this char    i dont loose   chat  an mark  can keep killing\""
+        },
+        {
+          "ts": "14:10:28",
+          "direction": "in",
+          "type": "tell",
+          "text": "is there any way to track the  reges  I use? to  see which reges i use the most of to resupply  acuratley",
+          "raw": "CONDOTOO tells you, \"  is there any way to track the  reges  I use? to  see which reges i use the most of to resupply  acuratley\""
+        },
+        {
+          "ts": "14:10:59",
+          "direction": "in",
+          "type": "tell",
+          "text": "<mark",
+          "raw": "CONDOTOO tells you, \" <mark\""
+        },
+        {
+          "ts": "14:20:51",
+          "direction": "out",
+          "type": "tell",
+          "text": "maybe.. there might be a metric there",
+          "raw": "You tell CONDOTOO, \"maybe.. there might be a metric there\""
+        },
+        {
+          "ts": "14:27:55",
+          "direction": "in",
+          "type": "tell",
+          "text": "its for Load outs.  like  when i go to brax  or  thrashers or   shadow beast.   say  i go to Braxx  i have to figure out  reges  each spell use  different quainity off different or the same reges  alot of math  to figure out   usage.",
+          "raw": "CONDOTOO tells you, \"its for Load outs.  like  when i go to brax  or  thrashers or   shadow beast.   say  i go to Braxx  i have to figure out  reges  each spell use  different quainity off different or the same reges  alot of math  to figure out   usage.\""
+        },
+        {
+          "ts": "14:29:06",
+          "direction": "in",
+          "type": "tell",
+          "text": "i actualy use  paper an pencil  to do on desk",
+          "raw": "CONDOTOO tells you, \" i actualy use  paper an pencil  to do on desk\""
+        },
+        {
+          "ts": "14:31:31",
+          "direction": "in",
+          "type": "tell",
+          "text": "when i talk to you on this char    i dont loose   chat  an mark  can keep killing",
+          "raw": "CONDOTOO tells you, \" when i talk to you on this char    i dont loose   chat  an mark  can keep killing\""
         }
       ]
     }

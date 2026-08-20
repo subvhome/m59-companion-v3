@@ -1570,9 +1570,9 @@ class QtFloatingChatBox(QWidget):
                 if not query or query in entry.get('text', '').lower():
                     self.render_entry(entry)
 
-    def append_entry(self, entry):
+    def append_entry(self, entry, is_historical=False):
         ch = entry.get('channel')
-        if ch in ('private', 'guild', 'group'):
+        if ch in ('private', 'guild', 'group') and not is_historical:
             self.notify_private_message()
         is_match = False
         if self.active_channel == "all":
@@ -1811,6 +1811,11 @@ class M59DirectMessageDialog(QDialog):
 
         layout.addWidget(content_widget, 1)
 
+        # Prevent buttons from acting as default QDialog submit triggers
+        for b in (close_btn, clear_btn, mark_read_btn, send_btn):
+            b.setAutoDefault(False)
+            b.setDefault(False)
+
         # Load queued messages
         self.refresh_messages()
 
@@ -1966,6 +1971,17 @@ class M59DirectMessageDialog(QDialog):
     def mouseReleaseEvent(self, event):
         self.is_dragging = False
         event.accept()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            # QLineEdit.returnPressed already triggers send_reply when focus is in reply_input.
+            # Accept event to prevent dialog closing without invoking send_reply twice.
+            event.accept()
+            return
+        elif event.key() == Qt.Key_Escape:
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event):
         p_key = self.player_name.lower()
@@ -2182,11 +2198,6 @@ class GridReorderContainer(QWidget):
         if not self.cards:
             return
 
-        # Ensure CHARACTER IDENTITY & OVERVIEW is ALWAYS first in self.cards
-        char_cards = [c for c in self.cards if c.title_text == "CHARACTER IDENTITY & OVERVIEW"]
-        other_cards = [c for c in self.cards if c.title_text != "CHARACTER IDENTITY & OVERVIEW"]
-        self.cards = char_cards + other_cards
-
         # Handle 1-column Dock Panel layout
         if self.cols == 1:
             for card in self.cards:
@@ -2219,72 +2230,57 @@ class GridReorderContainer(QWidget):
 
         spacing = 12
 
-        # Group cards into horizontal rows based on available container width
+        # Group cards into horizontal rows based on column spans (max 12 per row)
         rows = []
         current_row = []
-        current_row_w = 0
 
         for card in self.cards:
             if hasattr(card, 'update_width_controls'):
                 card.update_width_controls()
 
-            # Character Overview defaults to full width unless specifically given custom width
-            if card.title_text == "CHARACTER IDENTITY & OVERVIEW" and not getattr(card, 'custom_width', None):
-                card_w = avail_w
-            else:
-                default_w = 420
-                card_w = getattr(card, 'custom_width', None) or default_w
-                card_w = max(280, min(avail_w, card_w))
+            span = getattr(card, 'column_span', 6)
+            if getattr(card, 'custom_width', None):
+                span = max(3, min(12, int(round((card.custom_width / float(max(1, avail_w))) * 12.0 / 3.0) * 3)))
+                card.column_span = span
 
-            card.target_width = card_w
-
-            # If card demands full width or exceeds remaining row space, start new row
-            if card_w >= avail_w or (current_row and current_row_w + card_w + spacing > avail_w):
-                if current_row:
-                    rows.append(current_row)
+            row_span = sum(getattr(c, 'column_span', 6) for c in current_row)
+            if current_row and (row_span + span > 12):
+                rows.append(current_row)
                 current_row = [card]
-                current_row_w = card_w
             else:
                 current_row.append(card)
-                current_row_w += card_w + spacing
 
         if current_row:
             rows.append(current_row)
 
-        # Render rows and align row heights using QHBoxLayout
+        # Render rows and align row heights & widths strictly with zero space
         for row_cards in rows:
             row_layout = QHBoxLayout()
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(spacing)
 
-            # Row height = max ideal height or custom height across all cards in row
-            row_h = 240
+            # Determine unified height for all cards in this row
+            row_h = 220
+            has_custom_h = any(getattr(c, 'custom_height', None) for c in row_cards)
             for c in row_cards:
                 ideal = c.get_content_ideal_height()
                 custom = getattr(c, 'custom_height', None)
                 card_req = max(ideal, custom) if custom else ideal
                 row_h = max(row_h, card_req)
 
+            # Apply identical height and row_siblings to EVERY card in row
             for c in row_cards:
                 c.row_siblings = row_cards
-                if getattr(c, 'custom_height', None):
-                    c.setFixedHeight(c.custom_height)
-                else:
-                    c.setMinimumHeight(row_h)
-                    c.setMaximumHeight(16777215)
+                c.setFixedHeight(row_h)
+                if has_custom_h:
+                    c.custom_height = row_h
 
-                c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                if len(row_cards) == 1 and getattr(c, 'target_width', 0) >= avail_w * 0.9:
-                    c.setMinimumWidth(0)
-                    c.setMaximumWidth(16777215)
-                else:
-                    c.setMinimumWidth(min(280, getattr(c, 'target_width', 380)))
-                    if getattr(c, 'custom_width', None):
-                        c.setFixedWidth(min(avail_w, c.custom_width))
-                    else:
-                        c.setMaximumWidth(16777215)
+                c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                c.setMinimumWidth(100)
+                c.setMaximumWidth(16777215)
 
-                row_layout.addWidget(c)
+                span = getattr(c, 'column_span', 6)
+                row_layout.addWidget(c, stretch=span)
 
             self.main_layout.addLayout(row_layout)
 
@@ -2312,10 +2308,7 @@ class GridReorderContainer(QWidget):
         else:
             self.cards.insert(target_idx + 1, dragged_card)
 
-        # Enforce CHARACTER IDENTITY & OVERVIEW is ALWAYS at index 0
-        char_cards = [c for c in self.cards if c.title_text == "CHARACTER IDENTITY & OVERVIEW"]
-        other_cards = [c for c in self.cards if c.title_text != "CHARACTER IDENTITY & OVERVIEW"]
-        self.cards = char_cards + other_cards
+        self.refresh_layout()
 
         self.refresh_layout()
         if hasattr(self.window(), 'save_layout_config'):
@@ -2403,55 +2396,46 @@ class ReorderableCard(QFrame):
 
         self.header_layout.addStretch()
 
-        # Width / Horizontal Resize Controls (◀ 1/3 ▶)
+        # Width controls for Main Tab tiles
         self.width_control_widget = QWidget()
-        wc_layout = QHBoxLayout(self.width_control_widget)
-        wc_layout.setContentsMargins(0, 0, 0, 0)
-        wc_layout.setSpacing(2)
+        width_layout = QHBoxLayout(self.width_control_widget)
+        width_layout.setContentsMargins(0, 0, 0, 0)
+        width_layout.setSpacing(2)
 
         self.btn_shrink = QPushButton("◀")
-        self.btn_shrink.setToolTip("Shrink tile width")
         self.btn_shrink.setFixedSize(18, 18)
+        self.btn_shrink.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_shrink.setStyleSheet("""
             QPushButton {
-                font-size: 9px; font-weight: 800; color: #94a3b8; background: #030712;
-                border: 1px solid #334155; border-radius: 3px; padding: 0px;
+                background-color: #0f172a; color: #94a3b8; border: 1px solid #334155; border-radius: 3px; font-size: 9px; font-weight: 800;
             }
-            QPushButton:hover {
-                color: #94a3b8; background: #0f172a; border-color: #94a3b8;
-            }
-            QPushButton:disabled {
-                color: #334155; background: #030712; border-color: #0f172a;
-            }
+            QPushButton:hover { background-color: #1e293b; color: #f8fafc; }
+            QPushButton:disabled { color: #334155; border-color: #1e293b; }
         """)
         self.btn_shrink.clicked.connect(self.shrink_width)
 
-        self.span_badge = QLabel(f"{self.column_span}/3")
-        self.span_badge.setAlignment(Qt.AlignCenter)
-        self.span_badge.setStyleSheet("font-size: 9px; font-weight: 800; color: #64748b; padding: 0px 3px;")
+        self.span_badge = QLabel(f"{self.column_span}/12")
+        self.span_badge.setStyleSheet("font-size: 9px; font-weight: 800; color: #64748b; padding: 0 4px;")
 
         self.btn_expand = QPushButton("▶")
-        self.btn_expand.setToolTip("Expand tile width")
         self.btn_expand.setFixedSize(18, 18)
+        self.btn_expand.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_expand.setStyleSheet("""
             QPushButton {
-                font-size: 9px; font-weight: 800; color: #94a3b8; background: #030712;
-                border: 1px solid #334155; border-radius: 3px; padding: 0px;
+                background-color: #0f172a; color: #94a3b8; border: 1px solid #334155; border-radius: 3px; font-size: 9px; font-weight: 800;
             }
-            QPushButton:hover {
-                color: #94a3b8; background: #0f172a; border-color: #94a3b8;
-            }
-            QPushButton:disabled {
-                color: #334155; background: #030712; border-color: #0f172a;
-            }
+            QPushButton:hover { background-color: #1e293b; color: #f8fafc; }
+            QPushButton:disabled { color: #334155; border-color: #1e293b; }
         """)
         self.btn_expand.clicked.connect(self.expand_width)
 
-        wc_layout.addWidget(self.btn_shrink)
-        wc_layout.addWidget(self.span_badge)
-        wc_layout.addWidget(self.btn_expand)
+        width_layout.addWidget(self.btn_shrink)
+        width_layout.addWidget(self.span_badge)
+        width_layout.addWidget(self.btn_expand)
 
+        self.width_control_widget.hide()
         self.header_layout.addWidget(self.width_control_widget)
+
         self.main_layout.addWidget(self.header_frame)
 
         # Scroll Area for Card Content so scrollbars appear if box is small (NO horizontal scrollbar)
@@ -2470,50 +2454,28 @@ class ReorderableCard(QFrame):
         self.scroll_area.setWidget(self.content_widget)
         self.main_layout.addWidget(self.scroll_area, 1)
 
-        # Bottom Bar with Bottom-Right Corner Square Resize Handle (Height & Width)
+        # Bottom bar with diagonal corner resize handle for Main Tab tiles
         self.bottom_bar = QWidget()
-        self.bottom_bar.setFixedHeight(14)
         bottom_layout = QHBoxLayout(self.bottom_bar)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.setSpacing(0)
-
         bottom_layout.addStretch()
 
-        self.corner_resize_handle = QLabel("⤡")
-        self.corner_resize_handle.setFixedSize(16, 14)
-        self.corner_resize_handle.setAlignment(Qt.AlignCenter)
-        self.corner_resize_handle.setCursor(Qt.SizeFDiagCursor)
-        self.corner_resize_handle.setToolTip("Drag corner to resize height (up/down) and width (left/right). Double-click to reset height.")
-        self.corner_resize_handle.setStyleSheet("""
-            QLabel {
-                font-size: 11px;
-                font-weight: 900;
-                color: #94a3b8;
-                background: #030712;
-                border-top: 1px solid #1e293b;
-                border-left: 1px solid #1e293b;
-                border-top-left-radius: 4px;
-                border-bottom-right-radius: 6px;
-            }
-            QLabel:hover {
-                color: #f8fafc;
-                background: #0f172a;
-                border-color: #94a3b8;
-            }
-        """)
-
-        self._diag_resize_start_pos = None
-        self._diag_resize_start_h = None
+        self.corner_resize_handle = QLabel("⇲")
+        self.corner_resize_handle.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        self.corner_resize_handle.setStyleSheet("font-size: 11px; color: #475569; font-weight: 800; padding: 0 2px;")
+        self.corner_resize_handle.setToolTip("Drag to resize tile height & width (double-click to reset)")
         self.corner_resize_handle.mousePressEvent = self.handle_corner_press
         self.corner_resize_handle.mouseMoveEvent = self.handle_corner_move
         self.corner_resize_handle.mouseDoubleClickEvent = self.handle_corner_dblclick
 
         bottom_layout.addWidget(self.corner_resize_handle)
-        self.bottom_bar.show()
+        self.bottom_bar.hide()
         self.main_layout.addWidget(self.bottom_bar)
 
         if grid_container:
             grid_container.add_card(self)
+
+        self.update_width_controls()
 
         # Connect mouse events for fluid header dragging if draggable
         if self.is_draggable:
@@ -2530,8 +2492,7 @@ class ReorderableCard(QFrame):
                 self.content_widget.adjustSize()
                 ch = max(0, self.content_widget.sizeHint().height(), self.content_widget.minimumSizeHint().height())
             hh = self.header_frame.sizeHint().height() if hasattr(self, 'header_frame') and self.header_frame else 22
-            bh = self.bottom_bar.sizeHint().height() if hasattr(self, 'bottom_bar') and self.bottom_bar else 14
-            return ch + hh + bh + 18
+            return ch + hh + 12
 
         ch = 200
         if hasattr(self, 'content_widget') and self.content_widget:
@@ -2539,67 +2500,60 @@ class ReorderableCard(QFrame):
             ch = max(ch, self.content_widget.sizeHint().height(), self.content_widget.minimumSizeHint().height())
 
         hh = self.header_frame.sizeHint().height() if hasattr(self, 'header_frame') and self.header_frame else 28
-        bh = self.bottom_bar.sizeHint().height() if hasattr(self, 'bottom_bar') and self.bottom_bar else 14
-
-        return ch + hh + bh + 24
+        return ch + hh + 14
 
     def add_header_widget(self, widget):
-        idx = max(0, self.header_layout.count() - 2)
-        self.header_layout.insertWidget(idx, widget)
+        if hasattr(self, 'width_control_widget') and self.width_control_widget:
+            idx = self.header_layout.indexOf(self.width_control_widget)
+            if idx >= 0:
+                self.header_layout.insertWidget(idx, widget)
+                return
+        self.header_layout.addWidget(widget)
 
     def shrink_width(self):
-        presets = [320, 420, 560, 800, 1200]
-        curr_w = getattr(self, 'custom_width', None) or 420
-        smaller = [p for p in presets if p < curr_w - 20]
-        if smaller:
-            self.custom_width = max(smaller)
-        else:
-            self.custom_width = 320
-        self.update_width_controls()
-        if self.grid_container:
-            self.grid_container.refresh_layout()
-        if hasattr(self.window(), 'save_layout_config'):
-            self.window().save_layout_config()
+        if self.column_span > 3:
+            self.column_span = max(3, self.column_span - 3)
+            self.custom_width = None
+            if self.grid_container:
+                self.grid_container.refresh_layout()
+            if hasattr(self.window(), 'save_layout_config'):
+                self.window().save_layout_config()
 
     def expand_width(self):
-        presets = [320, 420, 560, 800, 1200]
-        curr_w = getattr(self, 'custom_width', None) or 420
-        larger = [p for p in presets if p > curr_w + 20]
-        if larger:
-            self.custom_width = min(larger)
-        else:
-            self.custom_width = 1200
-        self.update_width_controls()
-        if self.grid_container:
-            self.grid_container.refresh_layout()
-        if hasattr(self.window(), 'save_layout_config'):
-            self.window().save_layout_config()
+        if self.column_span < 12:
+            self.column_span = min(12, self.column_span + 3)
+            self.custom_width = None
+            if self.grid_container:
+                self.grid_container.refresh_layout()
+            if hasattr(self.window(), 'save_layout_config'):
+                self.window().save_layout_config()
 
     def update_width_controls(self):
-        if not hasattr(self, 'width_control_widget') or not self.width_control_widget:
-            return
-        if self.grid_container and self.grid_container.cols == 1:
-            self.width_control_widget.hide()
-            if hasattr(self, 'bottom_bar') and self.bottom_bar:
-                self.bottom_bar.hide()
-            return
+        # Resize options are EXCLUSIVELY for tiles in the Main Dashboard View (12-column grid container).
+        # They MUST NEVER appear in the Dockable Panel (docked or undocked floating window) or in sub-cards.
+        is_main_dashboard = (
+            self.grid_container is not None
+            and getattr(self.grid_container, 'cols', 1) == 12
+            and not isinstance(self, ReorderableSubCard)
+        )
 
-        self.width_control_widget.show()
-        if hasattr(self, 'bottom_bar') and self.bottom_bar:
-            self.bottom_bar.show()
-        curr_w = getattr(self, 'custom_width', None) or 420
-        if hasattr(self, 'span_badge') and self.span_badge:
-            if curr_w >= 1000:
-                txt = "MAX"
-            elif curr_w >= 700:
-                txt = "XL"
-            elif curr_w >= 500:
-                txt = "L"
-            elif curr_w >= 380:
-                txt = "M"
+        if hasattr(self, 'width_control_widget') and self.width_control_widget:
+            if is_main_dashboard:
+                self.width_control_widget.show()
+                if hasattr(self, 'span_badge') and self.span_badge:
+                    self.span_badge.setText(f"{self.column_span}/12")
+                if hasattr(self, 'btn_shrink') and self.btn_shrink:
+                    self.btn_shrink.setEnabled(self.column_span > 3)
+                if hasattr(self, 'btn_expand') and self.btn_expand:
+                    self.btn_expand.setEnabled(self.column_span < 12)
             else:
-                txt = "S"
-            self.span_badge.setText(txt)
+                self.width_control_widget.hide()
+
+        if hasattr(self, 'bottom_bar') and self.bottom_bar:
+            if is_main_dashboard:
+                self.bottom_bar.show()
+            else:
+                self.bottom_bar.hide()
 
     def handle_corner_press(self, event):
         if self.grid_container and self.grid_container.cols == 1:
@@ -2617,9 +2571,19 @@ class ReorderableCard(QFrame):
             dx = curr_pos.x() - self._diag_resize_start_pos.x()
             dy = curr_pos.y() - self._diag_resize_start_pos.y()
 
-            # Individual Tile Resizing (Width & Height)
-            self.custom_width = max(280, int(self._diag_resize_start_w + dx))
-            self.custom_height = max(180, int(self._diag_resize_start_h + dy))
+            # 1. Synchronized Height Resizing: All cards in the row resize to exact same height
+            new_h = max(160, int(self._diag_resize_start_h + dy))
+            self.custom_height = new_h
+            if hasattr(self, 'row_siblings') and self.row_siblings:
+                for sibling in self.row_siblings:
+                    sibling.custom_height = new_h
+
+            # 2. Width Resizing: Map mouse position to column span step (3, 6, 9, 12)
+            avail_w = self.grid_container.width() if self.grid_container else 1100
+            new_w = int(self._diag_resize_start_w + dx)
+            span_step = max(3, min(12, int(round((new_w / float(max(1, avail_w))) * 12.0 / 3.0) * 3)))
+            self.column_span = span_step
+            self.custom_width = None
 
             if self.grid_container:
                 self.grid_container.refresh_layout()
@@ -2632,6 +2596,10 @@ class ReorderableCard(QFrame):
             return
         self.custom_width = None
         self.custom_height = None
+        if hasattr(self, 'row_siblings') and self.row_siblings:
+            for sibling in self.row_siblings:
+                sibling.custom_width = None
+                sibling.custom_height = None
         if self.grid_container:
             self.grid_container.refresh_layout()
         if hasattr(self.window(), 'save_layout_config'):
@@ -2946,10 +2914,10 @@ QListWidget#NavList {
 }
 
 QListWidget#NavList::item {
-    padding: 12px 16px;
-    border-radius: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
     color: #cbd5e1;
-    margin-bottom: 6px;
+    margin-bottom: 2px;
     border: 1px solid transparent;
 }
 
@@ -3087,13 +3055,15 @@ class M59StandaloneDockWindow(QWidget):
         self.parent_app = parent_app
         self.is_docked = False
         self.dock_content = None
-        self.dock_width = 290
+        self.dock_width = getattr(parent_app, 'dock_panel_width', 340)
+        self._resizing_dock = False
 
         self.setWindowTitle("M59 Companion Dock")
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setMinimumWidth(200)
-        self.setMaximumWidth(600)
+        self.setMinimumWidth(220)
+        self.setMaximumWidth(700)
         self.resize(self.dock_width, 800)
+        self.setMouseTracking(True)
         self.setStyleSheet(FLUID_WEB_QSS + """
             M59StandaloneDockWindow {
                 border-left: 3px solid #64748b;
@@ -3115,18 +3085,74 @@ class M59StandaloneDockWindow(QWidget):
         hdr.addStretch()
 
         self.reset_workarea_btn = QPushButton("🧹")
-        self.reset_workarea_btn.setProperty("class", "WebBtnSecondary")
+        self.reset_workarea_btn.setFixedSize(22, 22)
         self.reset_workarea_btn.setToolTip("Fix desktop alignment & reset Windows work area if a gap appears")
+        self.reset_workarea_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 11px; color: #94a3b8; background: transparent;
+                border: 1px solid #334155; border-radius: 4px; padding: 0px;
+            }
+            QPushButton:hover {
+                color: #f8fafc; background: #1e293b; border-color: #475569;
+            }
+        """)
         self.reset_workarea_btn.clicked.connect(self.fix_workarea_alignment)
         hdr.addWidget(self.reset_workarea_btn)
 
-        self.undock_btn = QPushButton("🪟 Undock")
-        self.undock_btn.setProperty("class", "WebBtnSecondary")
+        self.undock_btn = QPushButton("🪟")
+        self.undock_btn.setFixedSize(22, 22)
         self.undock_btn.setToolTip("Undock panel and return to main Companion application")
+        self.undock_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 11px; color: #94a3b8; background: transparent;
+                border: 1px solid #334155; border-radius: 4px; padding: 0px;
+            }
+            QPushButton:hover {
+                color: #f8fafc; background: #1e293b; border-color: #475569;
+            }
+        """)
         self.undock_btn.clicked.connect(self.undock_desktop)
         hdr.addWidget(self.undock_btn)
 
         self.container_layout.addLayout(hdr)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if event.position().x() <= 12:
+                self._resizing_dock = True
+                self._resize_start_pos = event.globalPosition()
+                self._resize_start_w = self.width()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if getattr(self, '_resizing_dock', False):
+            dx = event.globalPosition().x() - self._resize_start_pos.x()
+            new_w = max(220, min(700, int(self._resize_start_w - dx)))
+            self.dock_width = new_w
+            self.resize(new_w, self.height())
+            if self.is_docked:
+                hwnd = int(self.winId())
+                register_window_appbar(hwnd, width=new_w)
+            if self.parent_app:
+                self.parent_app.dock_panel_width = new_w
+                self.parent_app.save_layout_config()
+            event.accept()
+            return
+        else:
+            if event.position().x() <= 12:
+                self.setCursor(Qt.SizeHorCursor)
+            else:
+                self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if getattr(self, '_resizing_dock', False):
+            self._resizing_dock = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def fix_workarea_alignment(self):
         """Forces an instant recalculation of Windows AppBar positioning and clears any ghost gap."""
@@ -3250,6 +3276,7 @@ class M59CompanionApp(QMainWindow):
         self.wholist_monitor = None
         self.wholist_data = {}
         self.use_24h_clock = True
+        self.dock_panel_width = 340
         self.right_panel_collapsed = False
 
         # Models
@@ -3312,9 +3339,12 @@ class M59CompanionApp(QMainWindow):
             "player_list": 13,
             "chat_logger": 13,
             "dashboard_cards": 13,
-            "clock_panel": 20,
+            "clock_panel": 13,
             "sidebar_nav": 13,
         }
+        loaded_gui = self.load_gui_settings()
+        if "font_settings" in loaded_gui and isinstance(loaded_gui["font_settings"], dict):
+            self.font_settings.update(loaded_gui["font_settings"])
 
         # Apply Fluid QSS
         self.setStyleSheet(FLUID_WEB_QSS)
@@ -3361,91 +3391,66 @@ class M59CompanionApp(QMainWindow):
         # --------------------------------------------------------------
         sidebar = QWidget()
         sidebar.setObjectName("SidebarWidget")
-        sidebar.setFixedWidth(240)
+        sidebar.setFixedWidth(195)
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(16, 20, 16, 20)
-        sidebar_layout.setSpacing(12)
+        sidebar_layout.setContentsMargins(10, 12, 10, 12)
+        sidebar_layout.setSpacing(6)
 
-        # Brand Title Header
-        brand_box = QHBoxLayout()
-        logo_badge = QLabel("M59")
-        logo_badge.setStyleSheet("""
-            background-color: rgba(16, 185, 129, 0.15);
-            color: #94a3b8;
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            border-radius: 8px;
-            font-weight: 900;
-            font-size: 12px;
-            padding: 6px 10px;
-        """)
-        brand_box.addWidget(logo_badge)
-
+        # Brand Title Header (Minimal Text)
         title_v = QVBoxLayout()
+        title_v.setContentsMargins(0, 0, 0, 0)
+        title_v.setSpacing(1)
         t1 = QLabel("M59 Companion", objectName="SidebarTitle")
+        t1.setStyleSheet("font-size: 14px; font-weight: 800; color: #f8fafc;")
         t2 = QLabel(f"v{str(self.version).lstrip('v')}", objectName="SidebarSub")
+        t2.setStyleSheet("font-size: 10px; color: #64748b; font-weight: 600;")
         title_v.addWidget(t1)
         title_v.addWidget(t2)
-        brand_box.addLayout(title_v)
-        brand_box.addStretch()
-        sidebar_layout.addLayout(brand_box)
+        sidebar_layout.addLayout(title_v)
 
-        sidebar_layout.addSpacing(10)
-
-        # Nav Section Header
-        sec_lbl = QLabel("SECTIONS")
-        sec_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #475569; letter-spacing: 1px;")
-        sidebar_layout.addWidget(sec_lbl)
+        sidebar_layout.addSpacing(4)
 
         # Navigation Menu List
         self.nav_list = QListWidget()
         self.nav_list.setObjectName("NavList")
         self.nav_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.nav_list.setMinimumHeight(240)
+        self.nav_list.setMinimumHeight(220)
         self.nav_list.setMaximumHeight(16777215)
-        self.nav_list.addItem("  Dashboard (Main)")
-        self.nav_list.addItem("  Progression (Schools)")
-        self.nav_list.addItem("  Shortcuts (Macros & Elude)")
-        self.nav_list.addItem("  Chat Logger (Comms)")
-        self.nav_list.addItem("  Vault Storage (Ledger)")
-        self.nav_list.addItem("  Kill Book (Ledger)")
-        self.nav_list.addItem("  Settings (Preferences)")
+        self.nav_list.addItem("  Dashboard")
+        self.nav_list.addItem("  Progression")
+        self.nav_list.addItem("  Shortcuts")
+        self.nav_list.addItem("  Chat Logger")
+        self.nav_list.addItem("  Vault Storage")
+        self.nav_list.addItem("  Kill Book")
+        self.nav_list.addItem("  Settings")
         self.nav_list.currentRowChanged.connect(self.switch_section)
         sidebar_layout.addWidget(self.nav_list, 1)
 
-        # Live Game Engine Attachment Box
-        self.status_box = QFrame()
-        self.status_box.setStyleSheet("background-color: #030712; border: 1px solid #334155; border-radius: 10px;")
-        sb_layout = QVBoxLayout(self.status_box)
-        sb_layout.setContentsMargins(8, 8, 8, 8)
-        sb_layout.setSpacing(6)
-
-        st_hdr = QLabel("GAME ATTACHMENT PROCESS")
-        st_hdr.setStyleSheet("font-size: 9px; font-weight: 800; color: #64748b; letter-spacing: 0.8px;")
-        sb_layout.addWidget(st_hdr)
-
+        # Live Game Status & Action Controls (Minimal Flat Display)
         self.status_txt = QLabel("🟡 Searching for meridian.exe...")
-        self.status_txt.setStyleSheet("font-size: 11px; font-weight: 700; color: #f59e0b;")
-        sb_layout.addWidget(self.status_txt)
+        self.status_txt.setStyleSheet("font-size: 10px; font-weight: 700; color: #f59e0b; padding: 2px 0px;")
+        self.status_txt.setWordWrap(True)
+        sidebar_layout.addWidget(self.status_txt)
 
-        # Action Buttons (Bottom-Left Controls)
-        btn_box = QVBoxLayout()
-        btn_box.setSpacing(4)
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(4)
 
-        self.sync_btn = QPushButton("🔄 Scrape Memory Stats")
+        self.sync_btn = QPushButton("🔄 Sync")
+        self.sync_btn.setFixedHeight(26)
         self.sync_btn.setProperty("class", "WebBtnPrimary")
         self.sync_btn.setToolTip("Triggers live memory scraping cycle.")
         self.sync_btn.clicked.connect(self.trigger_manual_sync)
-        btn_box.addWidget(self.sync_btn)
+        btn_row.addWidget(self.sync_btn, 1)
 
-        self.reset_layout_btn = QPushButton("↺ Reset View")
+        self.reset_layout_btn = QPushButton("↺ Reset")
+        self.reset_layout_btn.setFixedHeight(26)
         self.reset_layout_btn.setProperty("class", "WebBtnSecondary")
         self.reset_layout_btn.setToolTip("Reset dashboard layout")
         self.reset_layout_btn.clicked.connect(self.reset_layout_config)
-        btn_box.addWidget(self.reset_layout_btn)
+        btn_row.addWidget(self.reset_layout_btn, 1)
 
-        sb_layout.addLayout(btn_box)
-
-        sidebar_layout.addWidget(self.status_box)
+        sidebar_layout.addLayout(btn_row)
 
         main_layout.addWidget(sidebar)
 
@@ -3482,16 +3487,13 @@ class M59CompanionApp(QMainWindow):
         self.page_settings = self.build_settings_page()
         self.stacked_widget.addWidget(self.page_settings)
 
-        main_layout.addWidget(self.stacked_widget, 1)
-
         # --------------------------------------------------------------
         # 3. RIGHT COLLAPSIBLE SIDE PANEL (Who List, Game Clock & Bottom Dock)
         # --------------------------------------------------------------
         self.right_panel = QWidget()
         self.right_panel.setObjectName("RightPanelWidget")
-        self.right_panel.setMinimumWidth(200)
+        self.right_panel.setMinimumWidth(220)
         self.right_panel.setMaximumWidth(700)
-        self.right_panel.setFixedWidth(290)
         self.right_panel_layout = QVBoxLayout(self.right_panel)
         self.right_panel_layout.setContentsMargins(0, 0, 0, 0)
         self.right_panel_layout.setSpacing(0)
@@ -3506,13 +3508,13 @@ class M59CompanionApp(QMainWindow):
         rp_hdr.addWidget(self.rp_title)
         rp_hdr.addStretch()
 
-        self.dock_desktop_btn = QPushButton("📌 Dock")
-        self.dock_desktop_btn.setFixedHeight(24)
-        self.dock_desktop_btn.setToolTip("Snap Dock Panel to Right Edge of Desktop Screen as an AppBar")
+        self.dock_desktop_btn = QPushButton("📌")
+        self.dock_desktop_btn.setFixedSize(26, 24)
+        self.dock_desktop_btn.setToolTip("Dock Panel to Desktop Screen as an AppBar")
         self.dock_desktop_btn.setStyleSheet("""
             QPushButton {
-                font-size: 10px; font-weight: 600; color: #94a3b8; background: transparent;
-                border: 1px solid #334155; border-radius: 4px; padding: 2px 8px;
+                font-size: 11px; font-weight: 700; color: #94a3b8; background: transparent;
+                border: 1px solid #334155; border-radius: 4px; padding: 0px;
             }
             QPushButton:hover {
                 color: #f8fafc; background: #1e293b; border-color: #475569;
@@ -3521,16 +3523,16 @@ class M59CompanionApp(QMainWindow):
         self.dock_desktop_btn.clicked.connect(self.toggle_desktop_dock)
         rp_hdr.addWidget(self.dock_desktop_btn)
 
-        self.collapse_btn = QPushButton("⇥ Hide")
-        self.collapse_btn.setFixedHeight(24)
+        self.collapse_btn = QPushButton("⇥")
+        self.collapse_btn.setFixedSize(26, 24)
         self.collapse_btn.setToolTip("Hide / Collapse Dock Panel")
         self.collapse_btn.setStyleSheet("""
             QPushButton {
-                font-size: 10px; font-weight: 700; color: #f8fafc; background: #334155;
-                border: 1px solid #475569; border-radius: 4px; padding: 2px 8px;
+                font-size: 11px; font-weight: 700; color: #94a3b8; background: transparent;
+                border: 1px solid #334155; border-radius: 4px; padding: 0px;
             }
             QPushButton:hover {
-                background: #475569; border-color: #64748b;
+                color: #f8fafc; background: #1e293b; border-color: #475569;
             }
         """)
         self.collapse_btn.clicked.connect(self.toggle_right_panel)
@@ -3548,18 +3550,17 @@ class M59CompanionApp(QMainWindow):
         self.time_bar.setObjectName("DockTimeBar")
         self.time_bar.setStyleSheet("""
             QFrame#DockTimeBar {
-                background-color: #1e293b;
-                border: 1px solid #334155;
+                background-color: #0b1120;
+                border: 1px solid #1e293b;
                 border-radius: 6px;
-                padding: 2px 6px;
             }
         """)
         tb_layout = QHBoxLayout(self.time_bar)
         tb_layout.setContentsMargins(6, 4, 6, 4)
         tb_layout.setSpacing(6)
 
-        clock_lbl = QLabel("🕒 CLOCK")
-        clock_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.5px;")
+        clock_lbl = QLabel("🕒")
+        clock_lbl.setStyleSheet("font-size: 11px; color: #94a3b8;")
 
         self.dock_game_time_lbl = QLabel("12:00:00 ☀️")
         self.dock_game_time_lbl.setAlignment(Qt.AlignCenter)
@@ -3568,15 +3569,18 @@ class M59CompanionApp(QMainWindow):
             font-size: 13px;
             font-weight: 800;
             color: #f8fafc;
+            background: transparent;
+            border: none;
+            padding: 0px;
         """)
 
-        self.time_format_btn = QPushButton("12h / 24h")
-        self.time_format_btn.setFixedSize(54, 20)
+        self.time_format_btn = QPushButton("12/24")
+        self.time_format_btn.setFixedSize(40, 20)
         self.time_format_btn.setToolTip("Toggle 12-hour or 24-hour time format")
         self.time_format_btn.setStyleSheet("""
             QPushButton {
                 font-size: 9px; font-weight: 700; color: #94a3b8; background: #0f172a;
-                border: 1px solid #334155; border-radius: 4px; padding: 0px;
+                border: 1px solid #334155; border-radius: 3px; padding: 0px;
             }
             QPushButton:hover {
                 color: #f8fafc; background: #334155;
@@ -3585,9 +3589,7 @@ class M59CompanionApp(QMainWindow):
         self.time_format_btn.clicked.connect(self.toggle_clock_format)
 
         tb_layout.addWidget(clock_lbl)
-        tb_layout.addStretch()
-        tb_layout.addWidget(self.dock_game_time_lbl)
-        tb_layout.addSpacing(6)
+        tb_layout.addWidget(self.dock_game_time_lbl, 1)
         tb_layout.addWidget(self.time_format_btn)
 
         rpc_layout.addWidget(self.time_bar, 0)
@@ -3652,27 +3654,23 @@ class M59CompanionApp(QMainWindow):
         self.dock_gps_status_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #38bdf8;")
         dock_gps_card.add_header_widget(self.dock_gps_status_lbl)
 
-        # Line 1: Current location + Target status
+        # Line 1: Current location + Target status (Simple text, no background box/elements)
         gps_loc_box = QHBoxLayout()
         gps_loc_box.setContentsMargins(0, 0, 0, 0)
-        gps_loc_box.setSpacing(4)
+        gps_loc_box.setSpacing(6)
 
-        self.dock_gps_loc_lbl = QLabel("📍 Unknown")
-        self.dock_gps_loc_lbl.setStyleSheet("font-size: 9px; font-weight: 700; color: #38bdf8;")
+        self.dock_gps_loc_lbl = QLabel("📍 Current: Unknown")
+        self.dock_gps_loc_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #38bdf8; background: transparent; padding: 0;")
         gps_loc_box.addWidget(self.dock_gps_loc_lbl)
 
-        arrow_lbl = QLabel("➔")
-        arrow_lbl.setStyleSheet("font-size: 9px; color: #64748b;")
-        gps_loc_box.addWidget(arrow_lbl)
-
-        self.dock_gps_target_lbl = QLabel("No Target")
-        self.dock_gps_target_lbl.setStyleSheet("font-size: 9px; font-weight: 700; color: #94a3b8;")
+        self.dock_gps_target_lbl = QLabel("🎯 Target: None")
+        self.dock_gps_target_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #94a3b8; background: transparent; padding: 0;")
         gps_loc_box.addWidget(self.dock_gps_target_lbl)
         gps_loc_box.addStretch()
 
         dock_gps_card.content_layout.addLayout(gps_loc_box)
 
-        # Line 2: Search input with Autocomplete + Action Buttons
+        # Line 2: Search input with Autocomplete + Icon-Only Toggle Button
         gps_input_box = QHBoxLayout()
         gps_input_box.setContentsMargins(0, 0, 0, 0)
         gps_input_box.setSpacing(3)
@@ -3697,76 +3695,52 @@ class M59CompanionApp(QMainWindow):
         dock_completer = self.create_room_completer(self.dock_gps_search)
         if dock_completer:
             self.dock_gps_search.setCompleter(dock_completer)
-        self.dock_gps_search.returnPressed.connect(lambda: self.start_navigation(source_text=self.dock_gps_search.text()))
+        self.dock_gps_search.returnPressed.connect(lambda: self.toggle_navigation(source_text=self.dock_gps_search.text()))
 
-        self.dock_gps_start_btn = QPushButton("GO")
-        self.dock_gps_start_btn.setFixedSize(32, 22)
-        self.dock_gps_start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.dock_gps_start_btn.setStyleSheet("""
+        self.dock_gps_toggle_btn = QPushButton("▶")
+        self.dock_gps_toggle_btn.setFixedSize(24, 22)
+        self.dock_gps_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.dock_gps_toggle_btn.setToolTip("Start or stop GPS route navigation")
+        self.dock_gps_toggle_btn.setStyleSheet("""
             QPushButton {
                 background-color: #16a34a;
                 color: #ffffff;
                 border: none;
                 border-radius: 3px;
-                font-size: 9px;
+                font-size: 10px;
                 font-weight: 800;
             }
             QPushButton:hover {
                 background-color: #22c55e;
             }
         """)
-        self.dock_gps_start_btn.clicked.connect(lambda: self.start_navigation(source_text=self.dock_gps_search.text()))
+        self.dock_gps_toggle_btn.clicked.connect(lambda: self.toggle_navigation(source_text=self.dock_gps_search.text()))
 
-        self.dock_gps_stop_btn = QPushButton("STOP")
-        self.dock_gps_stop_btn.setFixedSize(38, 22)
-        self.dock_gps_stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.dock_gps_stop_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #dc2626;
-                color: #ffffff;
-                border: none;
-                border-radius: 3px;
-                font-size: 9px;
-                font-weight: 800;
-            }
-            QPushButton:hover {
-                background-color: #ef4444;
-            }
-        """)
-        self.dock_gps_stop_btn.clicked.connect(self.stop_navigation)
+        # Compatibility references
+        self.dock_gps_start_btn = self.dock_gps_toggle_btn
+        self.dock_gps_stop_btn = self.dock_gps_toggle_btn
 
         gps_input_box.addWidget(self.dock_gps_search, 1)
-        gps_input_box.addWidget(self.dock_gps_start_btn)
-        gps_input_box.addWidget(self.dock_gps_stop_btn)
+        gps_input_box.addWidget(self.dock_gps_toggle_btn)
 
         dock_gps_card.content_layout.addLayout(gps_input_box)
 
-        # Line 3: Prominent Direction Banner Box with Arrow and Details
-        dock_dir_frame = QFrame()
-        dock_dir_frame.setObjectName("DockGPSDirFrame")
-        dock_dir_frame.setStyleSheet("""
-            QFrame#DockGPSDirFrame {
-                background-color: #030712;
-                border: 1px solid #1e293b;
-                border-radius: 4px;
-            }
-        """)
-        dock_dir_layout = QVBoxLayout(dock_dir_frame)
-        dock_dir_layout.setContentsMargins(6, 4, 6, 4)
-        dock_dir_layout.setSpacing(2)
+        # Line 3: Direct Direction & Details without frame encasing
+        dock_dir_layout = QHBoxLayout()
+        dock_dir_layout.setContentsMargins(0, 2, 0, 0)
+        dock_dir_layout.setSpacing(4)
 
         self.dock_gps_dir_lbl = QLabel("SELECT DESTINATION")
-        self.dock_gps_dir_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #38bdf8;")
-        self.dock_gps_dir_lbl.setWordWrap(True)
+        self.dock_gps_dir_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #38bdf8; background: transparent;")
 
-        self.dock_gps_detail_lbl = QLabel("Enter room name & press GO")
-        self.dock_gps_detail_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #94a3b8;")
+        self.dock_gps_detail_lbl = QLabel("Enter destination & press ▶")
+        self.dock_gps_detail_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #94a3b8; background: transparent;")
         self.dock_gps_detail_lbl.setWordWrap(True)
 
         dock_dir_layout.addWidget(self.dock_gps_dir_lbl)
-        dock_dir_layout.addWidget(self.dock_gps_detail_lbl)
+        dock_dir_layout.addWidget(self.dock_gps_detail_lbl, 1)
 
-        dock_gps_card.content_layout.addWidget(dock_dir_frame)
+        dock_gps_card.content_layout.addLayout(dock_dir_layout)
 
         # Alias for backwards compatibility
         self.dock_gps_step_lbl = self.dock_gps_dir_lbl
@@ -3845,7 +3819,25 @@ class M59CompanionApp(QMainWindow):
         rpc_layout.addWidget(dock_footer_container, 0)
 
         self.right_panel_layout.addWidget(self.right_panel_content)
-        main_layout.addWidget(self.right_panel)
+
+        self.content_splitter = QSplitter(Qt.Horizontal)
+        self.content_splitter.setObjectName("ContentSplitter")
+        self.content_splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #1e293b;
+                width: 5px;
+            }
+            QSplitter::handle:hover {
+                background-color: #3b82f6;
+            }
+        """)
+        self.content_splitter.addWidget(self.stacked_widget)
+        self.content_splitter.addWidget(self.right_panel)
+        self.content_splitter.setCollapsible(0, False)
+        self.content_splitter.setCollapsible(1, False)
+        self.content_splitter.splitterMoved.connect(self.on_dock_splitter_moved)
+
+        main_layout.addWidget(self.content_splitter, 1)
 
         # Load saved view layout configuration & restore window size/position
         self.load_layout_config()
@@ -3856,6 +3848,15 @@ class M59CompanionApp(QMainWindow):
         # Default to Dashboard
         self.nav_list.setCurrentRow(0)
 
+    def on_dock_splitter_moved(self, pos, index):
+        if not getattr(self, 'right_panel_collapsed', False) and not getattr(self, 'is_desktop_docked', False):
+            w = self.right_panel.width()
+            if w >= 200:
+                self.dock_panel_width = w
+                if hasattr(self, 'standalone_dock') and self.standalone_dock:
+                    self.standalone_dock.dock_width = w
+                self.save_layout_config()
+
     def toggle_desktop_dock(self):
         """Toggles docking ONLY the right Dock Panel to the desktop edge as a Windows AppBar.
         When docked, Windows adjusts the desktop work area so maximized windows resize around it."""
@@ -3864,6 +3865,8 @@ class M59CompanionApp(QMainWindow):
 
             if not self.standalone_dock:
                 self.standalone_dock = M59StandaloneDockWindow(self)
+
+            self.standalone_dock.dock_width = getattr(self, 'dock_panel_width', 340)
 
             # Detach right_panel_content from main application and pass to standalone dock
             self.right_panel_layout.removeWidget(self.right_panel_content)
@@ -3889,7 +3892,12 @@ class M59CompanionApp(QMainWindow):
             self.is_desktop_docked = False
 
             if self.standalone_dock:
-                self.right_panel.setFixedWidth(self.standalone_dock.dock_width)
+                self.dock_panel_width = self.standalone_dock.dock_width
+                if hasattr(self, 'content_splitter'):
+                    total_w = max(800, self.width())
+                    self.content_splitter.setSizes([max(400, total_w - self.dock_panel_width), self.dock_panel_width])
+                else:
+                    self.right_panel.setFixedWidth(self.dock_panel_width)
 
             # Return right_panel_content back to main right_panel layout
             if hasattr(self, 'right_panel_content') and self.right_panel_content:
@@ -3907,6 +3915,7 @@ class M59CompanionApp(QMainWindow):
             if hasattr(self, 'update_wholist_gui') and hasattr(self, 'wholist_data'):
                 self.update_wholist_gui(self.wholist_data)
 
+            self.save_layout_config()
             print("[M59-DOCK] Dock Panel restored to main application window.", flush=True)
 
     def get_layout_config_path(self):
@@ -3915,6 +3924,7 @@ class M59CompanionApp(QMainWindow):
     def save_layout_config(self):
         try:
             config = {
+                "dock_panel_width": getattr(self, 'dock_panel_width', 340),
                 "dashboard_grid": [],
                 "dock_grid": []
             }
@@ -3922,6 +3932,7 @@ class M59CompanionApp(QMainWindow):
                 for c in self.dashboard_grid.cards:
                     config["dashboard_grid"].append({
                         "title": c.title_text,
+                        "span": getattr(c, 'column_span', 6),
                         "width": getattr(c, 'custom_width', None),
                         "height": getattr(c, 'custom_height', None)
                     })
@@ -3929,6 +3940,7 @@ class M59CompanionApp(QMainWindow):
                 for c in self.dock_grid.cards:
                     config["dock_grid"].append({
                         "title": c.title_text,
+                        "span": getattr(c, 'column_span', 1),
                         "width": getattr(c, 'custom_width', None),
                         "height": getattr(c, 'custom_height', None)
                     })
@@ -3947,6 +3959,16 @@ class M59CompanionApp(QMainWindow):
             with open(path, "r", encoding="utf-8") as f:
                 config = json.load(f)
 
+            if "dock_panel_width" in config and config["dock_panel_width"]:
+                self.dock_panel_width = config["dock_panel_width"]
+                if hasattr(self, 'content_splitter'):
+                    total_w = max(800, self.width())
+                    self.content_splitter.setSizes([max(400, total_w - self.dock_panel_width), self.dock_panel_width])
+                elif hasattr(self, 'right_panel') and not getattr(self, 'right_panel_collapsed', False):
+                    self.right_panel.setFixedWidth(self.dock_panel_width)
+                if hasattr(self, 'standalone_dock') and self.standalone_dock:
+                    self.standalone_dock.dock_width = self.dock_panel_width
+
             if hasattr(self, 'dashboard_grid') and self.dashboard_grid and "dashboard_grid" in config:
                 card_map = {c.title_text: c for c in self.dashboard_grid.cards}
                 new_cards = []
@@ -3954,6 +3976,8 @@ class M59CompanionApp(QMainWindow):
                     t = item.get("title")
                     if t in card_map:
                         c = card_map.pop(t)
+                        if "span" in item and item["span"]:
+                            c.column_span = item["span"]
                         c.custom_width = item.get("width")
                         c.custom_height = item.get("height")
                         new_cards.append(c)
@@ -3968,6 +3992,8 @@ class M59CompanionApp(QMainWindow):
                     t = item.get("title")
                     if t in card_map:
                         c = card_map.pop(t)
+                        if "span" in item and item["span"]:
+                            c.column_span = item["span"]
                         c.custom_width = item.get("width")
                         c.custom_height = item.get("height")
                         new_cards.append(c)
@@ -3997,6 +4023,7 @@ class M59CompanionApp(QMainWindow):
 
             if hasattr(self, 'dashboard_grid') and self.dashboard_grid:
                 for c in self.dashboard_grid.cards:
+                    c.column_span = getattr(c, 'default_colspan', 6)
                     c.custom_width = None
                     c.custom_height = None
 
@@ -4036,6 +4063,15 @@ class M59CompanionApp(QMainWindow):
                 sub_map = {c.title_text: c for c in self.dock_sub_grid.cards}
                 self.dock_sub_grid.cards = [sub_map[t] for t in title_order if t in sub_map] + [c for t, c in sub_map.items() if t not in title_order]
                 self.dock_sub_grid.refresh_layout()
+
+            self.dock_panel_width = 340
+            if hasattr(self, 'content_splitter'):
+                total_w = max(800, self.width())
+                self.content_splitter.setSizes([max(400, total_w - 340), 340])
+            elif hasattr(self, 'right_panel'):
+                self.right_panel.setFixedWidth(340)
+            if hasattr(self, 'standalone_dock') and self.standalone_dock:
+                self.standalone_dock.dock_width = 340
 
             print("[M59-LAYOUT] Dashboard layout reset to default.", flush=True)
         except Exception as e:
@@ -4153,7 +4189,14 @@ class M59CompanionApp(QMainWindow):
 
     def toggle_right_panel(self):
         if getattr(self, 'right_panel_collapsed', False):
-            self.right_panel.setFixedWidth(290)
+            self.right_panel.setMinimumWidth(220)
+            self.right_panel.setMaximumWidth(700)
+            w = getattr(self, 'dock_panel_width', 340)
+            if hasattr(self, 'content_splitter'):
+                total_w = max(800, self.width())
+                self.content_splitter.setSizes([max(400, total_w - w), w])
+            else:
+                self.right_panel.setFixedWidth(w)
             self.right_panel_content.show()
             if hasattr(self, 'rp_title'):
                 self.rp_title.show()
@@ -4163,6 +4206,8 @@ class M59CompanionApp(QMainWindow):
             self.collapse_btn.setToolTip("Hide / Collapse Dock Panel")
             self.right_panel_collapsed = False
         else:
+            self.right_panel.setMinimumWidth(36)
+            self.right_panel.setMaximumWidth(36)
             self.right_panel.setFixedWidth(36)
             self.right_panel_content.hide()
             if hasattr(self, 'rp_title'):
@@ -4207,56 +4252,47 @@ class M59CompanionApp(QMainWindow):
         self.dashboard_grid = GridReorderContainer(cols=12)
         layout.addWidget(self.dashboard_grid, 1)
 
-        # 1. UNIFIED TILE: CHARACTER IDENTITY & OVERVIEW (Shiftable)
-        char_card = ReorderableCard("CHARACTER IDENTITY & OVERVIEW", self.dashboard_grid, default_colspan=12, is_draggable=True)
-        char_card.content_layout.setContentsMargins(10, 8, 10, 10)
-        char_card.content_layout.setSpacing(10)
+        # 1. UNIFIED TILE: CHARACTER IDENTITY & OVERVIEW (Shiftable - Minimal 6-Col)
+        char_card = ReorderableCard("CHARACTER IDENTITY & OVERVIEW", self.dashboard_grid, default_colspan=6, is_draggable=True)
+        char_card.content_layout.setContentsMargins(8, 6, 8, 8)
+        char_card.content_layout.setSpacing(6)
 
         # CHARACTER NAME & ATTACHMENT OVERVIEW
+        char_hdr_box = QHBoxLayout()
+        char_hdr_box.setContentsMargins(0, 0, 0, 0)
+        char_hdr_box.setSpacing(8)
+
         self.char_name_lbl = QLabel("CHARACTER: --")
-        self.char_name_lbl.setStyleSheet("font-size: 15px; font-weight: 800; color: #f8fafc;")
+        self.char_name_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #f8fafc;")
 
-        self.char_sub_lbl = QLabel("ATTACHMENT: Waiting for Meridian 59 process...")
-        self.char_sub_lbl.setStyleSheet("font-size: 11px; color: #64748b;")
-        self.char_sub_lbl.setWordWrap(True)
+        self.char_sub_lbl = QLabel("Waiting for process...")
+        self.char_sub_lbl.setStyleSheet("font-size: 10px; color: #64748b;")
 
-        char_card.content_layout.addWidget(self.char_name_lbl)
-        char_card.content_layout.addWidget(self.char_sub_lbl)
+        char_hdr_box.addWidget(self.char_name_lbl)
+        char_hdr_box.addStretch()
+        char_hdr_box.addWidget(self.char_sub_lbl)
 
-        # Divider line
-        div1 = QFrame()
-        div1.setFrameShape(QFrame.HLine)
-        div1.setStyleSheet("background-color: #1e293b; max-height: 1px;")
-        char_card.content_layout.addWidget(div1)
+        char_card.content_layout.addLayout(char_hdr_box)
 
-        # VITAL GAUGES
-        vc_title = QLabel("VITAL GAUGES")
-        vc_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #ef4444; letter-spacing: 0.8px;")
-        char_card.content_layout.addWidget(vc_title)
+        # VITAL GAUGES (COMPACT 3-COLUMN SIDE-BY-SIDE LAYOUT)
+        vitals_row = QHBoxLayout()
+        vitals_row.setContentsMargins(0, 2, 0, 2)
+        vitals_row.setSpacing(8)
 
-        self.hp_bar_widget = self.create_vital_gauge("HEALTH (HP)", "#ef4444", 150)
-        char_card.content_layout.addLayout(self.hp_bar_widget['layout'])
+        self.hp_bar_widget = self.create_vital_gauge("HEALTH", "#ef4444", 150)
+        self.mp_bar_widget = self.create_vital_gauge("MANA", "#3b82f6", 250)
+        self.vg_bar_widget = self.create_vital_gauge("VIGOR", "#64748b", 200)
 
-        self.mp_bar_widget = self.create_vital_gauge("MANA (MP)", "#3b82f6", 250)
-        char_card.content_layout.addLayout(self.mp_bar_widget['layout'])
+        vitals_row.addLayout(self.hp_bar_widget['layout'], 1)
+        vitals_row.addLayout(self.mp_bar_widget['layout'], 1)
+        vitals_row.addLayout(self.vg_bar_widget['layout'], 1)
 
-        self.vg_bar_widget = self.create_vital_gauge("VIGOR (VG)", "#64748b", 200)
-        char_card.content_layout.addLayout(self.vg_bar_widget['layout'])
+        char_card.content_layout.addLayout(vitals_row)
 
-        # Divider line
-        div2 = QFrame()
-        div2.setFrameShape(QFrame.HLine)
-        div2.setStyleSheet("background-color: #1e293b; max-height: 1px;")
-        char_card.content_layout.addWidget(div2)
-
-        # CHARACTER ATTRIBUTES (COMPACT CLEAN LIST FORMAT - TIGHT PADDING)
-        ac_title = QLabel("CHARACTER ATTRIBUTES")
-        ac_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
-        char_card.content_layout.addWidget(ac_title)
-
+        # CHARACTER ATTRIBUTES (COMPACT CLEAN LIST FORMAT)
         attr_list_layout = QHBoxLayout()
         attr_list_layout.setContentsMargins(0, 0, 0, 0)
-        attr_list_layout.setSpacing(12)
+        attr_list_layout.setSpacing(8)
 
         col1_layout = QVBoxLayout()
         col1_layout.setContentsMargins(0, 0, 0, 0)
@@ -4275,10 +4311,10 @@ class M59CompanionApp(QMainWindow):
             row_layout.setContentsMargins(2, 1, 2, 1)
 
             lbl_title = QLabel(key.upper())
-            lbl_title.setStyleSheet("font-size: 10px; font-weight: 700; color: #94a3b8; background: transparent;")
+            lbl_title.setStyleSheet("font-size: 9px; font-weight: 700; color: #94a3b8; background: transparent;")
 
             lbl_val = QLabel("--")
-            lbl_val.setStyleSheet("font-size: 11px; font-weight: 900; color: #94a3b8; background: transparent;")
+            lbl_val.setStyleSheet("font-size: 10px; font-weight: 900; color: #94a3b8; background: transparent;")
             lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
             self.attr_labels[key] = lbl_val
@@ -4297,26 +4333,16 @@ class M59CompanionApp(QMainWindow):
 
         char_card.content_layout.addLayout(attr_list_layout)
 
-        # Divider line
-        div3 = QFrame()
-        div3.setFrameShape(QFrame.HLine)
-        div3.setStyleSheet("background-color: #1e293b; max-height: 1px;")
-        char_card.content_layout.addWidget(div3)
-
-        # BANK BALANCES (CLEAN TEXT DISPLAY)
-        bank_title = QLabel("BANK BALANCES")
-        bank_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
-        char_card.content_layout.addWidget(bank_title)
-
+        # BANK BALANCES
         bank_text_layout = QHBoxLayout()
-        bank_text_layout.setContentsMargins(0, 0, 0, 0)
-        bank_text_layout.setSpacing(12)
+        bank_text_layout.setContentsMargins(0, 2, 0, 0)
+        bank_text_layout.setSpacing(8)
 
         self.bank_mainland_lbl = QLabel("Mainland Bank: 0 shillings")
-        self.bank_mainland_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #e2e8f0;")
+        self.bank_mainland_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #e2e8f0;")
 
         self.bank_island_lbl = QLabel("Island Bank: 0 shillings")
-        self.bank_island_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #e2e8f0;")
+        self.bank_island_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #e2e8f0;")
 
         bank_text_layout.addWidget(self.bank_mainland_lbl)
         bank_text_layout.addStretch()
@@ -4327,46 +4353,31 @@ class M59CompanionApp(QMainWindow):
         # 2. GPS NAVIGATION TILE (Placed right after CHARACTER IDENTITY & OVERVIEW)
         gps_card = ReorderableCard("GPS NAVIGATION", self.dashboard_grid, default_colspan=6, is_draggable=True)
         gps_card.content_layout.setContentsMargins(8, 8, 8, 8)
-        gps_card.content_layout.setSpacing(8)
+        gps_card.content_layout.setSpacing(6)
 
-        # Top Bar: Location & Destination Badges
+        # Top Control Cluster
+        gps_top_cluster = QVBoxLayout()
+        gps_top_cluster.setContentsMargins(0, 0, 0, 0)
+        gps_top_cluster.setSpacing(4)
+
+        # Line 1: Location & Destination Badges
         gps_top_box = QHBoxLayout()
         gps_top_box.setContentsMargins(0, 0, 0, 0)
         gps_top_box.setSpacing(8)
 
-        self.gps_main_loc_lbl = QLabel("📍 CURRENT: Unknown")
-        self.gps_main_loc_lbl.setStyleSheet("""
-            QLabel {
-                background-color: #0f172a;
-                color: #38bdf8;
-                border: 1px solid #1e293b;
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 11px;
-                font-weight: 800;
-            }
-        """)
+        self.gps_main_loc_lbl = QLabel("📍 Current: Unknown")
+        self.gps_main_loc_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #38bdf8; background: transparent; padding: 0;")
 
-        self.gps_main_target_lbl = QLabel("🏁 TARGET: None")
-        self.gps_main_target_lbl.setStyleSheet("""
-            QLabel {
-                background-color: #0f172a;
-                color: #f1f5f9;
-                border: 1px solid #1e293b;
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 11px;
-                font-weight: 800;
-            }
-        """)
+        self.gps_main_target_lbl = QLabel("🎯 Target: None")
+        self.gps_main_target_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #94a3b8; background: transparent; padding: 0;")
 
         gps_top_box.addWidget(self.gps_main_loc_lbl)
         gps_top_box.addWidget(self.gps_main_target_lbl)
         gps_top_box.addStretch()
 
-        gps_card.content_layout.addLayout(gps_top_box)
+        gps_top_cluster.addLayout(gps_top_box)
 
-        # Search Bar + Action Buttons
+        # Line 2: Search Bar + Action Button (Icon only)
         gps_search_box = QHBoxLayout()
         gps_search_box.setContentsMargins(0, 0, 0, 0)
         gps_search_box.setSpacing(6)
@@ -4394,86 +4405,59 @@ class M59CompanionApp(QMainWindow):
         main_completer = self.create_room_completer(self.gps_main_search)
         if main_completer:
             self.gps_main_search.setCompleter(main_completer)
-        self.gps_main_search.returnPressed.connect(lambda: self.start_navigation(source_text=self.gps_main_search.text()))
+        self.gps_main_search.returnPressed.connect(lambda: self.toggle_navigation(source_text=self.gps_main_search.text()))
 
-        self.gps_main_start_btn = QPushButton("START GPS")
-        self.gps_main_start_btn.setFixedHeight(28)
-        self.gps_main_start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.gps_main_start_btn.setStyleSheet("""
+        self.gps_main_btn = QPushButton("▶")
+        self.gps_main_btn.setFixedSize(32, 28)
+        self.gps_main_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.gps_main_btn.setStyleSheet("""
             QPushButton {
                 background-color: #16a34a;
                 color: #ffffff;
                 border: none;
                 border-radius: 4px;
-                padding: 0 12px;
-                font-size: 11px;
+                font-size: 12px;
                 font-weight: 800;
             }
             QPushButton:hover {
                 background-color: #22c55e;
             }
         """)
-        self.gps_main_start_btn.clicked.connect(lambda: self.start_navigation(source_text=self.gps_main_search.text()))
+        self.gps_main_btn.clicked.connect(lambda: self.toggle_navigation(source_text=self.gps_main_search.text()))
 
-        self.gps_main_stop_btn = QPushButton("STOP")
-        self.gps_main_stop_btn.setFixedHeight(28)
-        self.gps_main_stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.gps_main_stop_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #dc2626;
-                color: #ffffff;
-                border: none;
-                border-radius: 4px;
-                padding: 0 12px;
-                font-size: 11px;
-                font-weight: 800;
-            }
-            QPushButton:hover {
-                background-color: #ef4444;
-            }
-        """)
-        self.gps_main_stop_btn.clicked.connect(self.stop_navigation)
+        # Backward compatibility references
+        self.gps_main_start_btn = self.gps_main_btn
+        self.gps_main_stop_btn = self.gps_main_btn
 
         gps_search_box.addWidget(lbl_search)
         gps_search_box.addWidget(self.gps_main_search, 1)
-        gps_search_box.addWidget(self.gps_main_start_btn)
-        gps_search_box.addWidget(self.gps_main_stop_btn)
+        gps_search_box.addWidget(self.gps_main_btn)
 
-        gps_card.content_layout.addLayout(gps_search_box)
+        gps_top_cluster.addLayout(gps_search_box)
 
-        # Main Navigation Step Banner ("NEXT STEP")
-        step_frame = QFrame()
-        step_frame.setStyleSheet("""
-            QFrame {
-                background-color: #0b1120;
-                border: 1px solid #1e293b;
-                border-radius: 6px;
-            }
-        """)
-        step_layout = QVBoxLayout(step_frame)
-        step_layout.setContentsMargins(10, 8, 10, 8)
-        step_layout.setSpacing(4)
-
-        self.gps_step_header = QLabel("NEXT STEP")
-        self.gps_step_header.setStyleSheet("font-size: 10px; font-weight: 800; color: #3b82f6; letter-spacing: 0.8px;")
+        # Line 3: Navigation Instruction Row
+        step_layout = QHBoxLayout()
+        step_layout.setContentsMargins(0, 0, 0, 0)
+        step_layout.setSpacing(6)
 
         self.gps_instruction_lbl = QLabel("Select a destination to begin navigation...")
-        self.gps_instruction_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #f1f5f9;")
+        self.gps_instruction_lbl.setStyleSheet("font-size: 12px; font-weight: 700; color: #f1f5f9; background: transparent;")
         self.gps_instruction_lbl.setWordWrap(True)
-        self.gps_instruction_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        step_layout.addWidget(self.gps_step_header)
-        step_layout.addWidget(self.gps_instruction_lbl)
+        step_layout.addWidget(self.gps_instruction_lbl, 1)
 
-        gps_card.content_layout.addWidget(step_frame)
+        gps_top_cluster.addLayout(step_layout)
 
-        # Route Preview List
-        route_title = QLabel("ROUTE PREVIEW")
-        route_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px;")
-        gps_card.content_layout.addWidget(route_title)
+        gps_card.content_layout.addLayout(gps_top_cluster)
+
+        # Trip Preview Section (Header + List that expands to fill remaining tile height)
+        self.gps_route_title_lbl = QLabel("TRIP PREVIEW")
+        self.gps_route_title_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.8px; margin-top: 2px;")
+        gps_card.content_layout.addWidget(self.gps_route_title_lbl)
 
         self.gps_route_list = QListWidget()
-        self.gps_route_list.setFixedHeight(100)
+        self.gps_route_list.setMinimumHeight(60)
+        self.gps_route_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.gps_route_list.setStyleSheet("""
             QListWidget {
                 background-color: #090d16;
@@ -4481,8 +4465,8 @@ class M59CompanionApp(QMainWindow):
                 border: 1px solid #1e293b;
                 border-radius: 4px;
                 font-family: monospace;
-                font-size: 11px;
-                padding: 4px;
+                font-size: 10px;
+                padding: 2px;
             }
             QListWidget::item {
                 padding: 3px 6px;
@@ -4493,12 +4477,13 @@ class M59CompanionApp(QMainWindow):
                 color: #ffffff;
             }
         """)
-        gps_card.content_layout.addWidget(self.gps_route_list)
 
-        # Beta Disclaimer Footer
-        beta_lbl = QLabel("⚠ BETA: GPS Navigation is under development. Map dataset may be incomplete.")
-        beta_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #eab308;")
-        gps_card.content_layout.addWidget(beta_lbl)
+        # Add initial idle placeholder item
+        item = QListWidgetItem(" No active route. Enter a destination above to preview trip steps.")
+        item.setForeground(QColor("#64748b"))
+        self.gps_route_list.addItem(item)
+
+        gps_card.content_layout.addWidget(self.gps_route_list, 1)
 
         # 3. VAULT MANAGEMENT TILE WITH TABS (Shiftable)
         vault_card = ReorderableCard("VAULT MANAGEMENT", self.dashboard_grid, default_colspan=6, is_draggable=True)
@@ -6869,6 +6854,7 @@ class M59CompanionApp(QMainWindow):
 
                 # Live Update Across Entire App
                 self.apply_font_settings()
+                self.save_gui_settings({"font_settings": self.font_settings})
 
             slider.valueChanged.connect(on_val_change)
             spin.valueChanged.connect(on_val_change)
@@ -7118,11 +7104,12 @@ class M59CompanionApp(QMainWindow):
             "player_list": 13,
             "chat_logger": 13,
             "dashboard_cards": 13,
-            "clock_panel": 20,
+            "clock_panel": 13,
             "sidebar_nav": 13,
         }
         self.font_settings.update(defaults)
         self.apply_font_settings()
+        self.save_gui_settings({"font_settings": self.font_settings})
         if hasattr(self, 'stacked_widget') and hasattr(self, 'page_settings'):
             current_idx = self.stacked_widget.indexOf(self.page_settings)
             new_page = self.build_settings_page()
@@ -7160,11 +7147,11 @@ class M59CompanionApp(QMainWindow):
                 QListWidget#NavList::item {{
                     background-color: transparent;
                     color: #94a3b8;
-                    border-radius: 8px;
-                    padding: 10px 12px;
+                    border-radius: 6px;
+                    padding: 6px 10px;
                     font-size: {fs}px;
                     font-weight: 700;
-                    margin-bottom: 4px;
+                    margin-bottom: 2px;
                 }}
                 QListWidget#NavList::item:selected {{
                     background-color: rgba(16, 185, 129, 0.15);
@@ -7179,16 +7166,15 @@ class M59CompanionApp(QMainWindow):
 
         # 4. Dock World Clock
         if hasattr(self, 'dock_game_time_lbl') and self.dock_game_time_lbl:
-            fs = self.font_settings.get("clock_panel", 20)
+            fs = self.font_settings.get("clock_panel", 13)
             self.dock_game_time_lbl.setStyleSheet(f"""
                 font-size: {fs}px;
-                font-weight: 900;
+                font-weight: 800;
                 color: #f8fafc;
                 font-family: 'Consolas', monospace;
-                background-color: #030712;
-                border: 1px solid #334155;
-                border-radius: 8px;
-                padding: 10px;
+                background: transparent;
+                border: none;
+                padding: 0px;
             """)
 
         # 5. Dashboard Attribute Labels & Character Title
@@ -7471,7 +7457,7 @@ class M59CompanionApp(QMainWindow):
 
         self._is_initial_sync = is_initial
         self.sync_btn.setEnabled(False)
-        self.sync_btn.setText("⏳ Scraping Memory...")
+        self.sync_btn.setText("⏳ Scraping...")
 
         def scrape_worker():
             try:
@@ -7496,7 +7482,7 @@ class M59CompanionApp(QMainWindow):
     def on_scrape_finished(self):
         """Qt Slot called on main GUI thread when memory scrape cycle finishes."""
         self.sync_btn.setEnabled(True)
-        self.sync_btn.setText("🔄 Scrape Memory Stats")
+        self.sync_btn.setText("🔄 Sync")
 
         if getattr(self, "_is_initial_sync", False):
             self._is_initial_sync = False
@@ -7597,8 +7583,8 @@ class M59CompanionApp(QMainWindow):
 
             item_widget = QWidget()
             item_layout = QHBoxLayout(item_widget)
-            item_layout.setContentsMargins(10, 4, 10, 4)
-            item_layout.setSpacing(6)
+            item_layout.setContentsMargins(6, 1, 6, 1)
+            item_layout.setSpacing(4)
 
             name_lbl = QLabel(name)
             name_lbl.setStyleSheet(f"font-size: {fs}px; font-weight: 700; color: {color}; background: transparent;")
@@ -7616,8 +7602,8 @@ class M59CompanionApp(QMainWindow):
                         color: #f0abfc;
                         font-weight: 800;
                         font-size: 10px;
-                        padding: 1px 6px;
-                        border-radius: 4px;
+                        padding: 1px 5px;
+                        border-radius: 3px;
                         border: 1px solid #c084fc;
                     }
                     QPushButton:hover {
@@ -7635,10 +7621,10 @@ class M59CompanionApp(QMainWindow):
                     QPushButton {
                         background-color: transparent;
                         color: #64748b;
-                        font-size: 11px;
-                        padding: 1px 4px;
+                        font-size: 10px;
+                        padding: 1px 3px;
                         border: none;
-                        border-radius: 4px;
+                        border-radius: 3px;
                     }
                     QPushButton:hover {
                         background-color: #1e293b;
@@ -7650,7 +7636,7 @@ class M59CompanionApp(QMainWindow):
                 item_layout.addWidget(dm_btn)
 
             list_item = QListWidgetItem()
-            list_item.setSizeHint(QSize(0, max(32, fs + 16)))
+            list_item.setSizeHint(QSize(0, max(22, fs + 6)))
             list_item.setData(Qt.UserRole, name)
             self.who_list_widget.addItem(list_item)
             self.who_list_widget.setItemWidget(list_item, item_widget)
@@ -7677,12 +7663,12 @@ class M59CompanionApp(QMainWindow):
             # Section Header Divider
             hdr_item = QListWidgetItem()
             hdr_item.setFlags(Qt.NoItemFlags)
-            hdr_item.setSizeHint(QSize(0, 30))
+            hdr_item.setSizeHint(QSize(0, 24))
 
             hdr_widget = QWidget()
             hw_layout = QHBoxLayout(hdr_widget)
-            hw_layout.setContentsMargins(8, 6, 8, 2)
-            hw_layout.setSpacing(6)
+            hw_layout.setContentsMargins(6, 4, 6, 2)
+            hw_layout.setSpacing(4)
 
             total_off_unread = sum(p[2] for p in matching_offline)
             hdr_lbl = QLabel(f"✉️ OFFLINE DMs ({total_off_unread})")
@@ -7697,8 +7683,8 @@ class M59CompanionApp(QMainWindow):
             for disp_name, p_key, unread_c, last_ts in matching_offline:
                 item_widget = QWidget()
                 item_layout = QHBoxLayout(item_widget)
-                item_layout.setContentsMargins(10, 3, 10, 3)
-                item_layout.setSpacing(6)
+                item_layout.setContentsMargins(6, 1, 6, 1)
+                item_layout.setSpacing(4)
 
                 name_lbl = QLabel(f"⚪ {disp_name}")
                 name_lbl.setStyleSheet(f"font-size: {fs}px; font-weight: 700; color: #c4b5fd; background: transparent;")
@@ -7707,7 +7693,7 @@ class M59CompanionApp(QMainWindow):
 
                 if last_ts:
                     ts_lbl = QLabel(last_ts)
-                    ts_lbl.setStyleSheet("font-size: 10px; color: #64748b; background: transparent;")
+                    ts_lbl.setStyleSheet("font-size: 9px; color: #64748b; background: transparent;")
                     item_layout.addWidget(ts_lbl)
 
                 dm_badge = QPushButton(f"💬 {unread_c}")
@@ -7718,8 +7704,8 @@ class M59CompanionApp(QMainWindow):
                         color: #f0abfc;
                         font-weight: 800;
                         font-size: 10px;
-                        padding: 1px 6px;
-                        border-radius: 4px;
+                        padding: 1px 5px;
+                        border-radius: 3px;
                         border: 1px solid #c084fc;
                     }
                     QPushButton:hover {
@@ -7732,7 +7718,7 @@ class M59CompanionApp(QMainWindow):
                 item_layout.addWidget(dm_badge)
 
                 list_item = QListWidgetItem()
-                list_item.setSizeHint(QSize(0, max(30, fs + 14)))
+                list_item.setSizeHint(QSize(0, max(22, fs + 6)))
                 list_item.setData(Qt.UserRole, disp_name)
                 self.who_list_widget.addItem(list_item)
                 self.who_list_widget.setItemWidget(list_item, item_widget)
@@ -7983,7 +7969,7 @@ class M59CompanionApp(QMainWindow):
     # ------------------------------------------------------------------
     # DIRECT MESSAGES (DMs) & PLAYER MESSAGING ENGINE
     # ------------------------------------------------------------------
-    def record_direct_message(self, timestamp, player_name, text, raw_text, direction="in", msg_type="tell"):
+    def record_direct_message(self, timestamp, player_name, text, raw_text, direction="in", msg_type="tell", is_historical=False):
         """Stores direct message in player conversation thread, tracks unread counters, and triggers UI updates."""
         if not player_name or player_name.lower() in ("you", "--", "unknown"):
             return
@@ -8013,7 +7999,45 @@ class M59CompanionApp(QMainWindow):
             "text": text,
             "raw": raw_text
         }
-        self.player_dms[p_key]["messages"].append(msg_entry)
+
+        # Deduplication check: Avoid adding duplicate identical messages to thread history
+        existing_msgs = self.player_dms[p_key].get("messages", [])
+
+        def _parse_ts_sec(ts_str):
+            try:
+                parts = str(ts_str).strip().split(":")
+                if len(parts) == 3:
+                    return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                elif len(parts) == 2:
+                    return int(parts[0]) * 60 + int(parts[1])
+            except Exception:
+                pass
+            return None
+
+        def _is_dup(m):
+            if m.get("direction") != direction:
+                return False
+            if (m.get("text") or "").strip() != (text or "").strip():
+                return False
+            m_ts = m.get("ts")
+            if m_ts == timestamp:
+                return True
+            s1 = _parse_ts_sec(m_ts)
+            s2 = _parse_ts_sec(timestamp)
+            if s1 is not None and s2 is not None:
+                diff = abs(s1 - s2)
+                if diff > 43200:
+                    diff = 86400 - diff
+                if diff <= 10:
+                    return True
+            else:
+                return True
+            return False
+
+        is_duplicate = any(_is_dup(m) for m in existing_msgs[-10:])
+
+        if not is_duplicate:
+            self.player_dms[p_key]["messages"].append(msg_entry)
 
         # Check if direct message popup is actively open for this player
         is_dm_open = False
@@ -8026,20 +8050,17 @@ class M59CompanionApp(QMainWindow):
             except Exception:
                 pass
 
-        if direction == "in":
+        # Only increment unread count for LIVE, NON-HISTORICAL, NON-DUPLICATE incoming messages
+        is_history_mode = (getattr(self, 'comms_mode', 'live') == 'history')
+        if direction == "in" and not is_historical and not is_history_mode and not is_duplicate:
             if is_dm_open:
                 self.unread_dms[p_key] = 0
             else:
                 self.unread_dms[p_key] = self.unread_dms.get(p_key, 0) + 1
-
-        self.save_dms_cache()
-
-        # Update Who's Online list badges
-        if hasattr(self, 'wholist_data'):
-            self.update_wholist_gui(self.wholist_data)
-
-        # Refresh Private Messages filter badge
-        self.update_dm_ui()
+            self.save_dms_cache()
+            if hasattr(self, 'wholist_data'):
+                self.update_wholist_gui(self.wholist_data)
+            self.update_dm_ui()
 
     def open_dm_with_player(self, player_name):
         """Opens a Direct Message popup dialog for the specified player, marking queued messages read."""
@@ -8097,6 +8118,19 @@ class M59CompanionApp(QMainWindow):
             if hasattr(self, 'wholist_data'):
                 self.update_wholist_gui(self.wholist_data)
             self.update_dm_ui()
+
+    def mark_all_dms_read(self):
+        """Marks all unread direct messages as read and updates UI badges across player list and comms."""
+        self.unread_dms = {}
+        self.save_dms_cache()
+        if hasattr(self, 'wholist_data'):
+            self.update_wholist_gui(self.wholist_data)
+        self.update_dm_ui()
+        if hasattr(self, 'active_floating_chat') and self.active_floating_chat:
+            try:
+                self.active_floating_chat.reset_unread_private()
+            except Exception:
+                pass
 
     def update_dm_ui(self):
         """Refreshes unread DM badge on the Private Messages filter button and active ICQ popups."""
@@ -8256,7 +8290,7 @@ class M59CompanionApp(QMainWindow):
     # ------------------------------------------------------------------
     # Log Processing Pipeline
     # ------------------------------------------------------------------
-    def process_log_line(self, line):
+    def process_log_line(self, line, is_historical=False):
         if not line or not line.strip():
             return
 
@@ -8321,7 +8355,7 @@ class M59CompanionApp(QMainWindow):
 
             self.improves_history.append(msg_text)
             self.imp_count_badge.setText(f"{len(self.improves_history)} Gains")
-            self.add_log_entry(msg_ts, "improves", msg_text)
+            self.add_log_entry(msg_ts, "improves", msg_text, is_historical=is_historical)
 
             # Update progression knowledge cache
             skill_k = gain['name'].lower()
@@ -8336,7 +8370,8 @@ class M59CompanionApp(QMainWindow):
         kill = self.combat_monitor.process_line(msg_text)
         if kill:
             if kill.get("type") == "PK_ALERT":
-                self.trigger_pk_alert()
+                if not is_historical and getattr(self, 'comms_mode', 'live') == 'live':
+                    self.trigger_pk_alert()
             elif kill.get("type") == "KILL":
                 category = kill['category']
                 victim = kill['name']
@@ -8368,7 +8403,7 @@ class M59CompanionApp(QMainWindow):
                 self.kills_history.append(msg_text)
                 total_session_kills = sum(sum(c.values()) for c in self.session_kills.values())
                 self.kill_count_badge.setText(f"{total_session_kills} Kills")
-                self.add_log_entry(msg_ts, "combat", msg_text)
+                self.add_log_entry(msg_ts, "combat", msg_text, is_historical=is_historical)
 
                 if hasattr(self, 'update_killbook_ui'):
                     self.update_killbook_ui()
@@ -8379,23 +8414,25 @@ class M59CompanionApp(QMainWindow):
 
         # If direct message (tell or send), record in player DM ledger
         if is_dm and dm_player:
-            self.record_direct_message(msg_ts, dm_player, dm_body, msg_text, direction=dm_dir, msg_type=dm_type)
+            self.record_direct_message(msg_ts, dm_player, dm_body, msg_text, direction=dm_dir, msg_type=dm_type, is_historical=is_historical)
 
-        self.add_log_entry(msg_ts, channel, msg_text)
+        self.add_log_entry(msg_ts, channel, msg_text, is_historical=is_historical)
 
-    def add_log_entry(self, timestamp, channel, text):
+    def add_log_entry(self, timestamp, channel, text, is_historical=False):
         entry = {"ts": timestamp, "channel": channel, "text": text}
         self.chat_logs.append(entry)
 
-        if channel in ("private", "guild", "group"):
+        is_history_mode = (getattr(self, 'comms_mode', 'live') == 'history')
+        if channel in ("private", "guild", "group") and not is_historical and not is_history_mode:
             self.play_tell_alert()
 
         self.render_chat_line(entry)
 
         if hasattr(self, 'active_floating_chat') and self.active_floating_chat:
             try:
-                self.active_floating_chat.append_entry(entry)
+                self.active_floating_chat.append_entry(entry, is_historical=(is_historical or is_history_mode))
             except Exception:
+                pass
                 pass
 
     def render_chat_line(self, entry):
@@ -8443,6 +8480,8 @@ class M59CompanionApp(QMainWindow):
             btn.setProperty("active", "true" if cid == channel_id else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)
+        if channel_id == "private":
+            self.mark_all_dms_read()
         self.filter_chat_stream()
 
     def filter_chat_stream(self):
@@ -8496,7 +8535,7 @@ class M59CompanionApp(QMainWindow):
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 for line in f:
                     if line.strip():
-                        self.process_log_line(line.strip())
+                        self.process_log_line(line.strip(), is_historical=True)
 
     def return_to_live_stream(self):
         self.comms_mode = "live"
@@ -8522,7 +8561,7 @@ class M59CompanionApp(QMainWindow):
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 for line in f:
                     if line.strip():
-                        self.process_log_line(line.strip())
+                        self.process_log_line(line.strip(), is_historical=True)
 
     # ----------------------------------------------------------------------
     # GPS Navigation Engine & UI Handlers
@@ -8574,6 +8613,12 @@ class M59CompanionApp(QMainWindow):
         if hasattr(self, 'dock_grid') and self.dock_grid:
             self.dock_grid.refresh_layout()
 
+    def toggle_navigation(self, source_text=None):
+        if hasattr(self, 'gps_manager') and self.gps_manager and (self.gps_manager.current_path or self.gps_manager.current_destination_rid):
+            self.stop_navigation()
+        else:
+            self.start_navigation(source_text=source_text)
+
     def start_navigation(self, target_rid=None, source_text=None):
         if target_rid is None and source_text:
             target_rid = self.get_target_rid_from_text(source_text)
@@ -8623,9 +8668,40 @@ class M59CompanionApp(QMainWindow):
 
             target_name = self.gps_manager.dataset.get(target_rid, {}).get('name', 'Target')
             if hasattr(self, 'gps_main_target_lbl'):
-                self.gps_main_target_lbl.setText(f"🏁 TARGET: {target_name}")
+                self.gps_main_target_lbl.setText(f"🎯 Target: {target_name}")
             if hasattr(self, 'dock_gps_target_lbl'):
-                self.dock_gps_target_lbl.setText(target_name)
+                self.dock_gps_target_lbl.setText(f"🎯 Target: {target_name}")
+
+            if hasattr(self, 'gps_main_btn') and self.gps_main_btn:
+                self.gps_main_btn.setText("⏹")
+                self.gps_main_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #dc2626;
+                        color: #ffffff;
+                        border: none;
+                        border-radius: 4px;
+                        font-size: 12px;
+                        font-weight: 800;
+                    }
+                    QPushButton:hover {
+                        background-color: #ef4444;
+                    }
+                """)
+            if hasattr(self, 'dock_gps_toggle_btn') and self.dock_gps_toggle_btn:
+                self.dock_gps_toggle_btn.setText("⏹")
+                self.dock_gps_toggle_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #dc2626;
+                        color: #ffffff;
+                        border: none;
+                        border-radius: 3px;
+                        font-size: 10px;
+                        font-weight: 800;
+                    }
+                    QPushButton:hover {
+                        background-color: #ef4444;
+                    }
+                """)
 
             self.update_gps_navigation_ui()
         else:
@@ -8646,23 +8722,60 @@ class M59CompanionApp(QMainWindow):
             self.gps_manager.current_destination_rid = None
             self.gps_manager.current_path = []
 
+        if hasattr(self, 'gps_main_btn') and self.gps_main_btn:
+            self.gps_main_btn.setText("▶")
+            self.gps_main_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #16a34a;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    font-weight: 800;
+                }
+                QPushButton:hover {
+                    background-color: #22c55e;
+                }
+            """)
+        if hasattr(self, 'dock_gps_toggle_btn') and self.dock_gps_toggle_btn:
+            self.dock_gps_toggle_btn.setText("▶")
+            self.dock_gps_toggle_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #16a34a;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 3px;
+                    font-size: 10px;
+                    font-weight: 800;
+                }
+                QPushButton:hover {
+                    background-color: #22c55e;
+                }
+            """)
+
         if hasattr(self, 'gps_instruction_lbl'):
             self.gps_instruction_lbl.setText("Select a destination to begin navigation...")
-            self.gps_instruction_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #f1f5f9;")
+            self.gps_instruction_lbl.setStyleSheet("font-size: 12px; font-weight: 700; color: #f1f5f9;")
         if hasattr(self, 'gps_main_target_lbl'):
-            self.gps_main_target_lbl.setText("🏁 TARGET: None")
+            self.gps_main_target_lbl.setText("🎯 Target: None")
         if hasattr(self, 'dock_gps_target_lbl'):
-            self.dock_gps_target_lbl.setText("No Target")
+            self.dock_gps_target_lbl.setText("🎯 Target: None")
         if hasattr(self, 'dock_gps_dir_lbl'):
             self.dock_gps_dir_lbl.setText("SELECT DESTINATION")
-            self.dock_gps_dir_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #38bdf8;")
+            self.dock_gps_dir_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #38bdf8;")
         if hasattr(self, 'dock_gps_detail_lbl'):
-            self.dock_gps_detail_lbl.setText("Enter room name & press GO")
-            self.dock_gps_detail_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #94a3b8;")
+            self.dock_gps_detail_lbl.setText("Enter destination & press ▶")
+            self.dock_gps_detail_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #94a3b8;")
         if hasattr(self, 'dock_gps_status_lbl'):
             self.dock_gps_status_lbl.setText("READY")
         if hasattr(self, 'gps_route_list'):
             self.gps_route_list.clear()
+            item = QListWidgetItem(" No active route. Enter a destination above to preview trip steps.")
+            item.setForeground(QColor("#64748b"))
+            self.gps_route_list.addItem(item)
+            self.gps_route_list.show()
+        if hasattr(self, 'gps_route_title_lbl'):
+            self.gps_route_title_lbl.show()
 
         self.refresh_dock_layouts()
 
@@ -8677,18 +8790,59 @@ class M59CompanionApp(QMainWindow):
             self.gps_route_list.clear()
 
         if not path:
+            if hasattr(self, 'gps_route_list'):
+                self.gps_route_list.clear()
+                item = QListWidgetItem(" No active route. Enter a destination above to preview trip steps.")
+                item.setForeground(QColor("#64748b"))
+                self.gps_route_list.addItem(item)
+                self.gps_route_list.show()
+            if hasattr(self, 'gps_route_title_lbl'):
+                self.gps_route_title_lbl.show()
+
             msg = "ARRIVED! You have reached your destination."
             if hasattr(self, 'gps_instruction_lbl'):
                 self.gps_instruction_lbl.setText(msg)
-                self.gps_instruction_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #4ade80;")
+                self.gps_instruction_lbl.setStyleSheet("font-size: 12px; font-weight: 800; color: #4ade80;")
             if hasattr(self, 'dock_gps_dir_lbl'):
                 self.dock_gps_dir_lbl.setText("🏁 ARRIVED!")
-                self.dock_gps_dir_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #4ade80;")
+                self.dock_gps_dir_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #4ade80;")
             if hasattr(self, 'dock_gps_detail_lbl'):
                 self.dock_gps_detail_lbl.setText("Destination reached.")
-                self.dock_gps_detail_lbl.setStyleSheet("font-size: 10px; font-weight: 600; color: #86efac;")
+                self.dock_gps_detail_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #86efac;")
             if hasattr(self, 'dock_gps_status_lbl'):
                 self.dock_gps_status_lbl.setText("ARRIVED")
+
+            if hasattr(self, 'gps_main_btn') and self.gps_main_btn:
+                self.gps_main_btn.setText("▶")
+                self.gps_main_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #16a34a;
+                        color: #ffffff;
+                        border: none;
+                        border-radius: 4px;
+                        font-size: 12px;
+                        font-weight: 800;
+                    }
+                    QPushButton:hover {
+                        background-color: #22c55e;
+                    }
+                """)
+            if hasattr(self, 'dock_gps_toggle_btn') and self.dock_gps_toggle_btn:
+                self.dock_gps_toggle_btn.setText("▶")
+                self.dock_gps_toggle_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #16a34a;
+                        color: #ffffff;
+                        border: none;
+                        border-radius: 3px;
+                        font-size: 10px;
+                        font-weight: 800;
+                    }
+                    QPushButton:hover {
+                        background-color: #22c55e;
+                    }
+                """)
+
             self.refresh_dock_layouts()
             return
 
@@ -8734,6 +8888,9 @@ class M59CompanionApp(QMainWindow):
         self.refresh_dock_layouts()
 
         if hasattr(self, 'gps_route_list'):
+            self.gps_route_list.show()
+            if hasattr(self, 'gps_route_title_lbl'):
+                self.gps_route_title_lbl.show()
             for i, (rid, info) in enumerate(path):
                 prefix = ">> " if i == step_idx else "   "
                 room_name = self.gps_manager.dataset.get(rid, {}).get('name', 'Unknown')
@@ -8742,7 +8899,11 @@ class M59CompanionApp(QMainWindow):
                 item = QListWidgetItem(item_txt)
                 if i == step_idx:
                     item.setForeground(QColor("#38bdf8"))
+                    item.setBackground(QColor("#0f172a"))
+                else:
+                    item.setForeground(QColor("#cbd5e1"))
                 self.gps_route_list.addItem(item)
+            self.gps_route_list.setCurrentRow(step_idx)
 
     def update_gps_room(self, room_name):
         if not room_name or room_name == "Unknown Location":
