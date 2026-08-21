@@ -1,22 +1,67 @@
-# Meridian 59 Companion v3.0
+# Meridian 59 Companion v3.1.4
 
-A modern PySide6/Qt companion dashboard for Meridian 59 featuring real-time client overlay controls, automated map pathfinding & room detection, combat analytics, inventory & vault logging, and spell calculators.
+A modern, high-performance PySide6/Qt companion dashboard and overlay suite for **Meridian 59**. Featuring real-time client memory synchronization, precise spell & skill progression calculations, floating game overlays, automated GPS pathfinding, reagent consumption analytics, cross-session vault ledgers, and multi-channel chat logging with audible DM alerts.
 
 ---
 
 ### 📥 Direct Download
 
-- **🚀 Latest Release**: [Download M59Companion.exe (v3.1.1)](https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion.exe)
+- **🚀 Latest Release**: [Download M59Companion.exe (v3.1.6)](https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion.exe)
 
 ---
 
-### ✨ Key Features
+### ✨ Comprehensive Feature Highlights
 
-- **In-Game Client Overlay**: Attached macro bar, teleport buttons, and floating client overlays.
-- **PK / PvP Danger Indicator**: Visual boundary flash and audio alerts during PvP attacks or player threats.
-- **Interactive Map & GPS**: Real-time room detection, pathfinding routes, and interactive world map.
-- **Inventory, Vault & Bank Tracker**: Complete item tracking, vault storage logs, and bank balance history.
-- **Combat & Spell Analyzer**: Live combat metrics, spellbook calculator, and stats analyzer.
+- **🔊 Audible DM & Whisper Alerts**: Instant audio notifications whenever you receive a direct message or whisper from another player, ensuring you never miss a message while tabbed out or in combat.
+- **💬 Direct Message Chat Boxes**: Dedicated private message popups and messaging tabs for seamless 1-on-1 player communication without cluttering main game text.
+- **🖼️ Floating Chat Overlay with Filters**: Re-sizable and positionable transparent floating chat window designed to overlay directly on top of the Meridian 59 game client. Includes custom channel toggles (Private Messages, Say/Chat, Combat Log, Improves, System Broadcasts) and quick text filtering.
+- **🎯 Precise School Progression Tracker**: Accurate calculation of spell and skill advancement thresholds, goal percentage sums, and remaining percentage requirements down to the exact percentage—unlike standard external tools that rely on rough approximations. Features Intellect attribute scaling and school expand/collapse trees.
+- **🧪 Reagent Usage & Spell Analytics**: Real-time spell casting statistics tracking total spells cast, reagent consumption share gauges, per-spell resource requirement trees, and session reset counters.
+- **📜 Multi-Channel Chat Logger & Parser**: Live-streaming chat reader, historical log manager (`.log` viewer), external log file importer, and manual chat line parser.
+- **⚡ Hotkeys, Spells & Command Buttons**: Trance-steered teleport elusion shortcuts, creature morph spell selector (Ko'catan spoken names), customizable macro hotkeys, and floating action buttons with optional automatic Enter submission.
+- **🏦 Vault Management & Storage Ledger**: Persistent inventory ledger tracking items across Barloque Vault and Hungry Vault with real-time item search and scan synchronization.
+- **📖 Kill Book & Bestiary**: Comprehensive all-time and active session monster slay tracker, player PK ledger, total victory metrics, and an interactive 3D/Sprite model viewer with pose and angle controls.
+- **📌 Dockable Overlay Panel**: Compact, pinable side panel snapped directly alongside the game client (showcased in `screen8.png`) displaying real-time clock (12/24h), Who's Online list with direct message triggers, active GPS navigation route preview, bank balances, bag space capacity, and session improves.
+
+---
+
+### 📸 Application Previews
+
+#### 1. Main Dashboard Overview
+![Main Dashboard Overview](imgs/screen1.png)
+*Central command center featuring Character Identity & Stats (Health/Mana/Vigor), GPS Navigation route preview, School Progression summary, Vault Balances, Session Combat Kills, Session Skill Improves, and the attached Dock Panel.*
+
+#### 2. School Progression Goals Tracker
+![School Progression Goals](imgs/screen2.png)
+*Real-time school progression goal calculator displaying accurate percentage thresholds, goal target sums, Intellect attribute modifiers, and remaining percentage requirements needed to advance.*
+
+#### 3. Reagent Usage & Spell Analytics
+![Reagent Usage & Spell Statistics](imgs/screen3.png)
+*Live spell casting analytics dashboard showcasing total cast counters, reagent consumption share gauges, most-used reagent highlights, and per-spell resource requirement trees.*
+
+#### 4. Hotkeys, Spells & Command Buttons
+![Hotkeys & Macro Buttons](imgs/screen4.png)
+*Configuration screen for trance-steered teleport eludes, Ko'catan creature morph selectors, floating action bars, and customizable command alias hotkeys.*
+
+#### 5. Command Alias & Macro Creator
+![Command Alias Creator](imgs/screen4-1.png)
+*Modal dialog for creating custom command aliases with key binding shortcuts, floating screen buttons, and automatic Enter submission toggles.*
+
+#### 6. Communications & Chat Logger
+![Communications & Chat Logger](imgs/screen5.png)
+*Real-time multi-channel chat log stream with category filters (Private Messages, Say, Combat, Improves, Broadcasts), historical log parser, and floating chat overlay launcher.*
+
+#### 7. Vault Management & Storage Ledger
+![Vault Storage Ledger](imgs/screen6.png)
+*Cross-session vault management interface for searching and tracking item inventories stored in the Barloque Vault and Hungry Vault.*
+
+#### 8. Kill Book & Bestiary with Model Viewer
+![Kill Book & Bestiary](imgs/screen7.png)
+*All-time and session monster kill ledger, player PK tracker, total victory statistics, and an interactive 3D/sprite model viewer featuring pose and angle adjustments.*
+
+#### 9. Dockable Panel Game Overlay
+![Dockable Panel Overlay](imgs/screen8.png)
+*Showcasing the compact dockable panel snapped seamlessly alongside the Meridian 59 game client, providing in-game time, Who's Online list with direct whisper buttons, GPS route tracking, and character status gauges.*
 
 ---
 
@@ -30,4 +75,3 @@ Options available:
 1. **Promote New Release**: Compiles `M59Companion.exe`, generates metadata, updates `README.md`, and tags the release on GitHub.
 2. **Quick Sync**: Syncs code updates directly without triggering a binary build.
 3. **Restore Version**: Reverts working directory to a previous release tag.
-

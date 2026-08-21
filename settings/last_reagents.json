@@ -1,0 +1,88 @@
+{
+  "spells_cast": {
+    "Create Food": 2,
+    "Blink": 1,
+    "Fireball": 1,
+    "Minor Heal": 1,
+    "Touch Of Flame": 1
+  },
+  "reagents_used": {
+    "Elderberry": 4,
+    "Herbs": 5,
+    "Red Mushroom": 2,
+    "Orc Tooth": 1
+  },
+  "spell_reagent_breakdown": {
+    "Create Food": {
+      "Elderberry": 4,
+      "Herbs": 4
+    },
+    "Blink": {},
+    "Fireball": {
+      "Red Mushroom": 2,
+      "Orc Tooth": 1
+    },
+    "Minor Heal": {
+      "Herbs": 1
+    },
+    "Touch Of Flame": {}
+  },
+  "total_casts": 6,
+  "total_reagents": 12,
+  "history": [
+    {
+      "ts": "17:40:26",
+      "spell": "Create Food",
+      "school": "Kraanan",
+      "mana": 10,
+      "reagents": {
+        "Elderberry": 2,
+        "Herbs": 2
+      }
+    },
+    {
+      "ts": "17:40:26",
+      "spell": "Create Food",
+      "school": "Kraanan",
+      "mana": 10,
+      "reagents": {
+        "Elderberry": 2,
+        "Herbs": 2
+      }
+    },
+    {
+      "ts": "17:40:26",
+      "spell": "Blink",
+      "school": "Riija",
+      "mana": 15,
+      "reagents": {}
+    },
+    {
+      "ts": "17:40:26",
+      "spell": "Fireball",
+      "school": "Faren",
+      "mana": 7,
+      "reagents": {
+        "Red Mushroom": 2,
+        "Orc Tooth": 1
+      }
+    },
+    {
+      "ts": "17:40:26",
+      "spell": "Minor Heal",
+      "school": "Shal'ille",
+      "mana": 3,
+      "reagents": {
+        "Herbs": 1
+      }
+    },
+    {
+      "ts": "17:40:26",
+      "spell": "Touch Of Flame",
+      "school": "Faren",
+      "mana": 9,
+      "reagents": {}
+    }
+  ],
+  "last_updated": "2026-08-21 17:40:26"
+}

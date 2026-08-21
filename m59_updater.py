@@ -337,12 +337,18 @@ def show_tk_update_dialog(parent, release_data, on_close=None):
     lbl_cur = tk.Label(top, text=f"Current: v{cur_v}   ➜   New Version: v{latest_v}", font=("Segoe UI", 11, "bold"), fg="#34d399", bg="#0b0f19")
     lbl_cur.pack(anchor="w", padx=20, pady=(0, 10))
 
+    exe_url = release_data.get('exe_url') or REPO_URLS[0]["exe_url"]
+
     # Notes Display
     tk.Label(top, text="Release Details:", font=("Segoe UI", 9, "bold"), fg="#94a3b8", bg="#0b0f19").pack(anchor="w", padx=20, pady=(4, 2))
-    notes_box = tk.Text(top, height=5, bg="#030712", fg="#cbd5e1", font=("Segoe UI", 9), wrap="word", relief="flat", highlightbackground="#1f2937", highlightthickness=1)
-    notes_box.pack(fill="x", padx=20, pady=(0, 8))
+    notes_box = tk.Text(top, height=4, bg="#030712", fg="#cbd5e1", font=("Segoe UI", 9), wrap="word", relief="flat", highlightbackground="#1f2937", highlightthickness=1)
+    notes_box.pack(fill="x", padx=20, pady=(0, 4))
     notes_box.insert("1.0", release_data.get('release_notes') or "Latest release build.")
     notes_box.config(state="disabled")
+
+    # Folder Setup Notice
+    lbl_notice = tk.Label(top, text="⚠️ Note: Ensure program runs in its own dedicated folder (e.g. C:\\M59Companion\\) so settings persist.", font=("Segoe UI", 8, "italic"), fg="#c7d2fe", bg="#1e1b4b", wraplength=450, justify="left", padx=8, pady=4)
+    lbl_notice.pack(fill="x", padx=20, pady=(0, 6))
 
     # Progress & Status
     prog_lbl = tk.Label(top, text="", font=("Segoe UI", 9, "bold"), fg="#60a5fa", bg="#0b0f19")
@@ -403,6 +409,9 @@ def show_tk_update_dialog(parent, release_data, on_close=None):
                            activebackground="#1d4ed8", activeforeground="#ffffff", relief="flat", padx=14, pady=6, command=start_tk_download)
     btn_update.pack(side="right")
 
+    tk.Button(btn_frame, text="🌐 Download EXE in Browser", font=("Segoe UI", 9), bg="#1f2937", fg="#cbd5e1", relief="flat", padx=10, pady=6,
+              command=lambda: open_browser(exe_url)).pack(side="left", padx=(0, 6))
+
     tk.Button(btn_frame, text="🌐 GitHub", font=("Segoe UI", 9), bg="#111827", fg="#94a3b8", relief="flat", padx=10, pady=6,
               command=lambda: open_browser(release_data.get('github_site'))).pack(side="left")
 
@@ -433,6 +442,7 @@ def show_qt_update_dialog(parent, release_data, auto_install=False):
     cur_v = release_data.get('current_version', 'Unknown')
     latest_v = release_data.get('latest_version') or release_data.get('stable_version', '3.1.0')
     has_update = release_data.get('update_available', False)
+    exe_url = release_data.get('exe_url') or REPO_URLS[0]["exe_url"]
 
     # If invoked manually and already up to date, show an info box
     if not has_update:
@@ -560,6 +570,21 @@ def show_qt_update_dialog(parent, release_data, auto_install=False):
     """)
     notes_edit.setText(release_data.get('release_notes') or "Latest release build for Meridian 59 Companion.")
     rc_layout.addWidget(notes_edit)
+
+    folder_notice = QLabel("⚠️ <b>Important Setup Note:</b> Please ensure the program runs in its own dedicated folder (e.g., <code>C:\\M59Companion\\</code>) so all settings, logs, and character data persist properly across updates.")
+    folder_notice.setWordWrap(True)
+    folder_notice.setStyleSheet("""
+        QLabel {
+            background-color: #1e1b4b;
+            border: 1px solid #4338ca;
+            border-radius: 6px;
+            color: #c7d2fe;
+            font-size: 11px;
+            padding: 8px 10px;
+        }
+    """)
+    rc_layout.addWidget(folder_notice)
+
     layout.addWidget(rel_card)
 
     # Progress Bar (Hidden by default)
@@ -576,9 +601,15 @@ def show_qt_update_dialog(parent, release_data, auto_install=False):
 
     # Action Buttons
     action_box = QHBoxLayout()
-    action_box.setSpacing(10)
+    action_box.setSpacing(8)
 
-    web_btn = QPushButton("🌐 GitHub")
+    browser_exe_btn = QPushButton("🌐 Download EXE in Browser")
+    browser_exe_btn.setProperty("class", "CancelBtn")
+    browser_exe_btn.setToolTip("Opens your browser directly to the raw M59Companion.exe file download")
+    browser_exe_btn.clicked.connect(lambda: open_browser(exe_url))
+    action_box.addWidget(browser_exe_btn)
+
+    web_btn = QPushButton("🌐 GitHub Repo")
     web_btn.setProperty("class", "CancelBtn")
     web_btn.clicked.connect(lambda: open_browser(release_data.get('github_site')))
     action_box.addWidget(web_btn)

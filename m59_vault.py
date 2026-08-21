@@ -237,7 +237,7 @@ def perform_vault_scan(main_hwnd, char_name, vault_type="barloque", progress_cb=
         os.makedirs(folder, exist_ok=True)
         save_path = os.path.join(folder, f"{safe_name}_vault_{vault_type}.json")
         try:
-            with open(save_path, "w") as f:
+            with open(save_path, "w", encoding="utf-8") as f:
                 json.dump(save_data, f, indent=4)
         except Exception as ex:
             logger.error(f"Failed to save vault data to {save_path}: {ex}")

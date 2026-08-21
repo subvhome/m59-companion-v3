@@ -1,0 +1,163 @@
+Spell Name,School,Level,Mana,Cast Time (s),Trance?,Reagents Required,Description
+create food,Kraanan,1,10,0.5,Yes,"2 Elder Berry, 2 Herbs",The power of Kraanan is summoned to materialize various nourishing foods. Requires elderberries and herbs to cast.
+create weapon,Kraanan,1,15,0.5,Yes,None,Materializes a weapon.  Requires nothing but a violent will.
+glow,Kraanan,1,15,0,No,"2 Elder Berry, 2 Mushroom",Enchants a weapon to glow like a torch. Requires elderberries and mushrooms to cast.
+relay,Kraanan,1,5,0,No,1 Snack,The might of Kraanan allows you to give part of your vigor to another person. Requires an edible mushroom to cast.
+bless,Kraanan,2,6,0,No,"2 Mushroom, 2 Sapphire","Invokes Kraanan's blessing, increasing the accuracy and damage of attacks. Requires mushrooms and sapphires to cast."
+enchant weapon,Kraanan,2,17,30,Yes,"3 Elderberry, 1 orctooth","Dedicates your weapon to Kraanan. Requires plenty of elderberry, some orc teeth, and time."
+haste,Kraanan,2,10,2,Yes,5 Snack,Reduces the fatigue of running at full clip. Requires edible mushrooms to cast.
+resist poison,Kraanan,2,10,2,Yes,None,"Stabilizes your immune system, protecting you from some poisons. Requires herbs and red mushrooms."
+super strength,Kraanan,2,10,0,No,"2 Mushroom, 1 Orc Tooth",Infuses your body with superhuman strength. Requires mushrooms and orc teeth to cast.
+detect invisible,Kraanan,3,15,3,Yes,None,Allows you to see those whom others cannot.  Requires solagh.
+free action,Kraanan,3,10,2,Yes,"1 Red Mushroom, 1 Purple Mushroom","Kraanan's love of battle helps repel magic which might hinder your movements, and thus the liberal dispensation of lusty blows. Requires red mushrooms and purple mushrooms to cast."
+magic shield,Kraanan,3,9,0,No,"2 Mushroom, 1 Red Mushroom",Summons a shield of powerful magical energy that will deflect some of the blows aimed at you for several minutes. Requires mushrooms and red mushrooms to cast.
+martyr's battleground,Kraanan,3,10,0,No,"1 Elder Berry, 1 Mushroom","Calls the attention of the gods to the area, increasing the likelihood they will give those who die here a chance at vengeance with a revenant. Requires elderberry and mushroom to cast."
+night vision,Kraanan,3,6,0,No,3 Elder Berry,Magically enhances the vision of the target. Requires elderberry to cast.
+shroud,Kraanan,3,10,30,Yes,"3 Mushroom, 3 Elderberry, 2 Herbs","Used to protect a warrior's tools against polluting magics.  Requires mushrooms, elderberries, and herbs to cast."
+deflect,Kraanan,4,20,3,Yes,"1 Solagh, 1 Kriipa Claw","Calls upon Kraanan's will to form a protective barrier around the target which protects them from direct damaging attack magics, but not from other magics, such as enchantments. Requires solagh and kriipa claws to cast."
+discordance,Kraanan,4,8,1,Yes,2 Sapphire,Magical energy is unleashed which tries to destroy magical enchantments on the room. Requires sapphires to cast.
+dispel illusion,Kraanan,4,20,0,No,"1 Dragonfly Eye, 1 Uncut Seraphym, 2 Solagh","Attempts to dispel any illusions in your vicinity.  This powerful spell is the bane of the Riija school of magic, but at a significant cost in reagents. Requires dragonfly eyes, uncut seraphym, and solagh to cast."
+eagle eyes,Kraanan,4,5,2,Yes,None,"Bestows a supernatural acuity of vision on the caster, protecting against spells that attack sight and improving accuracy at long range. Requires mushrooms and purple mushrooms."
+mana bomb,Kraanan,4,0,0,No,2 Sapphire,Initiates a white hot explosion which burns all of the caster's mana and consumes half of that amount from all others in the room. Requires sapphires to cast.
+mend,Kraanan,4,9,0,No,"1 Sapphire, 1 Orc Tooth","Erases the wear of battle from a piece of equipment, restoring it to near new condition. Requires orc teeth and sapphire to cast."
+armor of Gort,Kraanan,5,10,0,No,2 Blue Dragon Scale,Surrounds the caster with a powerful field which deflects damage from extreme blows. Requires blue dragon scale to cast.
+hunt,Kraanan,5,50,10,Yes,4 Kriipa Claw,"Allows the casters to use a prism to focus on a player's trail and track him or her for a limited time.  The hunted player's name must be spoken during the initial trance.  When the enchantment is completed, for the duration of the spell the hunters will receive periodic notification of the hunted player's whereabouts. Requires all of the claws from one kriipa paw, and the casters' mystical energies must be focused through a prism."
+killing fields,Kraanan,5,9,0,No,"3 Elderberry, 1 Orc Tooth","Induces magical blood-lust, increasing the damage of all attacks in the area. Requires elderberries and orc teeth to cast."
+resist magic,Kraanan,5,15,0,No,1 Blue Dragon Scale,The war god fortifies you against magic attacks. Requires blue dragon scale to cast.
+anti-magic aura,Kraanan,6,15,0.6,Yes,"2 Sapphire, 1 Polished Seraphym",Sends a shock wave of magical energy coursing through the room which reduces the spellpower of other spells cast for several minutes. More powerful mages are more effective at casting this spell. Requires sapphires and polished seraphym to cast.
+shatterlock,Kraanan,6,50,20,Yes,4 Kriipa Claw,"Penetrates the locks of a guild hall (note that it won't open other kinds of doors elsewhere).  Requires Kriipa Claws to cast, and the casters' energies must be focused through a prism."
+fog,Faren,1,6,2,Yes,1 Elderberry,Creates a cloud of fog that is often mistaken for poisonous fog. Requires elderberries to cast.
+light,Faren,1,5,0,No,1 Elder Berry,Magical illumination fills the area where the spell is cast. Requires elderberry to cast.
+mystic touch,Faren,1,3,0,No,1 Mushroom,Draws upon the magic of Faren to transfer magical energy from caster to target. Requires mushrooms to cast.
+sweep,Faren,1,8,10,Yes,2 Mushroom,The wild winds of Faren sweep through the area gathering loose items for you. Requires mushrooms to cast.
+zap,Faren,1,6,0,No,None,Channels natural electrical energy into a powerful charge transmitted with a touch. Requires blue mushrooms to cast.
+bramble wall,Faren,2,10,4,Yes,"3 Elderberry, 1 Yrxlsap","Creates a thicket of thorny, twisted bramble.  Such a wall would be painful to pass, though it might not harm one who remained motionless. Requires elderberries and yrxl sap to cast."
+icy fingers,Faren,2,6,0,No,None,"Coats your fingers with ice which can freeze a patch of flesh on your target, painfully destroying the outer layer of tissue. Requires a red mushroom."
+resist cold,Faren,2,9,0,No,"3 Mushroom, 1 Red Mushroom","Infuses the target with the magical fire of Faren, reducing damage from cold attacks for several minutes. Requires mushrooms and red mushrooms to cast."
+touch of flame,Faren,2,9,0,No,None,Boils the innards of the target with a white hot flame. Requires red mushrooms to cast.
+withstand fire,Faren,2,4,0,No,"3 Mushroom, 1 Red Mushroom",Infuses your body with cool magical energy which reduces damage from fire attacks for several minutes. Requires mushrooms and red mushrooms.
+heat,Faren,3,8,0,No,"1 Red Mushroom, 1 Fire Sand","Fills the room with the earth magic of Faren, heating all armor to a primordial molten state and searing the flesh of those who wear it. Requires red mushroom and firesand to cast."
+mana focus,Faren,3,1,7,Yes,None,"Focuses your magical energy, regenerating your mana at an accelerated rate and increasing the damage of natural elemental attack spells. Dissipates if your concentration is broken. Requires mushrooms to cast."
+resist shock,Faren,3,6,0,No,"3 Mushroom, 1 Blue Mushroom",The grizzled nature god gives the target some relief from shock attacks. Requires mushrooms and blue mushrooms to cast.
+shocking fury,Faren,3,8,0,No,"2 Blue Mushroom, 1 Elderberry",Releases Faren's fury as a large amount of electricity directed at a target at short range. Requires blue mushrooms and elderberries to cast.
+spider web,Faren,3,15,3,Yes,1 Web Moss,The spider webs created by this spell may hamper the ability of those who stumble upon them to move. Requires web moss to cast.
+winds,Faren,3,10,0,No,"3 Elderberry, 1 Purple Mushroom",Summons powerful winds which render ranged attacks more difficult for several minutes. Requires elderberries and purple mushrooms to cast.
+blast of fire,Faren,4,8,0,No,"2 Red Mushroom, 1 Elderberry",Releases Faren's anger as a blast of flame directed at a target at short range. Requires red mushrooms and elderberries to cast.
+brittle,Faren,4,8,0,No,"3 Mushroom, 2 Purple Mushroom","Ages the target's weapon by many years, making it frail and prone to breaking. Requires magic mushrooms and purple mushrooms to cast."
+explosive frost,Faren,4,8,0,No,1 Elderberry,Creates a small exploision of frost which damages a target at short range. Requires red mushrooms and elderberries to cast.
+fireball,Faren,4,7,0,No,"2 Red Mushroom, 1 Orc Tooth",Sends a ball of flames at the target. Requires red mushrooms and orc teeth to cast.
+firewall,Faren,4,15,1,Yes,"3 Red Mushroom, 2 Firesand",Creates a wall of fire in front of the caster. Requires red mushrooms and firesand to cast.
+earthquake,Faren,5,12,5,Yes,"2 Red Mushroom, 2 Purple Mushroom","Moves the earth violently causing damage to all beings in the room. The more experienced the caster, the better damage is directed to the target and away from the caster. Requires red mushrooms and purple mushrooms to cast."
+lightning bolt,Faren,5,10,0,No,"2 Blue Mushroom, 1 Orc Tooth",Hurls a bolt of lightning at the target. Requires blue mushrooms and orc teeth to cast.
+ring of flames,Faren,5,15,1,Yes,"3 Red Mushroom, 3 Firesand",Creates a ring of flames around target. Requires red mushrooms and firesand to cast.
+sandstorm,Faren,5,14,0,No,2 Orc Tooth,"All the dust in the room is swept up into a swirling storm, making it harder and more strenuous to move and fight. Also has a small chance to knock arrows out of the air. Requires orc teeth to cast."
+shatter,Faren,5,12,6,Yes,"3 Red Mushroom, 3 Purple Mushroom",The icy magic of Faren shatters one or more items in the inventory of the target. Requires red and purple mushrooms to cast."
+lightning wall,Faren,6,20,1,Yes,"3 Blue Mushroom, 1 Yrxlsap",Creates a crackling barrier of electricity.  One who entered such a field would certainly feel more than thunder. Requires blue mushrooms and yxrl to cast.
+spore burst,Faren,6,20,5,Yes,"2 Purple Mushroom, 1 Shaman Blood",Summons forth noxious clouds that paralyze any within it's bounds. Requires potent reagents specific to both Qor and Faren.
+cloak,Qor,1,5,2,Yes,2 Entroot Berry,"Qor shrouds your astral body in shifting shadows, allowing you to elude magical tracking. Requires entroot berries to cast."
+darkness,Qor,1,8,0,No,"1 Fairy Wing, 1 Entroot Berry","Draws a curtain of darkness over a room, making it more amenable to followers of the Vile One. Requires fairy wings and entroot berries to cast."
+detect good,Qor,1,10,3,Yes,1 Fairy Wing,Allows you to see the disgustingly pure of heart.  This spell will reveal all good people and monsters that are more good than you are corrupted. Requires a fairy wing to cast.
+unholy resolve,Qor,1,3,0,No,"1 Fairy Wing, 1 Solagh",Summons the vile force of Qor to protect the user from holy damage. Requires solagh and fairy wings to cast.
+Kara'hol's curse,Qor,2,9,0,No,2 Entroot Berry,"Your body is possessed by the spirit of the warrior Kara'hol for a brief period, enhancing the ferocity of your attacks.  When the spirit departs, your body is temporarily paralyzed from shock. Requires the sacrifice of a few entroot berries to cast."
+acid touch,Qor,2,10,0,No,None,"Burns the target with the force of a powerful acid, penetrating armor, clothing, and flesh. Requires entroot berries."
+fade,Qor,2,12,0,No,1 Dark Angel Feather,Temporarily dissolves your physical form leaving you invisible.  The spell lasts as long as your trance is maintained. Requires dark angel feather.
+unholy weapon,Qor,2,17,30,Yes,"3 Fairy Wing, 1 Orc Tooth","Dedicates your weapon to Qor, enhancing its effectiveness against the holy. Requires fairy wings and orc teeth to cast."
+defile,Qor,3,0,10,Yes,1 Fairy Wing,"In this darkest of rituals, the very spirit of Qor is summoned to defile the corpse of a murdered innocent, transforming flesh and blood into magical energy for the caster. Requires fairy wings and the slain."
+enfeeble,Qor,3,5,0,No,1 Orc Tooth,Drains physical strength from the target. The effect lasts a few minutes. Requires orc teeth to cast.
+poison fog,Qor,3,20,2,Yes,2 Entroot Berry,Creates a pungent cloud of poisonous fog. Requires entroot berries to cast.
+silence,Qor,3,10,0,No,"2 Dark Angel Feather, 1 Purple Mushroom",Muffles all speech preventing spell casting and communication as long as caster concentrates. Requires dark angel feathers and purple mushrooms.
+vampiric drain,Qor,3,10,0,No,None,Draws out the very life force of the target and converts the energy into life for the caster.  Reagents unknown.
+Shal'illebane,Qor,4,15,5,Yes,"1 Yrxlsap, 1 Fairy Wing","Permeates an area with the unholy essence of Qor, harming any who attempt to call on the holy energy of Shal'ille. Requires yrxl sap and fairy wings to cast."
+animate,Qor,4,20,20,Yes,1 Shaman Blood,"Animates the corpse of another human, that they may do your bidding. Requires the blood of a shaman to cast."
+curse weapon,Qor,4,25,20,Yes,"2 Shaman Blood, 1 Orc Tooth","Makes the target weapon nearly ineffective for a time, and curses the user to wield it until he or she gains divine aid. Requires the blood of a magic-casting beast and teeth of a fierce fighting monster."
+hold,Qor,4,15,0,No,2 Purple Mushroom,"Surrounds the target with magical energy, causing paralysis for several seconds. Requires purple mushrooms to cast."
+shadow rift,Qor,4,30,20,Yes,4 Dark Angel Feather,Summons the darkest of magics to warp the fabic of space. Forms a magical bond between a prism and the area in which it is cast.  Subsequent castings with the same prism cause a mystical portal to form which will transport all who enter it to the exact spot to which the prism was bound. Requires the feathers of a dark angel and a prism.
+splash of acid,Qor,4,10,0,No,None,Splashes Qor's unholy corrosive acid on a target at short range. Requires entroot berries to cast.
+blind,Qor,5,15,0,No,"2 Entroot Berry, 1 Purple Mushroom","The magical force of Qor burns the target's eyes, taking away all sight for a brief period. Requires entroot berries and purple mushrooms to cast."
+blood inheritance,Qor,5,50,20,Yes,"2 Shaman Blood, 2 Entroot Berry, 1 Orc Tooth","Infuses a weapon with the malevolent power of Qor. It is impossible to predict exactly what form this dark benediction will take, but it will always be deadly. Requires shaman blood, entroot berries, and orc teeth."
+death link,Qor,5,20,5,Yes,"1 Shaman Blood, 1 Polished Seraphym",This dark spell feeds off the souls of any poor creature that should happen to fall in your vicinity. Requires shaman blood and polished seraphym to cast.
+invisibility,Qor,5,12,0,No,1 Dark Angel Feather,Qor cloaks your body with a shimmering field leaving you invisible for a brief period. Requires dark angel feathers to cast.
+nodeburst,Qor,5,1,3,Yes,"3 Fairy Wing, 3 Entroot Berry","You tap all of your mana nodes to the maximum, giving you an instant burst of mana and health, but destroying your bonds. May only be cast once per day. Requires fairy wings and entroot berries and is very tiring to cast."
+swap,Qor,5,9,3,Yes,"1 Dark Angel Feather, 1 Yrxlsap, 1 Purple Mushroom","The darker gods grant you the power to randomly exchange one item from your inventory with one from the target's. Requires dark angel feathers, yrxl sap, and purple mushrooms to cast."
+gaze of the basilisk,Qor,6,15,0,No,"1 Yrxlsap, 1 Purple Mushroom",Grants the caster the ability to paralyze any who meet his gaze. Requires yrxl sap and purple mushrooms to cast.
+breath of life,Shal'ille,1,3,0,No,1 Herbs,The great power of Shal'ille takes part of the caster's life force and gives it to another person. Requires herbs to cast.
+detect evil,Shal'ille,1,10,3,Yes,1 Fairy Wing,Allows you to see the vile defilers of her name.  Reveals all evil people and monsters that are more foul than you are pure. Requires a fairy wing to cast.
+holy symbol,Shal'ille,1,8,2,Yes,3 Elderberry,This spell involves weaving your hands in a holy tracery which frightens nearby unholy beings. Requires elderberries to be crushed onto the skin of your hands to ritually cleanse them.
+minor heal,Shal'ille,1,3,0.6,Yes,1 Herbs,The compassionate power of Shal'ille heals the wounds of the caster or another person.  Is particularly potent on those protected by guardian angels. Shal'ille gives a small reward toward the karma of the mage who heals another good soul. Requires herbs to cast.
+seance,Shal'ille,1,10,0,No,2 Herbs,Shal'ille's magic allows communication with the spirit world to reveal the location of the last person to slay an innocent. Requires herbs to cast.
+cure poison,Shal'ille,2,10,0,No,"2 Herbs, 1 Elderberry","Pure, healing energy fights the effects of poison in the target. Requires herbs and elderberries to cast."
+holy touch,Shal'ille,2,12,0,No,2 Emerald,Pure energy from Shal'ille sears your target.  More effective on evil and undead targets. Requires emeralds.
+holy weapon,Shal'ille,2,17,30,Yes,"3 Fairy Wing, 1 Orc Tooth","Dedicates your weapon to Shal'ille, enhancing its effectiveness against the unholy. Requires fairy wings and orc teeth to cast."
+remove curse,Shal'ille,2,9,0,No,1 Emerald,Breaks the magical bond binding you to a cursed item. Requires emeralds to cast.
+resist acid,Shal'ille,2,9,0,No,"2 Herbs, 1 Entroot Berry",Coats your body in a magical goo which absorbs damage from acid attacks for several minutes. Requires herbs and entroot berries.
+cure disease,Shal'ille,3,9,0,No,"3 Herbs, 2 Elder Berry","Pure, healing energy purges disease from the target. Requires herbs and elderberries to cast."
+holy resolve,Shal'ille,3,3,0,No,"1 Solagh, 1 Fairy Wing",Shal'ille is summoned to fortify the soul against unholy damage. Requires solagh and fairy wings to cast.
+hospice,Shal'ille,3,10,0.6,Yes,3 Herbs,Rejuvenates the target of the spell with Shal'ille's healing energy. Shal'ille gives a small reward toward the karma of the mage who heals another good soul. Requires herbs to cast.
+identify,Shal'ille,3,10,15,Yes,1 Orc Tooth,Reveals any special properties of an item to the caster. Requires orc teeth to cast.
+rescue,Shal'ille,3,16,0,No,1 Emerald,Calls upon Shal'ille to transport you back to safety.  Ability determines how fast you are rescued. Requires emerald to cast.
+spiritual hammer,Shal'ille,3,15,5,Yes,"2 Emerald, 1 Orc Tooth",Materializes a spiritual hammer. Requires emeralds and orc teeth to cast.
+Qorbane,Shal'ille,4,15,5,Yes,"1 Yrxlsap, 1 Fairy Wing","Permeates an area with the holy essence of Shal'ille, harming any who attempt to call on the evil energy of Qor. Requires yrxl sap and fairy wings to cast."
+dazzle,Shal'ille,4,12,0,No,"1 Emerald, 1 Purple Mushroom",Dazzles the target with the blinding light of Shal'ille's goodness. Requires emeralds and purple mushrooms.
+forces of light,Shal'ille,4,12,0,No,"2 Elderberry, 1 Emerald","Summons Shal'ille to infuse her power into all good players in the room, making their attacks more accurate and her spells more potent. Requires elderberries and emeralds to cast."
+mark of dishonor,Shal'ille,4,12,0,No,1 Emerald,"Allows caster to cast Shal'ille's displeasure upon a target.  Will prevent target's life force from exceeding the body's maximum.  For evil targets, Shal'ille will cause a loss of vigor. Requires emeralds to cast."
+purify,Shal'ille,4,10,0,No,"2 Emerald, 2 Elderberry",Removes harmful personal enchantments on the target. Requires emeralds and elderberries to cast.
+truce,Shal'ille,4,20,0,No,"1 Emerald, 1 Yrxlsap","The spirit of Shal'ille calls upon her ally Faren, forming a truce with creatures of nature for several minutes. Requires emerald and yrxl sap to cast."
+final rites,Shal'ille,5,20,10,Yes,"2 Emerald, 5 Elderberry","This is the lengthy formal ceremony performed at funerals to help the recently departed soul pass smoothly on to the Underworld.  It may also be used to force nearby undead back in their graves where they belong. Requires emeralds and dried elderberries, which during the ceremony are crushed together into a symbolic handful of dust and scattered into the air."
+major heal,Shal'ille,5,20,0,No,5 Herbs,The compassionate power of Shal'ille heals severe wounds in the caster or another player.  Casting this powerful magic on evil souls will reduce your own karmic standing. Requires herbs to cast.
+purge,Shal'ille,5,15,0,No,"5 Emerald, 2 Purple Mushroom",Strips helpful personal enchantments off of the target. Requires emeralds and purple mushrooms to cast.
+reveal,Shal'ille,5,30,30,Yes,3 Orc Tooth,"Strips away all hidden properties of an item, allowing anyone to see its special abilities. Requires a number of perfect orc teeth to cast."
+umbrella,Shal'ille,5,15,0,No,None,Creates a dome of magical energy especially helpful against the undead. Requires emeralds and polished seraphym to cast.
+bond,Shal'ille,6,50,20,Yes,"50 Polished Seraphym, 50 Diamond, 1 Heartstone","Infuses an item with a soft white light.  However, the bond requires terrific amounts of energy to form.  A heartstone and dozens of polished serphym and diamonds must be crushed to amplify the caster's mystical energy, which must then be focused through a prism.  The item to be bonded must be targeted.  Once the casting is complete the item will follow its owner to hell itself."
+portal of life,Shal'ille,6,30,10,Yes,"2 Emerald, 1 Polished Seraphym",Creates a portal for your fallen comrades to enter and return from the underworld back to their physical body.  If formed in time the portal can lessen the shock of death. Requires emeralds and polished seraphym to cast.
+anonymity,Riija,1,15,5,Yes,"2 Rainbow Fern, 1 Fire Sand","Makes you indistinct, and unrecognizable to all but those who you'd like to know its you. Note that Shal'ille can not punish transgressors against you when you are anonymous. Requires rainbow ferns and firesand to cast."
+blink,Riija,1,15,10,Yes,None,Teleports you to a central location in the room. Requires nothing but a will to move.
+feign death,Riija,1,5,0,No,"1 Solagh, 1 Rainbow Fern","Makes you appear to be deceased, that hopefully someone won't really make you as such. Requires solagh and rainbow ferns to cast."
+flash,Riija,1,15,0,No,2 Dragonfly Eye,"Causes a bright flash, likely to interrupt the concentration of any spellcasters in the area or confuse monsters temporarily. Requires the eyes of a dragonfly to cast."
+shadow form,Riija,1,5,3,Yes,3 Rainbow Fern,"Transforms the target into a silhouette of their former self, perfect for skulking in darker locales and making them more difficult to hit. Requires a handful of rainbow fern."
+bait,Riija,2,8,2,Yes,"1 Web Moss, 1 Fire Sand","Makes you mighty appetizing to nearby monsters.  The more powerful you are, the more likely you are to get the monster's attention. Requires web moss and firesand to cast."
+eavesdrop,Riija,2,8,0,No,2 Dragonfly Eye,"Riija grants the ability to hear distant conversations, allowing you to spy on others. Requires dragonfly eyes."
+foresight,Riija,2,5,0,No,2 Uncut Seraphym,"Reveals knowledge of the victim, informing you of their abilities. Requires uncut seraphym to cast."
+forget,Riija,2,20,0,No,"2 Fire Sand, 2 Uncut Seraphym",Causes the victim to forget his or her own abilities. Requires firesand and uncut seraphym to cast.
+illusionary firewall,Riija,3,15,1,Yes,"3 Rainbow Fern, 2 Firesand","Creates an illusionary wall of fire.  This wall will cause illusionary wounds, which are never lethal, to victims walking through it. Requires rainbow ferns and firesand to cast."
+illusionary form,Riija,3,15,6,Yes,"2 Web Moss, 3 Rainbow Fern",The touch of Riija shifts your appearance to another at random. Requires web moss and rainbow fern to cast.
+illusionary wounds,Riija,3,10,0,No,"1 Solagh, 1 Fire Sand","Causes the victim to see imagined wounds, but imagination always gives in to one's right mind, assuming one lives so long. Requires solagh and firesand."
+reflection,Riija,3,15,1,Yes,"2 Firesand, 2 Rainbow Fern, 2 Uncut Seraphym","Summons a creature which mirrors your own appearance.  Note that you are responsible for any of your reflections actions, and that they are notoriously hard to control.  Requires firesand, rainbow ferns, and uncut seraphym to cast."
+vertigo,Riija,3,12,0,No,"2 Dragonfly Eye, 1 Solagh","This spell causes the victim to become so ill that they can hardly stand, much less fight. Requires dragonfly eyes and solagh."
+apparition,Riija,4,30,4,Yes,"1 Web Moss, 2 Rainbow Fern","Summons an illusory creature to attack your enemies. The creature does good damage, but is easily banished. Requires web moss and rainbow fern to cast."
+dement,Riija,4,6,0,No,"2 Solagh, 1 Uncut Seraphym","Sends the mind of the target reeling with dark, bewildering thoughts, making spell casting more difficult for several minutes. Requires solagh and uncut seraphym to cast."
+denial,Riija,4,15,1,Yes,"2 Fire Sand, 1 Solagh","Causes the caster to unrealize their wounds, but beware when you realize its a hoax, because the wounds are still just as deep! Requires a firesand and solagh to cast."
+artifice,Riija,5,10,10,Yes,"3 Fire Sand, 3 Uncut Seraphym",Briefly enchants an item with random powers. Unsuspecting buyers may overvalue the item. Requires firesand and uncut seraphym.
+evil twin,Riija,5,10,0.5,Yes,"3 Solagh, 3 Web Moss","Summons the darker side of an adventurer to attack them.  Note that you are responsible for any of your evil twins' actions, and that they are notoriously hard to control. Requires solagh and web moss to cast."
+morph,Riija,5,20,20,Yes,"3 Web Moss, 2 Dragonfly Eye",The touch of Riija shifts you into another beast! Requires web moss and dragonfly eyes to cast.
+elusion,Riija,6,20,0,No,2 Kriipa Claw,"Allows the caster to elude trouble and escape off to another location. A number of destinations may be available, and the caster must call out the name of the location he wishes to travel to. Requires the claws of the fearsome kriipa to cast."
+seduce,Riija,6,15,0,No,"5 Web Moss, 5 Fire Sand","You worm your way into the mind of a weak-willed creature, in the hope that it will follow you and fight for you if you are attacked. Requires web moss and firesand."
+summon bovine,Riija,6,5,20,Yes,5 Polished Seraphym,"Summons a pygmy cow for the amusement of all nearby. Requires 5 perfectly polished seraphym, and the casters' mystical energies must be focused through a prism."
+HinderSpell,Jala,1,5,0,No,None,
+Jala,Jala,1,5,0,No,None,
+invigorate,Jala,1,5,0,No,"1 Diamond, 1 Snack",This song allows all listeners to regain vigor at an accelerated rate. Requires one diamond and an edible mushroom to cast.
+melancholy,Jala,1,2,0,No,1 Sapphire,"This is a sad song, invoking feelings of loss and sorrow.  It causes most people hearing it to experience overwhemling sadness, often leading to foul moods.  This music is appropriate for funerals and fighting against the forces of good. It requires 1 sapphire to cast."
+mirth,Jala,1,2,0,No,1 Sapphire,"This song makes people happy!  It is a lively tune, which makes people feel as if they have a new start on life.  The song causes some people to smile, often resulting in better moods.  A good mood allows others to fight evil more effectively. It requires 1 sapphire to cast."
+truth,Jala,1,5,0,No,"1 Ruby, 2 Rainbow Fern","This song hinders the spells of the master of the illusionary arts, Riija. A ruby and some rainbow ferns are required to begin performing this song."
+civility,Jala,2,5,0,No,"1 Ruby, 1 Mushroom","This song hinders the casting of the spells of the master of the elements, Faren. A ruby and a mushroom are required to begin performing this song."
+conciliation,Jala,2,5,0,No,"1 Ruby, 1 Elderberry",This song hinders the casting of the spells the warrior god Kraanan the Fist. A ruby and some elderberries are required to begin performing this song.
+warp time,Jala,2,5,0,No,None,The words of this song form an enchantment which increases the time that a spellcaster must hold trance to cast a spell.
+distill,Jala,3,20,30,Yes,1 Ruby,"Allows the caster to distill their knowledge of a spell into liquid form.  After casting, simply say the name of the spell you want to turn into a potion. Requires a ruby and ingredients for the potion."
+profane resonance,Jala,3,5,0,No,"1 Ruby, 1 Herbs",The foreboding sound of this song hinders the casting the holy spells of Shal'ille. A ruby and some herbs are required to begin performing this song.
+restorate,Jala,3,5,0,No,"1 Diamond, 5 Herbs",This song allows all listeners to regain health at an accelerated rate. Requires one diamond and several herbs to cast.
+sacred resonance,Jala,3,5,0,No,"1 Ruby, 1 Entroot Berry",The music of this song hinders the casting of the dark spells of Qor. A ruby and an entroot berry are required to begin performing this song.
+spellbane,Jala,3,12,0,No,1 Polished Seraphym,The words of this song form an enchantment which disallows the casting of any spells weaker than the song. Requires one perfect polished seraphym.
+disharmony,Jala,4,5,0,No,1 Ruby,This words of this song hinder the performance of other Jala songs. A single ruby is required to begin performing this song.
+jig,Jala,4,10,0,No,1 Diamond,This spell causes everyone in the room to break out into dance and is lots of fun at parties.  Requires one diamond to cast.
+mana convergence,Jala,5,10,0,No,1 Polished Seraphym,The words of this song form an enchantment which increases the effectiveness of all spells cast.  Requires one perfect polished seraphym.
+rejuvenate,Jala,5,5,0,No,"1 Diamond, 1 Uncut Seraphym","This song allows all listeners to regain mana at an accelerated rate. Requires one diamond and a raw, uncut seraphym to cast."
+crystalize mana,Jala,6,20,0,No,"1 Sapphire, 1 Uncut Seraphym","This song catches the mana expended in singing, crystalizing it into a physical form.  The mana crystal stores the mana for later use, in essence allowing the singer to store extra mana.  Only one crystal at a time can be created by a singer, but the longer this song is sung, the more mana that is stored in the crystal.  Since the mana is attuned to the singer, the crystal cannot be shared with others. This song requires 1 sapphire and 1 uncut seraphym to sing."
+Touch Spell,0,1,0,0,No,None,This is a touch spell that does damage.
+page,Dm_command,1,0,0,No,None,"Sends your target a little funny noise, to wake them if they are away from keyboard."
+pardon,Dm_command,1,0,0,No,None,Removes both murderer flags and outlaw flags.
+superior hold,Dm_command,1,0,0,No,None,"Holds the victim for 10 minutes or until you cast superior hold on them again, releasing them."
+vilify,Dm_command,1,0,0,No,None,Accuses someone of being an outlaw or murderer.
+slitherbolt,Dm_command,5,10,0,No,"2 Blue Mushroom, 1 Orc Tooth",Hurls a bolt of Slitherbolt at the target. Requires blue mushroom and orc teeth to cast.
+Boon,Dm_command,50,0,0,No,None,
+DMSpell,Dm_command,50,0,0,No,None,%s\n\nThis is a DM only command.
+smite,Dm_command,50,0,0,No,None,"This is a god command used to strike down unruly, pathetic mortals.\n\n This is a DM only command."
+engrave,Dm_command,100,0,30,Yes,None,"Adds a message to an item.  A DM only spell, currently."
