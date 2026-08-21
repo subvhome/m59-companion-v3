@@ -2320,6 +2320,32 @@
           "raw": "CONDOTOO tells you, \" when i talk to you on this char    i dont loose   chat  an mark  can keep killing\""
         }
       ]
+    },
+    "guardianmaia": {
+      "player_name": "GuardianMaia",
+      "messages": [
+        {
+          "ts": "10:26:56",
+          "direction": "in",
+          "type": "tell",
+          "text": "You are #50,000.",
+          "raw": "GuardianMaia tells you, \"You are #50,000.\""
+        },
+        {
+          "ts": "10:27:33",
+          "direction": "out",
+          "type": "tell",
+          "text": "and you are #1 .. seriously whats going on?",
+          "raw": "You tell GuardianMaia, \"and you are #1 .. seriously whats going on?\""
+        },
+        {
+          "ts": "10:27:38",
+          "direction": "in",
+          "type": "tell",
+          "text": "Acct #. Thought you would like to know. Good number.",
+          "raw": "GuardianMaia tells you, \"Acct #. Thought you would like to know. Good number.\""
+        }
+      ]
     }
   },
   "unread_dms": {}

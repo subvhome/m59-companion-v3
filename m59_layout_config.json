@@ -44,10 +44,5 @@
       "height": null
     }
   ],
-  "dock_grid": [],
-  "dock_sub_grid": [
-    "GPS NAVIGATOR",
-    "BAG SPACE & LOAD",
-    "BANK BALANCES"
-  ]
+  "dock_grid": []
 }

@@ -3,6 +3,7 @@ import os
 import time
 import math
 import json
+import csv
 import re
 import threading
 import ctypes
@@ -375,7 +376,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QFrame, QSplitter, QStackedWidget, QTabWidget, QTabBar,
     QHeaderView, QProgressBar, QTextEdit, QFileDialog, QSlider, QSpinBox, QScrollArea, QGroupBox,
     QSplashScreen, QSizePolicy, QComboBox, QDialog, QCheckBox, QFormLayout, QMessageBox, QAbstractItemView,
-    QCompleter, QTreeWidget, QTreeWidgetItem, QSizeGrip
+    QCompleter, QTreeWidget, QTreeWidgetItem, QSizeGrip, QStyleOptionComboBox, QStyle
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QMimeData, QPoint, QRect
 from PySide6.QtGui import QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QDrag, QPainter, QPen, QBrush, QGuiApplication
@@ -814,6 +815,84 @@ class QtFloatingHotkeyButton(QWidget):
 
 
 # ----------------------------------------------------------------------
+# Morph Creature Form List & Data Engine
+# ----------------------------------------------------------------------
+MORPH_CREATURES_FALLBACK = [
+    {"level": 25, "en_name": "baby spider", "ko_catan": "imixkinich", "description": "Smaller and weaker than his larger kin, this baby spider"},
+    {"level": 25, "en_name": "mummy", "ko_catan": "napleoc", "description": "This evil being has been brought to life by dark magics of unknown origin."},
+    {"level": 30, "en_name": "centipede", "ko_catan": "puuckinich", "description": "Bright red plates make up the exoskeleton of this"},
+    {"level": 30, "en_name": "giant rat", "ko_catan": "napyijoa", "description": "The giant rat bares its yellow teeth in defiance.  A"},
+    {"level": 30, "en_name": "shadow mummy", "ko_catan": "teotnapleoc", "description": "This evil being has been brought to life by dark magics of unknown origin."},
+    {"level": 35, "en_name": "groundworm larva", "ko_catan": "imixslithic", "description": "A younger form of its mature relatives, the larva is a bit weaker than"},
+    {"level": 35, "en_name": "slime", "ko_catan": "kinachot", "description": "A mass of quivering goo, the slime inches forward"},
+    {"level": 40, "en_name": "ant", "ko_catan": "yokinich", "description": "Snapping pincers, bloody from the ant's last meal, lash"},
+    {"level": 40, "en_name": "spectral mummy", "ko_catan": "kosnapleoc", "description": "This poor creature was once a person who was mummified in an ancient ritual and put"},
+    {"level": 45, "en_name": "orc", "ko_catan": "utomca", "description": "This foul servant of Qor, body covered in filth, towers"},
+    {"level": 50, "en_name": "diseased tree", "ko_catan": "teotezmecya", "description": "Feeding upon the dredges of the tainted soil in the land, this"},
+    {"level": 50, "en_name": "dusk rat", "ko_catan": "teotnapyijoa", "description": "The air around the rat is dark and thick with evil.  The smell of death"},
+    {"level": 50, "en_name": "fungus beast", "ko_catan": "puucmecmoch", "description": "This strange creature, made up of tender, pulpy flesh,"},
+    {"level": 50, "en_name": "living tree", "ko_catan": "tezmecya", "description": "A primordial spirit flows through the dark branches of"},
+    {"level": 50, "en_name": "rebel soldier", "ko_catan": "moch", "description": "This soldier proudly bears the colors of the Jasper militia."},
+    {"level": 50, "en_name": "soldier of the Duke's army", "ko_catan": "moch", "description": "This soldier proudly bears the colors of the Duke."},
+    {"level": 50, "en_name": "soldier of the Princess' army", "ko_catan": "moch", "description": "This soldier proudly bears the colors of the Princess."},
+    {"level": 50, "en_name": "spider", "ko_catan": "teotkauilkinich", "description": "This strangely delicate creature moves with stealth and strikes with deadly precision."},
+    {"level": 55, "en_name": "giant scorpion", "ko_catan": "kinkauikinich", "description": "The scorpion's deadly stinger rises high in the air"},
+    {"level": 55, "en_name": "zombie", "ko_catan": "ixleoc", "description": "Unfettered evil has brought the dead back to life in the"},
+    {"level": 60, "en_name": "battered skeleton", "ko_catan": "cha'oleoc", "description": "A few scraps of rotten flesh cling to this collection of human"},
+    {"level": 60, "en_name": "necromancer", "ko_catan": "moch", "description": "Transfixed under the unearthly stare of this foul being, your mind skitters"},
+    {"level": 60, "en_name": "snow rat", "ko_catan": "shonapyijoa", "description": "This is the ice-born cousin of the mainland vermin.  It is"},
+    {"level": 65, "en_name": "mutant ant", "ko_catan": "kawilkinich", "description": "The exoskeleton of the mutant ant is thick and hard and"},
+    {"level": 75, "en_name": "black spider", "ko_catan": "na'arkinich", "description": "Once thought to be a creature made up to frighten children, the black spider"},
+    {"level": 75, "en_name": "skeleton", "ko_catan": "chaleoc", "description": "A few scraps of rotten flesh cling to this collection of"},
+    {"level": 80, "en_name": "cave orc", "ko_catan": "utom", "description": "This dirty orc grunt wanders through the caves hungrily in search"},
+    {"level": 80, "en_name": "orc wizard", "ko_catan": "utomya", "description": "Harnessing dark powers from deep underground, the Orc Wizards"},
+    {"level": 90, "en_name": "troll", "ko_catan": "humoch", "description": "Covered with knots of lumpy flesh, the troll has"},
+    {"level": 100, "en_name": "guard cow", "ko_catan": "tanahyijoa", "description": "This is the vicious guardcow, which punishes all wrongdoers."},
+    {"level": 100, "en_name": "peet-seeeep avar shaman", "ko_catan": "avarya", "description": "This is a shaman of the Peet-Seeeep clan."},
+    {"level": 100, "en_name": "tusked skeleton", "ko_catan": "ha'chaleoc", "description": "A few scraps of rotten flesh cling to this collection of human"},
+    {"level": 105, "en_name": "lupogg", "ko_catan": "tez", "description": "This underwater denizen, although hideous and brutish, is rumored to be"},
+    {"level": 115, "en_name": "orc pit boss", "ko_catan": "koutom", "description": "In order to gain the ominous title and station of Pit Boss,"},
+    {"level": 120, "en_name": "narthyl worm", "ko_catan": "tepna'arthyl", "description": "In spite of its otherworldy hideousness, the narthyl worm's lithe movements are"},
+    {"level": 120, "en_name": "peet-seeeep avar warrior", "ko_catan": "avar", "description": "Fierce warriors, these flightless bird men demand caution as you"},
+    {"level": 130, "en_name": "daemon skeleton", "ko_catan": "kochaleoc", "description": "The sight alone of this abomination of nature is often enough to"},
+    {"level": 130, "en_name": "groundworm queen", "ko_catan": "koslithic", "description": "The largest of the groundworms, the queen is a feared monster."},
+    {"level": 135, "en_name": "peet-seeeep avar chieftain", "ko_catan": "koavar", "description": "Known for their noble grace, the Peet-Seeeep tribe"},
+    {"level": 150, "en_name": "mollusk creature", "ko_catan": "kolisith", "description": "A recent arrival to the lands, this giant creature is rather"},
+    {"level": 150, "en_name": "thrasher", "ko_catan": "teotixleoc", "description": "The powerful smell of rotted flesh and embalming herbs assault your"},
+    {"level": 150, "en_name": "ve'xeochicatl", "ko_catan": "ve'xeo'chicatl", "description": "Before you is a ve'xeochicatl, a fearsome monster given life by the chaotic"},
+    {"level": 165, "en_name": "queen spider", "ko_catan": "kokinich", "description": "The huge egg sac of the queen spider makes her slow and heavy, but"},
+    {"level": 170, "en_name": "ro'xeochicatl", "ko_catan": "ro'xeo'chicatl", "description": "Before you is a ro'xeochicatl, a fearsome monster given life by the chaotic"},
+    {"level": 190, "en_name": "ma'xeochicatl", "ko_catan": "ma'xeo'chicatl", "description": "Before you is a ma'xeochicatl, a fearsome monster given life by the chaotic"},
+    {"level": 200, "en_name": "cow", "ko_catan": "nahyijoa", "description": "Alchemists and farmers endeavored to breed the perfect cow for sweet"},
+    {"level": 200, "en_name": "ghost of Far'Nohl", "ko_catan": "far'nohl kotezleoc", "description": "Rags and rotten flesh hang on the bones of this magical"},
+    {"level": 200, "en_name": "shadowbeast", "ko_catan": "teotkriipa", "description": "A magical abomination that hybrids the jungle kriipa with some quasi-substantial"},
+    {"level": 200, "en_name": "te'xeochicatl", "ko_catan": "te'xeo'chicatl", "description": "Before you is a te'xeochicatl, a fearsome monster given life by the chaotic"}
+]
+
+def get_morph_creatures():
+    """Returns list of morphable creatures from settings/morph_creatures.csv or fallback dataset."""
+    p = resource_path("settings/morph_creatures.csv")
+    if os.path.exists(p):
+        try:
+            creatures = []
+            with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row.get("en_name") and row.get("ko_catan"):
+                        creatures.append({
+                            "level": int(row.get("level", 0)) if str(row.get("level", "0")).strip().isdigit() else 0,
+                            "en_name": row.get("en_name", "").strip(),
+                            "ko_catan": row.get("ko_catan", "").strip(),
+                            "description": row.get("description", "").strip()
+                        })
+            if creatures:
+                return sorted(creatures, key=lambda x: (x["level"], x["en_name"]))
+        except Exception:
+            pass
+    return sorted(MORPH_CREATURES_FALLBACK, key=lambda x: (x["level"], x["en_name"]))
+
+
+# ----------------------------------------------------------------------
 # Floating Elude Teleport Bar Widget (Sticks & Docks to Game UI)
 # ----------------------------------------------------------------------
 class QtFloatingEludeBar(QWidget):
@@ -1089,20 +1168,374 @@ class QtFloatingEludeBar(QWidget):
         loc = self.combo.currentText()
         if not loc:
             return
+        phrase = 'say "I wish to travel to {loc}."'
+        if self.dashboard and hasattr(self.dashboard, 'shortcut_phrase_combo'):
+            phrase = self.dashboard.shortcut_phrase_combo.currentText()
+        formatted = phrase.replace("{loc}", loc)
         target = self.get_target_hwnd()
-        def _run():
+
+        if self.dashboard and hasattr(self.dashboard, 'cast_spell_with_trance'):
+            self.dashboard.cast_spell_with_trance("elusion", formatted, target_hwnd=target)
+        else:
+            def _run():
+                try:
+                    if target:
+                        send_chat_command(target, 'cast "elusion"')
+                except Exception as ex:
+                    print(f"Elude macro execution failed: {ex}")
+            threading.Thread(target=_run, daemon=True).start()
+
+
+# ----------------------------------------------------------------------
+# Floating Morph Bar Widget (Sticks & Docks to Game UI)
+# ----------------------------------------------------------------------
+class CompactMorphComboBox(QComboBox):
+    """Compact morph selection dropdown that displays a shortened name with '...' when closed,
+    expands to full width when dropped down, and displays the full creature name on hover / tooltip."""
+    def __init__(self, parent=None, max_display_len=7):
+        super().__init__(parent)
+        self.max_display_len = max_display_len
+        self.setFixedWidth(78)
+        self.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        # Ensure dropdown popup list expands to display full creature name & details
+        self.view().setMinimumWidth(235)
+        self.view().setTextElideMode(Qt.ElideNone)
+        self.currentIndexChanged.connect(self._update_hover_tooltip)
+
+    def _update_hover_tooltip(self, idx=None):
+        if idx is None:
+            idx = self.currentIndex()
+        if idx < 0:
+            return
+        c_data = self.itemData(idx)
+        if isinstance(c_data, dict):
+            full_title = f"Lvl {c_data.get('level', '')} - {c_data.get('en_name', '').title()} ({c_data.get('ko_catan', '')})"
+            self.setToolTip(full_title)
+        else:
+            self.setToolTip(self.itemText(idx))
+
+    def paintEvent(self, event):
+        opt = QStyleOptionComboBox()
+        self.initStyleOption(opt)
+
+        idx = self.currentIndex()
+        c_data = self.itemData(idx)
+        if isinstance(c_data, dict):
+            en_name = c_data.get('en_name', '').strip().title()
+        else:
+            en_name = self.currentText().strip()
+
+        # Display shortened name with ellipsis (...) to indicate length
+        if len(en_name) > self.max_display_len:
+            opt.currentText = en_name[:self.max_display_len - 1] + "..."
+        elif en_name:
+            opt.currentText = en_name
+
+        p = QPainter(self)
+        self.style().drawComplexControl(QStyle.CC_ComboBox, opt, p, self)
+        self.style().drawControl(QStyle.CE_ComboBoxLabel, opt, p, self)
+
+
+class QtFloatingMorphBar(QWidget):
+    def __init__(self, parent=None, target_hwnd=None, dashboard=None):
+        super().__init__(parent, Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.dashboard = dashboard
+        self.target_hwnd = target_hwnd
+        self.setWindowTitle("M59 Morph")
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+
+        self.offset_x = 20
+        self.offset_y = 95
+        if self.dashboard:
             try:
-                if target:
-                    send_chat_command(target, 'cast "elusion"')
-                    time.sleep(1.2)
-                    phrase = 'say "I wish to travel to {loc}."'
-                    if self.dashboard and hasattr(self.dashboard, 'shortcut_phrase_combo'):
-                        phrase = self.dashboard.shortcut_phrase_combo.currentText()
-                    formatted = phrase.replace("{loc}", loc)
-                    send_chat_command(target, formatted)
+                s = self.dashboard.load_gui_settings()
+                if 'morph_x_offset' in s and 'morph_y_offset' in s:
+                    self.offset_x = s['morph_x_offset']
+                    self.offset_y = s['morph_y_offset']
+            except Exception:
+                pass
+
+        self.drag_position = QPoint()
+        self.is_dragging = False
+
+        self.setObjectName("MorphFloatContainer")
+
+        self.setStyleSheet("""
+            QWidget#MorphFloatContainer {
+                background-color: #0f172a;
+                color: #f8fafc;
+                border: 1px solid #10b981;
+                border-radius: 6px;
+            }
+            QLabel#Grip {
+                color: #34d399;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 0 3px;
+            }
+            QComboBox {
+                background-color: #1e293b;
+                border: 1px solid #10b981;
+                color: #f8fafc;
+                border-radius: 4px;
+                padding: 2px 4px;
+                font-size: 11px;
+                font-weight: 700;
+                max-width: 80px;
+                min-width: 74px;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 14px;
+                border-left: 1px solid #10b981;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #0f172a;
+                color: #f8fafc;
+                selection-background-color: #059669;
+                selection-color: #ffffff;
+                border: 1px solid #10b981;
+                padding: 4px;
+                outline: none;
+                min-width: 235px;
+            }
+            QComboBox QAbstractItemView::item {
+                color: #f8fafc;
+                background-color: #0f172a;
+                min-height: 22px;
+                padding: 4px 6px;
+            }
+            QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected {
+                background-color: #059669;
+                color: #ffffff;
+            }
+            QPushButton#CastBtn {
+                background-color: #059669;
+                color: #ffffff;
+                font-weight: 800;
+                border: none;
+                border-radius: 4px;
+                padding: 3px 8px;
+                font-size: 11px;
+            }
+            QPushButton#CastBtn:hover {
+                background-color: #10b981;
+            }
+            QPushButton#CloseBtn {
+                background-color: #7f1d1d;
+                color: #ffffff;
+                font-weight: 800;
+                border: none;
+                border-radius: 4px;
+                padding: 2px 5px;
+                font-size: 10px;
+            }
+            QPushButton#CloseBtn:hover {
+                background-color: #dc2626;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 3, 5, 3)
+        layout.setSpacing(5)
+
+        # Drag grip
+        self.grip = QLabel("::")
+        self.grip.setObjectName("Grip")
+        self.grip.setCursor(Qt.SizeAllCursor)
+        layout.addWidget(self.grip)
+
+        # Compact creature combo box
+        self.combo = CompactMorphComboBox()
+        self.creatures_list = get_morph_creatures()
+        self.refresh_creatures()
+        layout.addWidget(self.combo)
+
+        # Cast button
+        cast_btn = QPushButton("Morph")
+        cast_btn.setObjectName("CastBtn")
+        cast_btn.clicked.connect(self.do_morph)
+        layout.addWidget(cast_btn)
+
+        # Close button
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("CloseBtn")
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+
+        self.adjustSize()
+        self.init_docking()
+
+        self.dock_timer = QTimer(self)
+        self.dock_timer.setInterval(50)
+        self.dock_timer.timeout.connect(self.check_docking)
+        self.dock_timer.start()
+
+    def refresh_creatures(self):
+        self.combo.clear()
+        for i, c in enumerate(self.creatures_list):
+            display = f"Lvl {c['level']} - {c['en_name'].title()} ({c['ko_catan']})"
+            self.combo.addItem(display, userData=c)
+            self.combo.setItemData(i, display, Qt.ToolTipRole)
+        self.combo._update_hover_tooltip()
+
+    def get_target_hwnd(self):
+        if self.target_hwnd and win32gui and win32gui.IsWindow(self.target_hwnd):
+            return self.target_hwnd
+        if self.dashboard and getattr(self.dashboard, 'main_hwnd', None):
+            dh = self.dashboard.main_hwnd
+            if win32gui and win32gui.IsWindow(dh):
+                return dh
+        return None
+
+    def init_docking(self):
+        target = self.get_target_hwnd()
+        if target and win32gui and win32gui.IsWindow(target):
+            try:
+                rect = win32gui.GetWindowRect(target)
+                target_x = rect[0] + self.offset_x
+                target_y = rect[1] + self.offset_y
+                hwnd = int(self.winId())
+                if win32gui and win32con:
+                    win32gui.SetWindowPos(hwnd, 0, target_x, target_y, 0, 0,
+                                         win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER)
+                    win32gui.SetWindowLong(hwnd, win32con.GWL_HWNDPARENT, target)
             except Exception as ex:
-                print(f"Elude macro execution failed: {ex}")
-        threading.Thread(target=_run, daemon=True).start()
+                print(f"Morph bar docking init error: {ex}")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = True
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self.drag_position
+            self.move(new_pos)
+            target = self.get_target_hwnd()
+            if target and win32gui and win32gui.IsWindow(target):
+                try:
+                    my_hwnd = int(self.winId())
+                    my_rect = win32gui.GetWindowRect(my_hwnd)
+                    target_rect = win32gui.GetWindowRect(target)
+                    self.offset_x = my_rect[0] - target_rect[0]
+                    self.offset_y = my_rect[1] - target_rect[1]
+                except Exception:
+                    pass
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = False
+            if self.dashboard:
+                s = self.dashboard.load_gui_settings()
+                s['morph_x_offset'] = self.offset_x
+                s['morph_y_offset'] = self.offset_y
+                s['morph_geometry'] = f"{self.width()}x{self.height()}+{self.offset_x}+{self.offset_y}"
+                self.dashboard.save_gui_settings(s)
+            event.accept()
+
+    def check_docking(self):
+        target = self.get_target_hwnd()
+        if not target or not win32gui or not win32gui.IsWindow(target):
+            if self.isVisible():
+                self.hide()
+            return
+
+        if win32gui.IsIconic(target):
+            if self.isVisible():
+                self.hide()
+            return
+
+        fg = win32gui.GetForegroundWindow()
+        dash_hwnd = None
+        if self.dashboard and hasattr(self.dashboard, 'winId'):
+            try:
+                dash_hwnd = int(self.dashboard.winId())
+            except Exception:
+                pass
+        my_hwnd = int(self.winId())
+
+        is_game_active = False
+        if self.isActiveWindow() or self.underMouse() or getattr(self, 'is_dragging', False):
+            is_game_active = True
+        elif self.dashboard and hasattr(self.dashboard, 'isActiveWindow') and self.dashboard.isActiveWindow():
+            is_game_active = True
+        elif fg in (target, dash_hwnd, my_hwnd):
+            is_game_active = True
+        elif fg:
+            try:
+                if win32process:
+                    _, fg_pid = win32process.GetWindowThreadProcessId(fg)
+                    if fg_pid == os.getpid():
+                        is_game_active = True
+                    else:
+                        _, target_pid = win32process.GetWindowThreadProcessId(target)
+                        if fg_pid == target_pid:
+                            is_game_active = True
+                if not is_game_active:
+                    cur = fg
+                    for _ in range(6):
+                        if not cur or cur == 0:
+                            break
+                        if cur in (target, dash_hwnd, my_hwnd):
+                            is_game_active = True
+                            break
+                        cur = win32gui.GetParent(cur)
+            except Exception:
+                pass
+
+        if not is_game_active:
+            if self.isVisible():
+                self.hide()
+            return
+
+        if not self.isVisible():
+            self.show()
+
+        if not getattr(self, 'is_dragging', False):
+            try:
+                rect = win32gui.GetWindowRect(target)
+                target_x = rect[0] + self.offset_x
+                target_y = rect[1] + self.offset_y
+                my_rect = win32gui.GetWindowRect(my_hwnd)
+                if my_rect[0] != target_x or my_rect[1] != target_y:
+                    win32gui.SetWindowPos(my_hwnd, 0, target_x, target_y, 0, 0,
+                                         win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER)
+            except Exception:
+                pass
+
+    def do_morph(self):
+        c_data = self.combo.currentData()
+        if not c_data or not isinstance(c_data, dict):
+            idx = self.combo.currentIndex()
+            if 0 <= idx < len(self.creatures_list):
+                c_data = self.creatures_list[idx]
+        if not c_data:
+            return
+        ko_name = c_data.get("ko_catan", "").strip()
+        if not ko_name:
+            return
+
+        phrase = 'say "{name}"'
+        if self.dashboard and hasattr(self.dashboard, 'morph_phrase_combo'):
+            phrase = self.dashboard.morph_phrase_combo.currentText()
+        formatted = phrase.replace("{name}", ko_name)
+
+        target = self.get_target_hwnd()
+        if self.dashboard and hasattr(self.dashboard, 'cast_spell_with_trance'):
+            self.dashboard.cast_spell_with_trance("morph", formatted, target_hwnd=target)
+        else:
+            def _run():
+                try:
+                    if target:
+                        send_chat_command(target, 'cast "morph"')
+                except Exception as ex:
+                    print(f"Morph macro execution failed: {ex}")
+            threading.Thread(target=_run, daemon=True).start()
+
 
 # ----------------------------------------------------------------------
 # Floating Chat Box Widget (Anchors to Game, Overlay over in-game chat)
@@ -2784,10 +3217,10 @@ class M59SplashScreen(QWidget):
         self.img_lbl = QLabel()
         self.img_lbl.setAlignment(Qt.AlignCenter)
 
-        # Search for m59comp splash image
-        img_path = resource_path(os.path.join("imgs", "m59comp.jpg"))
+        # Search for m59comp splash image (prioritize PNG with transparent corners)
+        img_path = resource_path(os.path.join("imgs", "m59comp.png"))
         if not os.path.exists(img_path):
-            img_path = resource_path(os.path.join("imgs", "m59comp.png"))
+            img_path = resource_path(os.path.join("imgs", "m59comp.jpg"))
 
         if os.path.exists(img_path):
             pix = QPixmap(img_path)
@@ -2975,7 +3408,7 @@ QPushButton.WebBtnSecondary:hover {
     background-color: #475569;
 }
 
-/* Inputs */
+/* Inputs & Dropdowns */
 QLineEdit {
     background-color: #0f172a;
     color: #f8fafc;
@@ -2987,6 +3420,50 @@ QLineEdit {
 
 QLineEdit:focus {
     border: 1px solid #3b82f6;
+}
+
+QComboBox {
+    background-color: #0f172a;
+    color: #f8fafc;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    min-height: 20px;
+}
+
+QComboBox:focus, QComboBox:on {
+    border: 1px solid #3b82f6;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 24px;
+    border-left: 1px solid #334155;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #0f172a;
+    color: #f8fafc;
+    selection-background-color: #3b82f6;
+    selection-color: #ffffff;
+    border: 1px solid #475569;
+    border-radius: 4px;
+    padding: 4px;
+    outline: none;
+}
+
+QComboBox QAbstractItemView::item {
+    color: #f8fafc;
+    background-color: #0f172a;
+    min-height: 24px;
+    padding: 4px 8px;
+}
+
+QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected {
+    background-color: #2563eb;
+    color: #ffffff;
 }
 
 /* Progress Bars */
@@ -3286,6 +3763,7 @@ class M59CompanionApp(QMainWindow):
         self.gps_manager = GPSManager()
         self.gps_room_options = self.gps_manager.get_room_options() if self.gps_manager else []
         self.current_room_name = "Unknown Location"
+        self.load_pvp_icons()
         self.calculator = SchoolCalculator()
         self.knowledge_cache = {}
 
@@ -3333,6 +3811,8 @@ class M59CompanionApp(QMainWindow):
         self.comms_mode = "live"
         self.active_floating_chat = None
         self.active_elude_bar = None
+        self.active_morph_bar = None
+        self.pending_spell_trance = None
 
         # Font Settings State (Grouped logically by UI domains)
         self.font_settings = {
@@ -3418,7 +3898,7 @@ class M59CompanionApp(QMainWindow):
         self.nav_list.setMaximumHeight(16777215)
         self.nav_list.addItem("  Dashboard")
         self.nav_list.addItem("  Progression")
-        self.nav_list.addItem("  Shortcuts")
+        self.nav_list.addItem("  Hotkeys / Buttons")
         self.nav_list.addItem("  Chat Logger")
         self.nav_list.addItem("  Vault Storage")
         self.nav_list.addItem("  Kill Book")
@@ -3625,196 +4105,158 @@ class M59CompanionApp(QMainWindow):
 
         rpc_layout.addWidget(who_card, 1)
 
-        # 3. BOTTOM ANCHORED CONTAINER FOR DRAGGABLE SECTIONS (Non-draggable footer container, no title)
+        # 3. BOTTOM ANCHORED CONTAINER (Legacy Minimalistic Status Footer)
         dock_footer_container = QFrame()
         dock_footer_container.setObjectName("DockFooterContainer")
         dock_footer_container.setStyleSheet("""
             QFrame#DockFooterContainer {
-                background-color: #020617;
-                border: 1px solid #1e293b;
-                border-radius: 8px;
+                background-color: #0b1120;
+                border-top: 1px solid #1e293b;
+                border-left: none;
+                border-right: none;
+                border-bottom: none;
             }
         """)
         dock_footer_layout = QVBoxLayout(dock_footer_container)
-        dock_footer_layout.setContentsMargins(4, 4, 4, 4)
+        dock_footer_layout.setContentsMargins(10, 8, 10, 10)
         dock_footer_layout.setSpacing(4)
 
-        # Internal Reorderable Grid for Sub-Sections inside the Footer Container
-        self.dock_sub_grid = GridReorderContainer(cols=1)
-        self.dock_sub_grid.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        self.dock_sub_grid.main_layout.setSpacing(4)
+        # 1. GPS Navigation Header
+        gps_head = QLabel("🧭 GPS NAVIGATION")
+        gps_head.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        gps_head.setStyleSheet("font-size: 10px; font-weight: 800; color: #64748b; background: transparent; padding-top: 2px;")
+        dock_footer_layout.addWidget(gps_head)
 
-        dock_footer_layout.addWidget(self.dock_sub_grid)
+        # 2. Current Location
+        self.dock_gps_loc_lbl = QLabel("Unknown Location")
+        self.dock_gps_loc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.dock_gps_loc_lbl.setWordWrap(True)
+        self.dock_gps_loc_lbl.setStyleSheet("font-size: 12px; font-weight: 800; color: #4ade80; background: transparent;")
+        dock_footer_layout.addWidget(self.dock_gps_loc_lbl)
 
-        # SUB-CARD A: GPS NAVIGATOR
-        dock_gps_card = ReorderableSubCard("GPS NAVIGATOR", self.dock_sub_grid, default_colspan=1, is_draggable=True)
-        dock_gps_card.is_expanding = False
+        # 3. PVP Status Icons Placeholder Row
+        pvp_status_box = QHBoxLayout()
+        pvp_status_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pvp_status_box.setContentsMargins(0, 1, 0, 1)
+        pvp_status_box.setSpacing(6)
 
+        self.dock_pvp_icon_1 = QLabel()
+        self.dock_pvp_icon_2 = QLabel()
+        self.dock_pvp_icon_1.setStyleSheet("background: transparent; padding: 0;")
+        self.dock_pvp_icon_2.setStyleSheet("background: transparent; padding: 0;")
+        pvp_status_box.addWidget(self.dock_pvp_icon_1)
+        pvp_status_box.addWidget(self.dock_pvp_icon_2)
+
+        dock_footer_layout.addLayout(pvp_status_box)
+
+        # 4. Active Route Instruction
+        self.dock_gps_dir_lbl = QLabel("No active route")
+        self.dock_gps_dir_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.dock_gps_dir_lbl.setWordWrap(True)
+        self.dock_gps_dir_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #f8fafc; background: transparent;")
+        dock_footer_layout.addWidget(self.dock_gps_dir_lbl)
+
+        # Aliases & compatibility objects
+        self.dock_gps_route_lbl = self.dock_gps_dir_lbl
+        self.dock_gps_step_lbl = self.dock_gps_dir_lbl
+        self.dock_gps_detail_lbl = QLabel()
+        self.dock_gps_detail_lbl.hide()
         self.dock_gps_status_lbl = QLabel("READY")
-        self.dock_gps_status_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #38bdf8;")
-        dock_gps_card.add_header_widget(self.dock_gps_status_lbl)
-
-        # Line 1: Current location + Target status (Simple text, no background box/elements)
-        gps_loc_box = QHBoxLayout()
-        gps_loc_box.setContentsMargins(0, 0, 0, 0)
-        gps_loc_box.setSpacing(6)
-
-        self.dock_gps_loc_lbl = QLabel("📍 Current: Unknown")
-        self.dock_gps_loc_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #38bdf8; background: transparent; padding: 0;")
-        gps_loc_box.addWidget(self.dock_gps_loc_lbl)
-
+        self.dock_gps_status_lbl.hide()
         self.dock_gps_target_lbl = QLabel("🎯 Target: None")
-        self.dock_gps_target_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #94a3b8; background: transparent; padding: 0;")
-        gps_loc_box.addWidget(self.dock_gps_target_lbl)
-        gps_loc_box.addStretch()
-
-        dock_gps_card.content_layout.addLayout(gps_loc_box)
-
-        # Line 2: Search input with Autocomplete + Icon-Only Toggle Button
-        gps_input_box = QHBoxLayout()
-        gps_input_box.setContentsMargins(0, 0, 0, 0)
-        gps_input_box.setSpacing(3)
+        self.dock_gps_target_lbl.hide()
 
         self.dock_gps_search = QLineEdit()
-        self.dock_gps_search.setPlaceholderText("Type destination...")
-        self.dock_gps_search.setFixedHeight(22)
-        self.dock_gps_search.setStyleSheet("""
-            QLineEdit {
-                background-color: #030712;
-                color: #f8fafc;
-                border: 1px solid #334155;
-                border-radius: 3px;
-                padding: 0 4px;
-                font-size: 10px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #3b82f6;
-            }
-        """)
-
-        dock_completer = self.create_room_completer(self.dock_gps_search)
-        if dock_completer:
-            self.dock_gps_search.setCompleter(dock_completer)
-        self.dock_gps_search.returnPressed.connect(lambda: self.toggle_navigation(source_text=self.dock_gps_search.text()))
-
+        self.dock_gps_search.hide()
         self.dock_gps_toggle_btn = QPushButton("▶")
-        self.dock_gps_toggle_btn.setFixedSize(24, 22)
-        self.dock_gps_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.dock_gps_toggle_btn.setToolTip("Start or stop GPS route navigation")
-        self.dock_gps_toggle_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #16a34a;
-                color: #ffffff;
-                border: none;
-                border-radius: 3px;
-                font-size: 10px;
-                font-weight: 800;
-            }
-            QPushButton:hover {
-                background-color: #22c55e;
-            }
-        """)
-        self.dock_gps_toggle_btn.clicked.connect(lambda: self.toggle_navigation(source_text=self.dock_gps_search.text()))
-
-        # Compatibility references
+        self.dock_gps_toggle_btn.hide()
         self.dock_gps_start_btn = self.dock_gps_toggle_btn
         self.dock_gps_stop_btn = self.dock_gps_toggle_btn
 
-        gps_input_box.addWidget(self.dock_gps_search, 1)
-        gps_input_box.addWidget(self.dock_gps_toggle_btn)
+        # Subtle Divider 1
+        sep1 = QFrame()
+        sep1.setFixedHeight(1)
+        sep1.setStyleSheet("background-color: #1e293b; border: none;")
+        dock_footer_layout.addWidget(sep1)
 
-        dock_gps_card.content_layout.addLayout(gps_input_box)
+        # 5. Status Rows (IMPROVES, BANK M, BANK I)
+        def add_footer_status_row(parent_layout, label_text, icon_prefix):
+            row_box = QHBoxLayout()
+            row_box.setContentsMargins(0, 1, 0, 1)
 
-        # Line 3: Direct Direction & Details without frame encasing
-        dock_dir_layout = QHBoxLayout()
-        dock_dir_layout.setContentsMargins(0, 2, 0, 0)
-        dock_dir_layout.setSpacing(4)
+            lbl_left = QLabel(f"{icon_prefix} {label_text}")
+            lbl_left.setStyleSheet("font-size: 10px; font-weight: 600; color: #94a3b8; background: transparent;")
 
-        self.dock_gps_dir_lbl = QLabel("SELECT DESTINATION")
-        self.dock_gps_dir_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #38bdf8; background: transparent;")
+            val_right = QLabel("---")
+            val_right.setAlignment(Qt.AlignmentFlag.AlignRight)
+            val_right.setStyleSheet("font-size: 10px; font-weight: 800; color: #f8fafc; background: transparent;")
 
-        self.dock_gps_detail_lbl = QLabel("Enter destination & press ▶")
-        self.dock_gps_detail_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #94a3b8; background: transparent;")
-        self.dock_gps_detail_lbl.setWordWrap(True)
+            row_box.addWidget(lbl_left)
+            row_box.addStretch()
+            row_box.addWidget(val_right)
+            parent_layout.addLayout(row_box)
+            return val_right
 
-        dock_dir_layout.addWidget(self.dock_gps_dir_lbl)
-        dock_dir_layout.addWidget(self.dock_gps_detail_lbl, 1)
+        self.dock_improves_lbl = add_footer_status_row(dock_footer_layout, "IMPROVES:", "📈")
+        self.dock_improves_lbl.setText("0")
 
-        dock_gps_card.content_layout.addLayout(dock_dir_layout)
+        self.dock_bank_mainland_lbl = add_footer_status_row(dock_footer_layout, "BANK (M):", "💰")
+        self.dock_bank_mainland_lbl.setText("0 sh")
 
-        # Alias for backwards compatibility
-        self.dock_gps_step_lbl = self.dock_gps_dir_lbl
+        self.dock_bank_island_lbl = add_footer_status_row(dock_footer_layout, "BANK (I):", "🌴")
+        self.dock_bank_island_lbl.setText("0 sh")
 
-        # SUB-CARD B: BAG SPACE & LOAD
-        dock_inv_card = ReorderableSubCard("BAG SPACE & LOAD", self.dock_sub_grid, default_colspan=1, is_draggable=True)
-        dock_inv_card.is_expanding = False
+        self.dock_bank_total_lbl = QLabel()
+        self.dock_bank_total_lbl.hide()
+
+        # Subtle Divider 2
+        sep2 = QFrame()
+        sep2.setFixedHeight(1)
+        sep2.setStyleSheet("background-color: #1e293b; border: none;")
+        dock_footer_layout.addWidget(sep2)
+
+        # 6. Bag Space Row & Bar
+        bag_row_box = QHBoxLayout()
+        bag_row_box.setContentsMargins(0, 1, 0, 1)
+
+        bag_left = QLabel("🎒 BAG SPACE:")
+        bag_left.setStyleSheet("font-size: 10px; font-weight: 600; color: #94a3b8; background: transparent;")
 
         self.dock_inv_sat_lbl = QLabel("0.0%")
-        self.dock_inv_sat_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #94a3b8;")
-        dock_inv_card.add_header_widget(self.dock_inv_sat_lbl)
+        self.dock_inv_sat_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.dock_inv_sat_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #f8fafc; background: transparent;")
+
+        bag_row_box.addWidget(bag_left)
+        bag_row_box.addStretch()
+        bag_row_box.addWidget(self.dock_inv_sat_lbl)
+
+        dock_footer_layout.addLayout(bag_row_box)
 
         self.dock_inv_bar = QProgressBar()
-        self.dock_inv_bar.setFixedHeight(6)
+        self.dock_inv_bar.setFixedHeight(4)
         self.dock_inv_bar.setValue(0)
-        dock_inv_card.content_layout.addWidget(self.dock_inv_bar)
+        self.dock_inv_bar.setTextVisible(False)
+        self.dock_inv_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #1e293b;
+                border: none;
+                border-radius: 2px;
+            }
+            QProgressBar::chunk {
+                background-color: #22c55e;
+                border-radius: 2px;
+            }
+        """)
+        dock_footer_layout.addWidget(self.dock_inv_bar)
 
-        det_box = QHBoxLayout()
-        det_box.setContentsMargins(0, 0, 0, 0)
-        det_box.setSpacing(4)
+        self.dock_inv_weight_lbl = QLabel()
+        self.dock_inv_weight_lbl.hide()
+        self.dock_inv_bulk_lbl = QLabel()
+        self.dock_inv_bulk_lbl.hide()
+        self.dock_inv_count_lbl = QLabel()
+        self.dock_inv_count_lbl.hide()
 
-        self.dock_inv_weight_lbl = QLabel("W: 0 / 1,700")
-        self.dock_inv_weight_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #cbd5e1;")
-        det_box.addWidget(self.dock_inv_weight_lbl)
-
-        sep1 = QLabel("•")
-        sep1.setStyleSheet("font-size: 9px; color: #475569;")
-        det_box.addWidget(sep1)
-
-        self.dock_inv_bulk_lbl = QLabel("B: 0 / 1,700")
-        self.dock_inv_bulk_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #cbd5e1;")
-        det_box.addWidget(self.dock_inv_bulk_lbl)
-
-        sep2 = QLabel("•")
-        sep2.setStyleSheet("font-size: 9px; color: #475569;")
-        det_box.addWidget(sep2)
-
-        self.dock_inv_count_lbl = QLabel("0 Items")
-        self.dock_inv_count_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #94a3b8;")
-        det_box.addWidget(self.dock_inv_count_lbl)
-        det_box.addStretch()
-
-        dock_inv_card.content_layout.addLayout(det_box)
-
-        # SUB-CARD C: BANK BALANCES
-        dock_bank_card = ReorderableSubCard("BANK BALANCES", self.dock_sub_grid, default_colspan=1, is_draggable=True)
-        dock_bank_card.is_expanding = False
-
-        bank_box = QHBoxLayout()
-        bank_box.setContentsMargins(0, 0, 0, 0)
-        bank_box.setSpacing(4)
-
-        self.dock_bank_total_lbl = QLabel("Total: 0 sh")
-        self.dock_bank_total_lbl.setStyleSheet("font-size: 9px; font-weight: 800; color: #38bdf8;")
-        bank_box.addWidget(self.dock_bank_total_lbl)
-
-        sep_b1 = QLabel("•")
-        sep_b1.setStyleSheet("font-size: 9px; color: #475569;")
-        bank_box.addWidget(sep_b1)
-
-        self.dock_bank_mainland_lbl = QLabel("Mainland: 0 sh")
-        self.dock_bank_mainland_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #cbd5e1;")
-        bank_box.addWidget(self.dock_bank_mainland_lbl)
-
-        sep_b2 = QLabel("•")
-        sep_b2.setStyleSheet("font-size: 9px; color: #475569;")
-        bank_box.addWidget(sep_b2)
-
-        self.dock_bank_island_lbl = QLabel("Island: 0 sh")
-        self.dock_bank_island_lbl.setStyleSheet("font-size: 9px; font-weight: 600; color: #cbd5e1;")
-        bank_box.addWidget(self.dock_bank_island_lbl)
-        bank_box.addStretch()
-
-        dock_bank_card.content_layout.addLayout(bank_box)
+        self.dock_sub_grid = None
 
         rpc_layout.addWidget(dock_footer_container, 0)
 
@@ -4179,6 +4621,12 @@ class M59CompanionApp(QMainWindow):
             except Exception:
                 pass
 
+        if hasattr(self, 'active_morph_bar') and self.active_morph_bar:
+            try:
+                self.active_morph_bar.close()
+            except Exception:
+                pass
+
         if hasattr(self, 'floating_hotkey_buttons'):
             for btn in self.floating_hotkey_buttons:
                 try:
@@ -4369,10 +4817,18 @@ class M59CompanionApp(QMainWindow):
         self.gps_main_loc_lbl = QLabel("📍 Current: Unknown")
         self.gps_main_loc_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #38bdf8; background: transparent; padding: 0;")
 
+        # PvP Room Status Indicators (Main View)
+        self.main_pvp_icon_1 = QLabel()
+        self.main_pvp_icon_2 = QLabel()
+        self.main_pvp_icon_1.setStyleSheet("background: transparent; padding: 0;")
+        self.main_pvp_icon_2.setStyleSheet("background: transparent; padding: 0;")
+
         self.gps_main_target_lbl = QLabel("🎯 Target: None")
         self.gps_main_target_lbl.setStyleSheet("font-size: 11px; font-weight: 800; color: #94a3b8; background: transparent; padding: 0;")
 
         gps_top_box.addWidget(self.gps_main_loc_lbl)
+        gps_top_box.addWidget(self.main_pvp_icon_1)
+        gps_top_box.addWidget(self.main_pvp_icon_2)
         gps_top_box.addWidget(self.gps_main_target_lbl)
         gps_top_box.addStretch()
 
@@ -4855,7 +5311,7 @@ class M59CompanionApp(QMainWindow):
         return {"layout": layout, "v_lbl": v_lbl, "pbar": pbar}
 
     # ==================================================================
-    # SECTION 2: SHORTCUTS & ELUSION MACROS PAGE
+    # SECTION 2: HOTKEYS, SPELLS & BUTTONS MACROS PAGE
     # ==================================================================
     def build_shortcuts_page(self):
         scroll = QScrollArea()
@@ -4876,9 +5332,9 @@ class M59CompanionApp(QMainWindow):
         hc_layout.setContentsMargins(16, 14, 16, 14)
 
         title_box = QVBoxLayout()
-        t_lbl = QLabel("⚡ Shortcuts, Teleports & Command Macros")
+        t_lbl = QLabel("⚡ Hotkeys, Spells & Command Buttons")
         t_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc;")
-        s_lbl = QLabel("Configure quick teleportation eludes, custom chat macros, floating action bars, and key bindings.")
+        s_lbl = QLabel("Configure trance-steered teleport eludes, creature morphs, floating action bars, and macro hotkeys.")
         s_lbl.setStyleSheet("font-size: 11px; color: #94a3b8;")
         title_box.addWidget(t_lbl)
         title_box.addWidget(s_lbl)
@@ -4886,6 +5342,40 @@ class M59CompanionApp(QMainWindow):
         hc_layout.addStretch()
 
         layout.addWidget(hdr_card)
+
+        combo_box_qss = """
+            QComboBox {
+                background-color: #0f172a;
+                color: #f8fafc;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 12px;
+                min-height: 22px;
+            }
+            QComboBox:focus, QComboBox:on {
+                border: 1px solid #38bdf8;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #0f172a;
+                color: #f8fafc;
+                selection-background-color: #0284c7;
+                selection-color: #ffffff;
+                border: 1px solid #38bdf8;
+                padding: 4px;
+                outline: none;
+            }
+            QComboBox QAbstractItemView::item {
+                color: #f8fafc;
+                background-color: #0f172a;
+                min-height: 24px;
+                padding: 4px 8px;
+            }
+            QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected {
+                background-color: #0284c7;
+                color: #ffffff;
+            }
+        """
 
         # --------------------------------------------------------------
         # CARD 1: ELUSION & TELEPORT SHORTCUTS
@@ -4897,9 +5387,9 @@ class M59CompanionApp(QMainWindow):
         ec_layout.setSpacing(14)
 
         eh_box = QHBoxLayout()
-        eh_lbl = QLabel("🔮 ELUSION & TELEPORT SHORTCUTS")
-        eh_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #94a3b8; letter-spacing: 0.6px;")
-        eh_badge = QLabel("Quick Escape")
+        eh_lbl = QLabel("🔮 ELUSION & TELEPORT SPELL")
+        eh_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #cbd5e1; letter-spacing: 0.6px;")
+        eh_badge = QLabel("Trance Steered")
         eh_badge.setStyleSheet("background-color: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700;")
         eh_box.addWidget(eh_lbl)
         eh_box.addSpacing(8)
@@ -4925,6 +5415,7 @@ class M59CompanionApp(QMainWindow):
         phrase_lbl = QLabel("Elusion Phrase ({loc}):")
         phrase_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1;")
         self.shortcut_phrase_combo = QComboBox()
+        self.shortcut_phrase_combo.setStyleSheet(combo_box_qss)
         self.shortcut_phrase_combo.setEditable(True)
         base_phrases = [
             'say "I wish to travel to {loc}."',
@@ -4942,6 +5433,7 @@ class M59CompanionApp(QMainWindow):
         loc_lbl = QLabel("Target Destination:")
         loc_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1;")
         self.shortcut_loc_combo = QComboBox()
+        self.shortcut_loc_combo.setStyleSheet(combo_box_qss)
         self.update_elude_locations_list()
 
         form_grid.addWidget(loc_lbl, 2, 0)
@@ -4969,7 +5461,102 @@ class M59CompanionApp(QMainWindow):
         layout.addWidget(elude_card)
 
         # --------------------------------------------------------------
-        # CARD 2: COMMAND ALIASES & HOTKEYS TABLE
+        # CARD 2: MORPH & CREATURE TRANSFORMATION SHORTCUTS
+        # --------------------------------------------------------------
+        morph_card = QFrame()
+        morph_card.setProperty("class", "WebCard")
+        mc_layout = QVBoxLayout(morph_card)
+        mc_layout.setContentsMargins(18, 16, 18, 16)
+        mc_layout.setSpacing(14)
+
+        mh_box = QHBoxLayout()
+        mh_lbl = QLabel("🦎 MORPH SPELL & CREATURE SELECTOR")
+        mh_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #cbd5e1; letter-spacing: 0.6px;")
+        mh_badge = QLabel("Trance Steered")
+        mh_badge.setStyleSheet("background-color: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700;")
+        mh_box.addWidget(mh_lbl)
+        mh_box.addSpacing(8)
+        mh_box.addWidget(mh_badge)
+        mh_box.addStretch()
+        mc_layout.addLayout(mh_box)
+
+        morph_grid = QGridLayout()
+        morph_grid.setSpacing(12)
+
+        # Morph Creature Picker
+        mc_lbl = QLabel("Target Creature Form:")
+        mc_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1;")
+        self.morph_creature_combo = QComboBox()
+        self.morph_creature_combo.setStyleSheet(combo_box_qss)
+        self.morph_creature_combo.currentIndexChanged.connect(self.on_morph_creature_selected)
+
+        morph_grid.addWidget(mc_lbl, 0, 0)
+        morph_grid.addWidget(self.morph_creature_combo, 0, 1)
+
+        # Creature Details / Ko'catan Name Info
+        mi_lbl = QLabel("Ko'catan Spoken Name:")
+        mi_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1;")
+        self.morph_detail_lbl = QLabel("Loading creatures...")
+        self.morph_detail_lbl.setStyleSheet("font-size: 12px; font-weight: 800; color: #34d399; padding: 4px 0px;")
+
+        morph_grid.addWidget(mi_lbl, 1, 0)
+        morph_grid.addWidget(self.morph_detail_lbl, 1, 1)
+
+        # Morph Phrase Selector
+        mph_lbl = QLabel("Morph Phrase ({name}):")
+        mph_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #cbd5e1;")
+        self.morph_phrase_combo = QComboBox()
+        self.morph_phrase_combo.setStyleSheet(combo_box_qss)
+        self.morph_phrase_combo.setEditable(True)
+        self.morph_phrase_combo.addItems([
+            'say "{name}"',
+            'say {name}',
+            'emote shifts form into a {name}',
+            'say "By the power of Kraanan, become {name}!"'
+        ])
+
+        morph_grid.addWidget(mph_lbl, 2, 0)
+        morph_grid.addWidget(self.morph_phrase_combo, 2, 1)
+
+        mc_layout.addLayout(morph_grid)
+
+        # Action buttons for Morph
+        morph_btn_box = QHBoxLayout()
+        morph_btn_box.setSpacing(10)
+
+        self.cast_morph_btn = QPushButton("⚡ Cast Morph Spell")
+        self.cast_morph_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #059669;
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #10b981;
+            }
+        """)
+        self.cast_morph_btn.clicked.connect(self.trigger_cast_morph)
+
+        self.float_morph_btn = QPushButton("🚀 Launch Floating Morph Bar")
+        self.float_morph_btn.setProperty("class", "WebBtnSecondary")
+        self.float_morph_btn.clicked.connect(self.trigger_launch_morph_bar)
+
+        morph_btn_box.addWidget(self.cast_morph_btn)
+        morph_btn_box.addWidget(self.float_morph_btn)
+        morph_btn_box.addStretch()
+
+        mc_layout.addLayout(morph_btn_box)
+        layout.addWidget(morph_card)
+
+        # Populate creature choices
+        self.update_morph_creatures_list()
+
+        # --------------------------------------------------------------
+        # CARD 3: COMMAND ALIASES & HOTKEYS TABLE
         # --------------------------------------------------------------
         alias_card = QFrame()
         alias_card.setProperty("class", "WebCard")
@@ -5088,18 +5675,66 @@ class M59CompanionApp(QMainWindow):
             self.guildhall_name_val = self.shortcut_guildhall_input.text().strip()
             self.update_elude_locations_list()
 
+    def update_morph_creatures_list(self):
+        if not hasattr(self, 'morph_creature_combo'):
+            return
+        creatures = get_morph_creatures()
+        self.morph_creature_combo.clear()
+        for c in creatures:
+            display = f"Lvl {c['level']} - {c['en_name'].title()} ({c['ko_catan']})"
+            self.morph_creature_combo.addItem(display, userData=c)
+        self.on_morph_creature_selected()
+
+    def on_morph_creature_selected(self):
+        if not hasattr(self, 'morph_creature_combo') or not hasattr(self, 'morph_detail_lbl'):
+            return
+        c_data = self.morph_creature_combo.currentData()
+        if not c_data or not isinstance(c_data, dict):
+            idx = self.morph_creature_combo.currentIndex()
+            creatures = get_morph_creatures()
+            if 0 <= idx < len(creatures):
+                c_data = creatures[idx]
+        if c_data:
+            self.morph_detail_lbl.setText(f'🗣️ Say "{c_data.get("ko_catan", "")}"  •  Level {c_data.get("level", "1")} ({c_data.get("en_name", "").title()})')
+        else:
+            self.morph_detail_lbl.setText("No creature selected")
+
+    def cast_spell_with_trance(self, spell_name, steer_command, target_hwnd=None):
+        """Initiates casting a trance-steered spell (e.g. elusion, morph).
+        Passes the steer_command to the target game window ONLY if in trance
+        (verified by 'You focus your whole will on casting [spellname].' in chat log)."""
+        target = target_hwnd or getattr(self, 'main_hwnd', None)
+        if not target:
+            print(f"[M59-SPELL] Cannot cast {spell_name}: game window not attached.", flush=True)
+            return
+
+        clean_spell = spell_name.strip().lower()
+        self.pending_spell_trance = {
+            "spell_name": clean_spell,
+            "steer_command": steer_command,
+            "target_hwnd": target,
+            "cast_time": time.time(),
+            "trance_entered": False,
+            "completed": False
+        }
+        print(f"[M59-SPELL] Initiating trance-steered spell '{clean_spell}' with target command: {steer_command}", flush=True)
+        send_chat_command(target, f'cast "{clean_spell}"')
+
+        # Safety expiration thread in case no trance line occurs
+        def _expire_check(t_cast):
+            time.sleep(12.0)
+            if hasattr(self, 'pending_spell_trance') and self.pending_spell_trance:
+                if self.pending_spell_trance.get('cast_time') == t_cast and not self.pending_spell_trance.get('completed'):
+                    print(f"[M59-SPELL] Trance window expired for '{clean_spell}'.", flush=True)
+                    self.pending_spell_trance = None
+        threading.Thread(target=_expire_check, args=(self.pending_spell_trance['cast_time'],), daemon=True).start()
+
     def trigger_cast_elude(self):
         loc = self.shortcut_loc_combo.currentText() if hasattr(self, 'shortcut_loc_combo') else "Marion"
         phrase = self.shortcut_phrase_combo.currentText() if hasattr(self, 'shortcut_phrase_combo') else 'say "I wish to travel to {loc}."'
         formatted = phrase.replace("{loc}", loc)
         hwnd = getattr(self, 'main_hwnd', None)
-        try:
-            if hwnd:
-                send_chat_command(hwnd, 'cast "elusion"')
-                time.sleep(1.2)
-                send_chat_command(hwnd, formatted)
-        except Exception as ex:
-            print(f"[M59-ELUDE] Error sending elude command: {ex}", flush=True)
+        self.cast_spell_with_trance("elusion", formatted, target_hwnd=hwnd)
 
     def trigger_launch_elude_bar(self):
         try:
@@ -5119,6 +5754,43 @@ class M59CompanionApp(QMainWindow):
             self.active_elude_bar.show()
         except Exception as ex:
             print(f"[M59-ELUDE] Error launching floating elude bar: {ex}", flush=True)
+
+    def trigger_cast_morph(self):
+        c_data = self.morph_creature_combo.currentData() if hasattr(self, 'morph_creature_combo') else None
+        if not c_data or not isinstance(c_data, dict):
+            creatures = get_morph_creatures()
+            idx = self.morph_creature_combo.currentIndex() if hasattr(self, 'morph_creature_combo') else 0
+            if 0 <= idx < len(creatures):
+                c_data = creatures[idx]
+        if not c_data:
+            return
+        ko_name = c_data.get("ko_catan", "").strip()
+        if not ko_name:
+            return
+
+        phrase = self.morph_phrase_combo.currentText() if hasattr(self, 'morph_phrase_combo') else 'say "{name}"'
+        formatted = phrase.replace("{name}", ko_name)
+        hwnd = getattr(self, 'main_hwnd', None)
+        self.cast_spell_with_trance("morph", formatted, target_hwnd=hwnd)
+
+    def trigger_launch_morph_bar(self):
+        try:
+            hwnd = getattr(self, 'main_hwnd', None)
+            if hasattr(self, 'active_morph_bar') and self.active_morph_bar:
+                try:
+                    if self.active_morph_bar.isVisible():
+                        self.active_morph_bar.raise_()
+                        self.active_morph_bar.activateWindow()
+                        return
+                    else:
+                        self.active_morph_bar.show()
+                        return
+                except Exception:
+                    pass
+            self.active_morph_bar = QtFloatingMorphBar(dashboard=self, target_hwnd=hwnd)
+            self.active_morph_bar.show()
+        except Exception as ex:
+            print(f"[M59-MORPH] Error launching floating morph bar: {ex}", flush=True)
 
     def trigger_launch_floating_chat(self):
         try:
@@ -5719,9 +6391,9 @@ class M59CompanionApp(QMainWindow):
             if hasattr(self, 'dock_bank_total_lbl') and self.dock_bank_total_lbl:
                 self.dock_bank_total_lbl.setText(f"Total: {tot:,} sh")
             if hasattr(self, 'dock_bank_mainland_lbl') and self.dock_bank_mainland_lbl:
-                self.dock_bank_mainland_lbl.setText(f"Mainland: {mb:,} sh")
+                self.dock_bank_mainland_lbl.setText(f"{mb:,} sh")
             if hasattr(self, 'dock_bank_island_lbl') and self.dock_bank_island_lbl:
-                self.dock_bank_island_lbl.setText(f"Island: {ib:,} sh")
+                self.dock_bank_island_lbl.setText(f"{ib:,} sh")
 
     def update_vault_table(self, vt):
         """Populates vault table widgets (tile and page) with filtered data."""
@@ -6268,26 +6940,26 @@ class M59CompanionApp(QMainWindow):
     def set_progress_bar_color(self, bar, perc):
         val = int(min(100, max(0, perc)))
         bar.setValue(val)
-        if perc > 95:
-            chunk_col = "#ef4444"
-        elif perc > 80:
-            chunk_col = "#f59e0b"
+        if perc >= 90:
+            chunk_col = "#ef4444"  # Red
+        elif perc >= 75:
+            chunk_col = "#f97316"  # Orange
+        elif perc >= 50:
+            chunk_col = "#eab308"  # Yellow
         else:
-            chunk_col = "#64748b"
+            chunk_col = "#22c55e"  # Green
 
         bar.setStyleSheet(f"""
             QProgressBar {{
-                background-color: #030712;
-                border: 1px solid #334155;
-                border-radius: 6px;
+                background-color: #1e293b;
+                border: none;
+                border-radius: 2px;
                 text-align: center;
                 color: #f8fafc;
-                font-size: 10px;
-                font-weight: 800;
             }}
             QProgressBar::chunk {{
                 background-color: {chunk_col};
-                border-radius: 5px;
+                border-radius: 2px;
             }}
         """)
 
@@ -6345,25 +7017,45 @@ class M59CompanionApp(QMainWindow):
         sat_perc = max(w_perc, b_perc)
         self.inv_sat_perc = sat_perc
 
+        def _get_encumbrance_color(p):
+            if p >= 90:
+                return "#ef4444"  # Red: Over-encumbered / critical
+            elif p >= 75:
+                return "#f97316"  # Orange: High load
+            elif p >= 50:
+                return "#eab308"  # Yellow: Moderate load
+            else:
+                return "#22c55e"  # Green: Safe / ample space
+
+        sat_col = _get_encumbrance_color(sat_perc)
+        w_col = _get_encumbrance_color(w_perc)
+        b_col = _get_encumbrance_color(b_perc)
+
         # 1. Update Header Badges
         if hasattr(self, 'inv_sat_badge'):
             self.inv_sat_badge.setText(f"{sat_perc:.1f}% Saturation")
+            self.inv_sat_badge.setStyleSheet(f"background-color: #0f172a; color: {sat_col}; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 8px; border: 1px solid {sat_col}44;")
             self.inv_weight_badge.setText(f"{int(weight):,} / {max_cap:,} W")
+            self.inv_weight_badge.setStyleSheet(f"background-color: #0f172a; color: {w_col}; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 8px; border: 1px solid {w_col}44;")
             self.inv_bulk_badge.setText(f"{int(bulk):,} / {max_cap:,} B")
+            self.inv_bulk_badge.setStyleSheet(f"background-color: #0f172a; color: {b_col}; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 8px; border: 1px solid {b_col}44;")
             self.inv_count_badge.setText(f"{len(detailed_items)} Items Carried")
 
         # 2. Update Graphs & Capacity Meters
         if hasattr(self, 'sat_val_lbl'):
             self.sat_val_lbl.setText(f"{sat_perc:.1f}%")
+            self.sat_val_lbl.setStyleSheet(f"font-size: 11px; font-weight: 900; color: {sat_col};")
             self.set_progress_bar_color(self.sat_bar, sat_perc)
             dominant = "WEIGHT" if w_perc >= b_perc else "BULK"
             self.sat_sub_lbl.setText(f"Max Cap: {max_cap:,} | Dominant: {dominant}")
 
             self.weight_val_lbl.setText(f"{int(weight):,} / {max_cap:,} Stone ({w_perc:.1f}%)")
+            self.weight_val_lbl.setStyleSheet(f"font-size: 11px; font-weight: 900; color: {w_col};")
             self.set_progress_bar_color(self.weight_bar, w_perc)
             self.weight_sub_lbl.setText(f"{max(0, max_cap - int(weight)):,} Stone Capacity Remaining")
 
             self.bulk_val_lbl.setText(f"{int(bulk):,} / {max_cap:,} Vol ({b_perc:.1f}%)")
+            self.bulk_val_lbl.setStyleSheet(f"font-size: 11px; font-weight: 900; color: {b_col};")
             self.set_progress_bar_color(self.bulk_bar, b_perc)
             self.bulk_sub_lbl.setText(f"{max(0, max_cap - int(bulk)):,} Vol Capacity Remaining")
 
@@ -6373,6 +7065,7 @@ class M59CompanionApp(QMainWindow):
         # 4. Update Dock Panel Cards
         if hasattr(self, 'dock_inv_sat_lbl'):
             self.dock_inv_sat_lbl.setText(f"{sat_perc:.1f}%")
+            self.dock_inv_sat_lbl.setStyleSheet(f"font-size: 10px; font-weight: 800; color: {sat_col}; background: transparent;")
             self.set_progress_bar_color(self.dock_inv_bar, sat_perc)
             self.dock_inv_weight_lbl.setText(f"W: {int(weight):,} / {max_cap:,}")
             self.dock_inv_bulk_lbl.setText(f"B: {int(bulk):,} / {max_cap:,}")
@@ -7907,124 +8600,6 @@ class M59CompanionApp(QMainWindow):
 
         threading.Thread(target=tail_task, daemon=True).start()
 
-    def process_log_line(self, line):
-        if not line or not line.strip():
-            return
-
-        raw_line = line.strip()
-
-        # Ignore terminal/system internal debug output lines if any slip in
-        if any(raw_line.startswith(prefix) for prefix in [
-            "[M59-", "DEBUG:", "INFO:", "WARNING:", "ERROR:", "Traceback", "File \"", "[PySide6]"
-        ]):
-            return
-
-        # Extract timestamp if line has [YYYY-MM-DD HH:MM:SS] or [HH:MM:SS] or [HH:MM]
-        ts_match = re.match(r"^\[(?:\d{4}-\d{2}-\d{2}\s+)?(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.*)$", raw_line)
-        if ts_match:
-            msg_ts = ts_match.group(1)
-            msg_text = ts_match.group(2).strip()
-        else:
-            msg_ts = datetime.now().strftime("%H:%M:%S")
-            msg_text = raw_line
-
-        if not msg_text:
-            return
-
-        # Prevent duplicate entries (within short timeframe or identical timestamp+text)
-        dedup_key = (msg_ts, msg_text)
-        now_time = time.time()
-        if hasattr(self, 'recent_log_fingerprints'):
-            for stored_key, stored_time in list(self.recent_log_fingerprints):
-                if stored_key == dedup_key and (now_time - stored_time) < 3.0:
-                    return
-                if stored_key[1] == msg_text and (now_time - stored_time) < 1.0:
-                    return
-            self.recent_log_fingerprints.append((dedup_key, now_time))
-        else:
-            self.recent_log_fingerprints = deque([(dedup_key, now_time)], maxlen=250)
-
-        # 0. Check Bank updates
-        if hasattr(self, 'bank_manager') and self.bank_manager.process_line(msg_text):
-            self.update_bank_ui()
-
-        # 1. Check SessionTracker for Improves
-        gain = self.tracker.process_line(msg_text)
-        if gain:
-            found_row = -1
-            for r in range(self.imp_table.rowCount()):
-                item = self.imp_table.item(r, 0)
-                if item and item.text().lower() == gain['name'].lower():
-                    found_row = r
-                    break
-
-            if found_row != -1:
-                self.imp_table.setItem(found_row, 1, QTableWidgetItem(str(gain['count'])))
-                self.imp_table.setItem(found_row, 2, QTableWidgetItem(gain['delta']))
-                self.imp_table.setItem(found_row, 3, QTableWidgetItem(msg_ts))
-            else:
-                row = self.imp_table.rowCount()
-                self.imp_table.insertRow(row)
-                self.imp_table.setItem(row, 0, QTableWidgetItem(gain['name']))
-                self.imp_table.setItem(row, 1, QTableWidgetItem(str(gain['count'])))
-                self.imp_table.setItem(row, 2, QTableWidgetItem(gain['delta']))
-                self.imp_table.setItem(row, 3, QTableWidgetItem(msg_ts))
-
-            self.improves_history.append(msg_text)
-            self.imp_count_badge.setText(f"{len(self.improves_history)} Gains")
-            self.add_log_entry(msg_ts, "improves", msg_text)
-
-            # Update progression knowledge cache
-            skill_k = gain['name'].lower()
-            if skill_k != "hit points":
-                cur_val = self.knowledge_cache.get(skill_k, 0)
-                self.knowledge_cache[skill_k] = min(99, max(cur_val + 1, 1))
-                self.save_knowledge_cache()
-                self.update_progression_ui()
-            return
-
-        # 2. Check CombatMonitor for Kills / PK Alerts
-        kill = self.combat_monitor.process_line(msg_text)
-        if kill:
-            if kill.get("type") == "PK_ALERT":
-                self.trigger_pk_alert()
-            elif kill.get("type") == "KILL":
-                category = kill['category']
-                victim = kill['name']
-
-                if category not in self.session_kills:
-                    self.session_kills[category] = {}
-                self.session_kills[category][victim] = self.session_kills[category].get(victim, 0) + 1
-                session_count = self.session_kills[category][victim]
-
-                found_row = -1
-                for r in range(self.kill_table.rowCount()):
-                    item = self.kill_table.item(r, 0)
-                    if item and item.text().lower() == victim.lower():
-                        found_row = r
-                        break
-
-                if found_row != -1:
-                    self.kill_table.setItem(found_row, 1, QTableWidgetItem(category.capitalize()))
-                    self.kill_table.setItem(found_row, 2, QTableWidgetItem(str(session_count)))
-                    self.kill_table.setItem(found_row, 3, QTableWidgetItem(msg_ts))
-                else:
-                    row = self.kill_table.rowCount()
-                    self.kill_table.insertRow(row)
-                    self.kill_table.setItem(row, 0, QTableWidgetItem(victim))
-                    self.kill_table.setItem(row, 1, QTableWidgetItem(category.capitalize()))
-                    self.kill_table.setItem(row, 2, QTableWidgetItem(str(session_count)))
-                    self.kill_table.setItem(row, 3, QTableWidgetItem(msg_ts))
-
-                self.kills_history.append(msg_text)
-                total_session_kills = sum(sum(c.values()) for c in self.session_kills.values())
-                self.kill_count_badge.setText(f"{total_session_kills} Kills")
-                self.add_log_entry(msg_ts, "combat", msg_text)
-
-                if hasattr(self, 'update_killbook_ui'):
-                    self.update_killbook_ui()
-                return
-
     # ------------------------------------------------------------------
     # DIRECT MESSAGES (DMs) & PLAYER MESSAGING ENGINE
     # ------------------------------------------------------------------
@@ -8386,6 +8961,41 @@ class M59CompanionApp(QMainWindow):
         else:
             self.recent_log_fingerprints = deque([(dedup_key, now_time)], maxlen=250)
 
+        # 0. Check Spell Trance Steering & Fizzle Interception
+        if not is_historical and hasattr(self, 'pending_spell_trance') and self.pending_spell_trance:
+            lower_msg = msg_text.lower()
+            pending = self.pending_spell_trance
+
+            # Check if spell fizzled / interrupted
+            if any(fizz in lower_msg for fizz in ["fizzles", "lose your concentration", "interrupted", "fail to cast", "cannot cast"]):
+                print(f"[M59-SPELL] Spell '{pending.get('spell_name')}' fizzled or interrupted: {msg_text}", flush=True)
+                self.pending_spell_trance = None
+            else:
+                # Check for Trance confirmation: "You focus your whole will on casting [spellname]."
+                trance_m = re.search(r"focus your whole will on casting\s+([^.]+)", msg_text, re.IGNORECASE)
+                if trance_m:
+                    detected_spell = trance_m.group(1).strip().lower()
+                    expected_spell = pending.get("spell_name", "").lower()
+                    if expected_spell in detected_spell or detected_spell in expected_spell:
+                        pending["trance_entered"] = True
+                        steer_cmd = pending.get("steer_command")
+                        target = pending.get("target_hwnd")
+                        t_cast = pending.get("cast_time")
+                        print(f"[M59-SPELL] In trance for '{detected_spell}'! Scheduled steering: {steer_cmd}", flush=True)
+
+                        def _send_steer():
+                            # Small pause shortly after the cast to ensure spell doesn't fizzle
+                            time.sleep(0.6)
+                            if hasattr(self, 'pending_spell_trance') and self.pending_spell_trance:
+                                cur = self.pending_spell_trance
+                                if cur.get('cast_time') == t_cast and cur.get('trance_entered') and not cur.get('completed'):
+                                    cur['completed'] = True
+                                    if target and steer_cmd:
+                                        print(f"[M59-SPELL] Executing trance steer payload -> {steer_cmd}", flush=True)
+                                        send_chat_command(target, steer_cmd)
+                                    self.pending_spell_trance = None
+                        threading.Thread(target=_send_steer, daemon=True).start()
+
         # 0. Check Bank updates
         if hasattr(self, 'bank_manager') and self.bank_manager.process_line(msg_text):
             self.update_bank_ui()
@@ -8414,6 +9024,8 @@ class M59CompanionApp(QMainWindow):
 
             self.improves_history.append(msg_text)
             self.imp_count_badge.setText(f"{len(self.improves_history)} Gains")
+            if hasattr(self, 'dock_improves_lbl') and self.dock_improves_lbl:
+                self.dock_improves_lbl.setText(str(len(self.improves_history)))
             self.add_log_entry(msg_ts, "improves", msg_text, is_historical=is_historical)
 
             # Update progression knowledge cache
@@ -8964,8 +9576,98 @@ class M59CompanionApp(QMainWindow):
                 self.gps_route_list.addItem(item)
             self.gps_route_list.setCurrentRow(step_idx)
 
+    def load_pvp_icons(self):
+        """Loads and crops PvP status indicator icons from imgs directory at a compact size."""
+        self.pvp_icons = {}
+        icon_files = {
+            "Standard PVP": "open_pvp.jpg",
+            "Guild PVP Only": "guild_combat.jpg",
+            "Safe (No PVP)": "no_pvp.jpg",
+            "Safe Logoff": "safe_to_log.jpg"
+        }
+        size = 20
+        for key, filename in icon_files.items():
+            path = resource_path(os.path.join("imgs", filename))
+            if os.path.exists(path):
+                try:
+                    pix = QPixmap(path)
+                    if not pix.isNull():
+                        w = pix.width()
+                        h = pix.height()
+                        min_dim = min(w, h)
+                        cropped = pix.copy((w - min_dim) // 2, (h - min_dim) // 2, min_dim, min_dim)
+                        scaled_pix = cropped.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                        self.pvp_icons[key] = scaled_pix
+                except Exception as ex:
+                    print(f"[M59-PVP] Failed loading icon {filename}: {ex}", flush=True)
+
+    def update_pvp_status_ui(self, room_name):
+        """Updates PvP indicator icons and short, clear alt tooltips in dock panel and main GPS view."""
+        if not hasattr(self, 'gps_manager') or not self.gps_manager or not hasattr(self, 'pvp_icons'):
+            return
+
+        rid = self.gps_manager.resolve_name_to_rid(room_name) if room_name and room_name != "Unknown Location" else None
+        room_data = self.gps_manager.dataset.get(rid, {}) if rid else {}
+        pvp_status = room_data.get("pvp_status", "Standard PVP") if rid else "Unknown"
+        raw_flags = room_data.get("raw_flags", "") if rid else ""
+
+        if pvp_status == "Safe (No PVP)":
+            status_key = "Safe (No PVP)"
+            tooltip_text = "Safe: No PvP Allowed"
+        elif pvp_status == "Guild PVP Only":
+            status_key = "Guild PVP Only"
+            tooltip_text = "Guild PvP Only"
+        elif pvp_status == "Arena (No Death Penalty)":
+            status_key = "Safe (No PVP)"
+            tooltip_text = "Arena: No Death Penalty"
+        elif rid:
+            status_key = "Standard PVP"
+            tooltip_text = "Open PvP: Combat Allowed"
+        else:
+            status_key = None
+            tooltip_text = "Location Unknown"
+
+        # Update Dock Panel Icons
+        if hasattr(self, 'dock_pvp_icon_1'):
+            if status_key and status_key in self.pvp_icons:
+                self.dock_pvp_icon_1.setPixmap(self.pvp_icons[status_key])
+                self.dock_pvp_icon_1.setToolTip(tooltip_text)
+                self.dock_pvp_icon_1.show()
+            else:
+                self.dock_pvp_icon_1.clear()
+                self.dock_pvp_icon_1.hide()
+
+        if hasattr(self, 'dock_pvp_icon_2'):
+            if "ROOM_SAFELOGOFF" in raw_flags and "Safe Logoff" in self.pvp_icons:
+                self.dock_pvp_icon_2.setPixmap(self.pvp_icons["Safe Logoff"])
+                self.dock_pvp_icon_2.setToolTip("Safe Logoff: Instant Safe Logout")
+                self.dock_pvp_icon_2.show()
+            else:
+                self.dock_pvp_icon_2.clear()
+                self.dock_pvp_icon_2.hide()
+
+        # Update Main View Icons
+        if hasattr(self, 'main_pvp_icon_1'):
+            if status_key and status_key in self.pvp_icons:
+                self.main_pvp_icon_1.setPixmap(self.pvp_icons[status_key])
+                self.main_pvp_icon_1.setToolTip(tooltip_text)
+                self.main_pvp_icon_1.show()
+            else:
+                self.main_pvp_icon_1.clear()
+                self.main_pvp_icon_1.hide()
+
+        if hasattr(self, 'main_pvp_icon_2'):
+            if "ROOM_SAFELOGOFF" in raw_flags and "Safe Logoff" in self.pvp_icons:
+                self.main_pvp_icon_2.setPixmap(self.pvp_icons["Safe Logoff"])
+                self.main_pvp_icon_2.setToolTip("Safe Logoff: Instant Safe Logout")
+                self.main_pvp_icon_2.show()
+            else:
+                self.main_pvp_icon_2.clear()
+                self.main_pvp_icon_2.hide()
+
     def update_gps_room(self, room_name):
         if not room_name or room_name == "Unknown Location":
+            self.update_pvp_status_ui("Unknown Location")
             return
         self.current_room_name = room_name
 
@@ -8973,6 +9675,8 @@ class M59CompanionApp(QMainWindow):
             self.gps_main_loc_lbl.setText(f"📍 CURRENT: {room_name}")
         if hasattr(self, 'dock_gps_loc_lbl'):
             self.dock_gps_loc_lbl.setText(f"📍 {room_name}")
+
+        self.update_pvp_status_ui(room_name)
 
         if hasattr(self, 'gps_manager') and self.gps_manager:
             was_t, msg = self.gps_manager.process_room_update(room_name)
@@ -9056,6 +9760,8 @@ if __name__ == "__main__":
 
     # Set Window / App Icon
     icon_path = resource_path(os.path.join("imgs", "m59comp.ico"))
+    if not os.path.exists(icon_path):
+        icon_path = resource_path(os.path.join("imgs", "m59comp.png"))
     if not os.path.exists(icon_path):
         icon_path = resource_path(os.path.join("imgs", "m59comp.jpg"))
     if os.path.exists(icon_path):
