@@ -6,7 +6,7 @@ A modern, high-performance PySide6/Qt companion dashboard and overlay suite for 
 
 ### 📥 Direct Download
 
-- **🚀 Latest Release**: [Download M59Companion.exe (v3.1.6)](https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion.exe)
+- **🚀 Latest Release**: [Download M59Companion.exe (v3.1.7)](https://github.com/subvhome/m59-companion-v3/raw/main/dist/M59Companion.exe)
 
 ---
 
