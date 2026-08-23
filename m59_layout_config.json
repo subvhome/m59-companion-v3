@@ -1,5 +1,6 @@
 {
   "dock_panel_width": 340,
+  "is_desktop_docked": false,
   "dashboard_grid": [
     {
       "title": "CHARACTER IDENTITY & OVERVIEW",
@@ -39,6 +40,12 @@
     },
     {
       "title": "CARRIED ITEMS LEDGER",
+      "span": 6,
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "UW NODE MANA SOLVER",
       "span": 6,
       "width": null,
       "height": null

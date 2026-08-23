@@ -1,18 +1,6 @@
 {
-  "axe wielding": 73,
-  "blink": 17,
-  "block": 99,
-  "brawling": 42,
-  "dodge": 99,
-  "fencing": 91,
-  "glow": 19,
-  "hammer wielding": 63,
-  "mace fighting": 65,
-  "parry": 60,
-  "punch": 74,
-  "scimitar wielding": 34,
-  "second wind": 28,
-  "short sword fighting": 43,
-  "slash": 91,
-  "super strength": 30
+  "blink": 7,
+  "block": 6,
+  "brawling": 15,
+  "glow": 16
 }

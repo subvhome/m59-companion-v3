@@ -370,6 +370,7 @@ from m59_commalias import parse_config_ini
 from m59_gps import GPSManager
 from m59_calculator import SchoolCalculator
 from m59_spells import SpellManager
+from m59_uw_node import UWNodeSolverWidget
 import keyboard
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -562,6 +563,13 @@ class PKFrame(QWidget):
     def hide_bars(self):
         self.dock_timer.stop()
         self.hide()
+
+    def closeEvent(self, event):
+        if hasattr(self, 'dock_timer') and self.dock_timer:
+            self.dock_timer.stop()
+        if hasattr(self, 'hide_timer') and self.hide_timer:
+            self.hide_timer.stop()
+        event.accept()
 
 def pil_image_to_qpixmap(pil_img):
     """Converts a PIL RGBA Image to a PySide6 QPixmap."""
@@ -813,6 +821,11 @@ class QtFloatingHotkeyButton(QWidget):
             except Exception as ex:
                 print(f"Hotkey execution failed: {ex}")
         threading.Thread(target=_run, daemon=True).start()
+
+    def closeEvent(self, event):
+        if hasattr(self, 'dock_timer') and self.dock_timer:
+            self.dock_timer.stop()
+        event.accept()
 
 
 # ----------------------------------------------------------------------
@@ -1186,6 +1199,11 @@ class QtFloatingEludeBar(QWidget):
                     print(f"Elude macro execution failed: {ex}")
             threading.Thread(target=_run, daemon=True).start()
 
+    def closeEvent(self, event):
+        if hasattr(self, 'dock_timer') and self.dock_timer:
+            self.dock_timer.stop()
+        event.accept()
+
 
 # ----------------------------------------------------------------------
 # Floating Morph Bar Widget (Sticks & Docks to Game UI)
@@ -1536,6 +1554,11 @@ class QtFloatingMorphBar(QWidget):
                 except Exception as ex:
                     print(f"Morph macro execution failed: {ex}")
             threading.Thread(target=_run, daemon=True).start()
+
+    def closeEvent(self, event):
+        if hasattr(self, 'dock_timer') and self.dock_timer:
+            self.dock_timer.stop()
+        event.accept()
 
 
 # ----------------------------------------------------------------------
@@ -2049,6 +2072,8 @@ class QtFloatingChatBox(QWidget):
         self.stream_view.moveCursor(QTextCursor.End)
 
     def closeEvent(self, event):
+        if hasattr(self, 'dock_timer') and self.dock_timer:
+            self.dock_timer.stop()
         if self.dashboard and getattr(self.dashboard, 'active_floating_chat', None) == self:
             self.dashboard.active_floating_chat = None
         event.accept()
@@ -2786,7 +2811,7 @@ class GridReorderContainer(QWidget):
 
 class ReorderableCard(QFrame):
     """Interactive Card component supporting automatic zone-based drag-and-drop morphing, vertical resizing, and content scrollbars."""
-    def __init__(self, title_text, grid_container=None, icon="⋮⋮ DRAG", default_colspan=6, is_draggable=True, parent=None):
+    def __init__(self, title_text, grid_container=None, icon="⋮⋮", default_colspan=6, is_draggable=True, parent=None):
         border_color="#94a3b8"
         super().__init__(parent)
         self.setProperty("class", "WebCard")
@@ -3189,6 +3214,7 @@ class M59SplashScreen(QWidget):
         super().__init__(parent)
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.SplashScreen)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setFixedSize(580, 420)
 
         # Center on Primary Screen
@@ -3562,24 +3588,9 @@ class M59StandaloneDockWindow(QWidget):
         hdr.addWidget(title)
         hdr.addStretch()
 
-        self.reset_workarea_btn = QPushButton("🧹")
-        self.reset_workarea_btn.setFixedSize(22, 22)
-        self.reset_workarea_btn.setToolTip("Fix desktop alignment & reset Windows work area if a gap appears")
-        self.reset_workarea_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 11px; color: #94a3b8; background: transparent;
-                border: 1px solid #334155; border-radius: 4px; padding: 0px;
-            }
-            QPushButton:hover {
-                color: #f8fafc; background: #1e293b; border-color: #475569;
-            }
-        """)
-        self.reset_workarea_btn.clicked.connect(self.fix_workarea_alignment)
-        hdr.addWidget(self.reset_workarea_btn)
-
-        self.undock_btn = QPushButton("🪟")
+        self.undock_btn = QPushButton("↙")
         self.undock_btn.setFixedSize(22, 22)
-        self.undock_btn.setToolTip("Undock panel and return to main Companion application")
+        self.undock_btn.setToolTip("Undock panel and return to Companion application")
         self.undock_btn.setStyleSheet("""
             QPushButton {
                 font-size: 11px; color: #94a3b8; background: transparent;
@@ -3665,6 +3676,11 @@ class M59StandaloneDockWindow(QWidget):
 
     def undock_desktop(self):
         """Unregisters AppBar and notifies parent_app to return the dock content to main window."""
+        try:
+            reset_desktop_workarea()
+        except Exception:
+            pass
+
         if self.is_docked:
             hwnd = int(self.winId())
             unregister_window_appbar(hwnd)
@@ -3926,6 +3942,7 @@ class M59CompanionApp(QMainWindow):
         self.nav_list.addItem("  Chat Logger")
         self.nav_list.addItem("  Vault Storage")
         self.nav_list.addItem("  Kill Book")
+        self.nav_list.addItem("  UW Node Solver")
         self.nav_list.addItem("  Settings")
         self.nav_list.currentRowChanged.connect(self.switch_section)
         sidebar_layout.addWidget(self.nav_list, 1)
@@ -3991,7 +4008,11 @@ class M59CompanionApp(QMainWindow):
         self.page_killbook = self.build_killbook_page()
         self.stacked_widget.addWidget(self.page_killbook)
 
-        # Section 8: Settings Preferences Page
+        # Section 8: UW Node Solver Page
+        self.page_uwnode = UWNodeSolverWidget()
+        self.stacked_widget.addWidget(self.page_uwnode)
+
+        # Section 9: Settings Preferences Page
         self.page_settings = self.build_settings_page()
         self.stacked_widget.addWidget(self.page_settings)
 
@@ -4002,9 +4023,43 @@ class M59CompanionApp(QMainWindow):
         self.right_panel.setObjectName("RightPanelWidget")
         self.right_panel.setMinimumWidth(220)
         self.right_panel.setMaximumWidth(700)
-        self.right_panel_layout = QVBoxLayout(self.right_panel)
+
+        self.right_panel_outer_layout = QHBoxLayout(self.right_panel)
+        self.right_panel_outer_layout.setContentsMargins(0, 0, 0, 0)
+        self.right_panel_outer_layout.setSpacing(0)
+
+        # Super Low Profile Hide Button on Middle-Left edge of Dock Panel
+        hide_strip = QVBoxLayout()
+        hide_strip.setContentsMargins(0, 0, 0, 0)
+        hide_strip.setSpacing(0)
+        hide_strip.addStretch()
+
+        self.collapse_btn = QPushButton("▶")
+        self.collapse_btn.setFixedSize(14, 48)
+        self.collapse_btn.setToolTip("Hide Dock Panel")
+        self.collapse_btn.setCursor(Qt.PointingHandCursor)
+        self.collapse_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 10px; font-weight: 800; color: #94a3b8;
+                background: #0f172a; border: 1px solid #334155;
+                border-top-left-radius: 4px; border-bottom-left-radius: 4px;
+                border-right: none; padding: 0px;
+            }
+            QPushButton:hover {
+                color: #f8fafc; background: #1e293b; border-color: #38bdf8;
+            }
+        """)
+        self.collapse_btn.clicked.connect(self.toggle_right_panel)
+        hide_strip.addWidget(self.collapse_btn)
+        hide_strip.addStretch()
+        self.right_panel_outer_layout.addLayout(hide_strip)
+
+        # Inner Panel Container for Header & Content
+        right_panel_inner = QWidget()
+        self.right_panel_layout = QVBoxLayout(right_panel_inner)
         self.right_panel_layout.setContentsMargins(0, 0, 0, 0)
         self.right_panel_layout.setSpacing(0)
+        self.right_panel_outer_layout.addWidget(right_panel_inner, 1)
 
         # Minimalist Panel Header
         rp_hdr = QHBoxLayout()
@@ -4016,7 +4071,7 @@ class M59CompanionApp(QMainWindow):
         rp_hdr.addWidget(self.rp_title)
         rp_hdr.addStretch()
 
-        self.dock_desktop_btn = QPushButton("📌")
+        self.dock_desktop_btn = QPushButton("↗")
         self.dock_desktop_btn.setFixedSize(26, 24)
         self.dock_desktop_btn.setToolTip("Dock Panel to Desktop Screen as an AppBar")
         self.dock_desktop_btn.setStyleSheet("""
@@ -4030,21 +4085,6 @@ class M59CompanionApp(QMainWindow):
         """)
         self.dock_desktop_btn.clicked.connect(self.toggle_desktop_dock)
         rp_hdr.addWidget(self.dock_desktop_btn)
-
-        self.collapse_btn = QPushButton("⇥")
-        self.collapse_btn.setFixedSize(26, 24)
-        self.collapse_btn.setToolTip("Hide / Collapse Dock Panel")
-        self.collapse_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 11px; font-weight: 700; color: #94a3b8; background: transparent;
-                border: 1px solid #334155; border-radius: 4px; padding: 0px;
-            }
-            QPushButton:hover {
-                color: #f8fafc; background: #1e293b; border-color: #475569;
-            }
-        """)
-        self.collapse_btn.clicked.connect(self.toggle_right_panel)
-        rp_hdr.addWidget(self.collapse_btn)
         self.right_panel_layout.addLayout(rp_hdr)
 
         # Panel Content Container
@@ -4290,6 +4330,33 @@ class M59CompanionApp(QMainWindow):
 
         self.right_panel_layout.addWidget(self.right_panel_content)
 
+        # Super Low Profile Reveal Button on Side of Application (when panel is hidden)
+        self.reveal_container = QWidget()
+        reveal_layout = QVBoxLayout(self.reveal_container)
+        reveal_layout.setContentsMargins(0, 0, 0, 0)
+        reveal_layout.setSpacing(0)
+        reveal_layout.addStretch()
+
+        self.reveal_btn = QPushButton("◀")
+        self.reveal_btn.setFixedSize(14, 48)
+        self.reveal_btn.setToolTip("Reveal Dock Panel")
+        self.reveal_btn.setCursor(Qt.PointingHandCursor)
+        self.reveal_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 10px; font-weight: 800; color: #94a3b8;
+                background: #0f172a; border: 1px solid #334155;
+                border-top-left-radius: 4px; border-bottom-left-radius: 4px;
+                border-right: none; padding: 0px;
+            }
+            QPushButton:hover {
+                color: #f8fafc; background: #1e293b; border-color: #38bdf8;
+            }
+        """)
+        self.reveal_btn.clicked.connect(self.toggle_right_panel)
+        reveal_layout.addWidget(self.reveal_btn)
+        reveal_layout.addStretch()
+        self.reveal_container.hide()
+
         self.content_splitter = QSplitter(Qt.Horizontal)
         self.content_splitter.setObjectName("ContentSplitter")
         self.content_splitter.setStyleSheet("""
@@ -4302,9 +4369,11 @@ class M59CompanionApp(QMainWindow):
             }
         """)
         self.content_splitter.addWidget(self.stacked_widget)
+        self.content_splitter.addWidget(self.reveal_container)
         self.content_splitter.addWidget(self.right_panel)
         self.content_splitter.setCollapsible(0, False)
         self.content_splitter.setCollapsible(1, False)
+        self.content_splitter.setCollapsible(2, False)
         self.content_splitter.splitterMoved.connect(self.on_dock_splitter_moved)
 
         main_layout.addWidget(self.content_splitter, 1)
@@ -4331,6 +4400,11 @@ class M59CompanionApp(QMainWindow):
     def toggle_desktop_dock(self):
         """Toggles docking ONLY the right Dock Panel to the desktop edge as a Windows AppBar.
         When docked, Windows adjusts the desktop work area so maximized windows resize around it."""
+        try:
+            reset_desktop_workarea()
+        except Exception:
+            pass
+
         if not self.is_desktop_docked:
             print("[M59-DOCK] Detaching Dock Panel to standalone desktop AppBar...", flush=True)
 
@@ -4342,15 +4416,20 @@ class M59CompanionApp(QMainWindow):
             # Detach right_panel_content from main application and pass to standalone dock
             self.right_panel_layout.removeWidget(self.right_panel_content)
             self.right_panel.hide()
+            if hasattr(self, 'reveal_container'):
+                self.reveal_container.hide()
 
             self.standalone_dock.attach_dock_content(self.right_panel_content)
             self.is_desktop_docked = True
 
             if hasattr(self, 'hdr_dock_btn'):
-                self.hdr_dock_btn.setText("🪟 Undock")
+                self.hdr_dock_btn.setText("↙")
+                self.hdr_dock_btn.setToolTip("Undock Panel and return to Companion application")
             if hasattr(self, 'dock_desktop_btn'):
-                self.dock_desktop_btn.setText("🪟 Undock")
+                self.dock_desktop_btn.setText("↙")
+                self.dock_desktop_btn.setToolTip("Undock Panel and return to Companion application")
 
+            self.save_layout_config()
             print("[M59-DOCK] Standalone Dock Panel successfully docked as Windows AppBar.", flush=True)
         else:
             print("[M59-DOCK] Undocking Standalone Dock Panel back to main application window...", flush=True)
@@ -4359,6 +4438,11 @@ class M59CompanionApp(QMainWindow):
 
     def on_standalone_dock_undocked(self):
         """Callback triggered when the standalone dock panel is undocked or closed."""
+        try:
+            reset_desktop_workarea()
+        except Exception:
+            pass
+
         if self.is_desktop_docked:
             self.is_desktop_docked = False
 
@@ -4366,7 +4450,7 @@ class M59CompanionApp(QMainWindow):
                 self.dock_panel_width = self.standalone_dock.dock_width
                 if hasattr(self, 'content_splitter'):
                     total_w = max(800, self.width())
-                    self.content_splitter.setSizes([max(400, total_w - self.dock_panel_width), self.dock_panel_width])
+                    self.content_splitter.setSizes([max(400, total_w - self.dock_panel_width), 14, self.dock_panel_width])
                 else:
                     self.right_panel.setFixedWidth(self.dock_panel_width)
 
@@ -4376,11 +4460,16 @@ class M59CompanionApp(QMainWindow):
                 self.right_panel_layout.addWidget(self.right_panel_content)
                 self.right_panel_content.show()
                 self.right_panel.show()
+                if hasattr(self, 'reveal_container'):
+                    self.reveal_container.hide()
+                self.right_panel_collapsed = False
 
             if hasattr(self, 'hdr_dock_btn'):
-                self.hdr_dock_btn.setText("📌 Dock")
+                self.hdr_dock_btn.setText("↗")
+                self.hdr_dock_btn.setToolTip("Dock Panel to Desktop Screen as an AppBar")
             if hasattr(self, 'dock_desktop_btn'):
-                self.dock_desktop_btn.setText("📌 Dock")
+                self.dock_desktop_btn.setText("↗")
+                self.dock_desktop_btn.setToolTip("Dock Panel to Desktop Screen as an AppBar")
 
             # Refresh WhoList rendering for restored parent
             if hasattr(self, 'update_wholist_gui') and hasattr(self, 'wholist_data'):
@@ -4396,6 +4485,7 @@ class M59CompanionApp(QMainWindow):
         try:
             config = {
                 "dock_panel_width": getattr(self, 'dock_panel_width', 340),
+                "is_desktop_docked": getattr(self, 'is_desktop_docked', False),
                 "dashboard_grid": [],
                 "dock_grid": []
             }
@@ -4482,6 +4572,10 @@ class M59CompanionApp(QMainWindow):
                 self.dock_sub_grid.cards = new_sub
                 self.dock_sub_grid.refresh_layout()
 
+            # Automatically restore standalone desktop dock state if it was docked on last exit
+            if config.get("is_desktop_docked", False):
+                QTimer.singleShot(200, lambda: self.toggle_desktop_dock() if not getattr(self, 'is_desktop_docked', False) else None)
+
             print("[M59-LAYOUT] Custom layout configuration successfully loaded.", flush=True)
         except Exception as e:
             print(f"[M59-LAYOUT] Error loading layout config: {e}", flush=True)
@@ -4505,7 +4599,8 @@ class M59CompanionApp(QMainWindow):
                     "VAULT MANAGEMENT",
                     "SESSION KILLS (COMBAT)",
                     "SESSION IMPROVES (SKILLS & SPELLS)",
-                    "CARRIED ITEMS LEDGER"
+                    "CARRIED ITEMS LEDGER",
+                    "UW NODE MANA SOLVER"
                 ]
                 card_map = {c.title_text: c for c in self.dashboard_grid.cards}
                 self.dashboard_grid.cards = [card_map[t] for t in title_order if t in card_map] + [c for t, c in card_map.items() if t not in title_order]
@@ -4610,13 +4705,29 @@ class M59CompanionApp(QMainWindow):
             print(f"[M59-GUI] Error saving window geometry: {ex}", flush=True)
 
     def closeEvent(self, event):
-        """Ensure window position, size, layout config, standalone AppBar, Frida monitors, and floating dialogs are cleanly saved and shutdown when exiting."""
+        """Ensure window position, size, layout config, standalone AppBar, Frida monitors, background threads, and floating dialogs are cleanly saved and shutdown when exiting."""
         try:
             self.save_window_position_and_size()
             self.save_layout_config()
         except Exception as e:
             print(f"[M59-EXIT] Error saving geometry/layout: {e}", flush=True)
 
+        # 1. Unhook global OS keyboard hooks
+        try:
+            import keyboard
+            keyboard.unhook_all()
+        except Exception:
+            pass
+
+        # 2. Stop InstanceManager background lifecycle thread
+        if hasattr(self, 'lifecycle') and self.lifecycle:
+            try:
+                self.lifecycle.stop()
+            except Exception:
+                pass
+            self.lifecycle = None
+
+        # 3. Stop WhoList Frida Monitor thread
         if hasattr(self, 'wholist_monitor') and self.wholist_monitor:
             try:
                 self.wholist_monitor.stop()
@@ -4624,75 +4735,118 @@ class M59CompanionApp(QMainWindow):
                 pass
             self.wholist_monitor = None
 
+        # 4. Stop Clock and UI Timers
+        if hasattr(self, 'clock_timer') and self.clock_timer:
+            try:
+                self.clock_timer.stop()
+            except Exception:
+                pass
+
+        # 5. Close PKFrame
+        if hasattr(self, 'pk_frame') and self.pk_frame:
+            try:
+                self.pk_frame.close()
+            except Exception:
+                pass
+            self.pk_frame = None
+
+        # 6. Close Splash Overlay Screen
+        try:
+            self.hide_splash_overlay()
+        except Exception:
+            pass
+
+        # 7. Close Standalone Desktop Dock Window
+        if hasattr(self, 'standalone_dock') and self.standalone_dock:
+            try:
+                if getattr(self.standalone_dock, 'is_docked', False):
+                    self.standalone_dock.undock_desktop()
+                self.standalone_dock.hide()
+                self.standalone_dock.close()
+            except Exception:
+                pass
+            self.standalone_dock = None
+
+        # 8. Close active Direct Message Dialogs
         if hasattr(self, 'active_dm_dialogs'):
             for dlg in list(self.active_dm_dialogs.values()):
                 try:
+                    dlg.hide()
                     dlg.close()
                 except Exception:
                     pass
+            self.active_dm_dialogs.clear()
 
-        if self.standalone_dock and self.standalone_dock.is_docked:
-            try:
-                self.standalone_dock.undock_desktop()
-            except Exception:
-                pass
-
+        # 9. Close Floating Chat Box
         if hasattr(self, 'active_floating_chat') and self.active_floating_chat:
             try:
+                self.active_floating_chat.hide()
                 self.active_floating_chat.close()
             except Exception:
                 pass
+            self.active_floating_chat = None
 
+        # 10. Close Floating Elude Bar
         if hasattr(self, 'active_elude_bar') and self.active_elude_bar:
             try:
+                self.active_elude_bar.hide()
                 self.active_elude_bar.close()
             except Exception:
                 pass
+            self.active_elude_bar = None
 
+        # 11. Close Floating Morph Bar
         if hasattr(self, 'active_morph_bar') and self.active_morph_bar:
             try:
+                self.active_morph_bar.hide()
                 self.active_morph_bar.close()
             except Exception:
                 pass
+            self.active_morph_bar = None
 
+        # 12. Close Floating Hotkey Macro Buttons
         if hasattr(self, 'floating_hotkey_buttons'):
             for btn in self.floating_hotkey_buttons:
                 try:
+                    btn.hide()
                     btn.close()
                 except Exception:
                     pass
+            self.floating_hotkey_buttons.clear()
+
+        # Clean up any active AppBars
+        try:
+            cleanup_all_appbars()
+        except Exception:
+            pass
 
         event.accept()
+        try:
+            QApplication.closeAllWindows()
+            QApplication.quit()
+            import sys
+            sys.exit(0)
+        except Exception:
+            pass
 
     def toggle_right_panel(self):
         if getattr(self, 'right_panel_collapsed', False):
+            if hasattr(self, 'reveal_container'):
+                self.reveal_container.hide()
+            self.right_panel.show()
             self.right_panel.setMinimumWidth(220)
             self.right_panel.setMaximumWidth(700)
             w = getattr(self, 'dock_panel_width', 340)
             if hasattr(self, 'content_splitter'):
                 total_w = max(800, self.width())
-                self.content_splitter.setSizes([max(400, total_w - w), w])
+                self.content_splitter.setSizes([max(400, total_w - w), 14, w])
             else:
                 self.right_panel.setFixedWidth(w)
-            self.right_panel_content.show()
-            if hasattr(self, 'rp_title'):
-                self.rp_title.show()
-            if hasattr(self, 'dock_desktop_btn'):
-                self.dock_desktop_btn.show()
-            self.collapse_btn.setText("⇥ Hide")
-            self.collapse_btn.setToolTip("Hide / Collapse Dock Panel")
             self.right_panel_collapsed = False
         else:
-            self.right_panel.setMinimumWidth(36)
-            self.right_panel.setMaximumWidth(36)
-            self.right_panel.setFixedWidth(36)
-            self.right_panel_content.hide()
-            if hasattr(self, 'rp_title'):
-                self.rp_title.hide()
-            if hasattr(self, 'dock_desktop_btn'):
-                self.dock_desktop_btn.hide()
-            self.collapse_btn.setText("⇤")
-            self.collapse_btn.setToolTip("Expand Dock Panel")
+            self.right_panel.hide()
+            if hasattr(self, 'reveal_container'):
+                self.reveal_container.show()
             self.right_panel_collapsed = True
 
     def toggle_clock_format(self):
@@ -5297,6 +5451,18 @@ class M59CompanionApp(QMainWindow):
         self.inv_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.inv_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         items_card.content_layout.addWidget(self.inv_table)
+
+        # 7. UW Node Mana Solver Section (Shiftable)
+        uwnode_card = ReorderableCard("UW NODE MANA SOLVER", self.dashboard_grid, default_colspan=6)
+
+        open_uwnode_btn = QPushButton("🌀 Launch Full Interactive Pentagram Solver Page")
+        open_uwnode_btn.setProperty("class", "WebBtnPrimary")
+        open_uwnode_btn.clicked.connect(lambda: self.nav_list.setCurrentRow(7))
+        uwnode_card.add_header_widget(open_uwnode_btn)
+
+        dash_uwnode_widget = UWNodeSolverWidget()
+        dash_uwnode_widget.setMinimumHeight(480)
+        uwnode_card.content_layout.addWidget(dash_uwnode_widget)
 
         scroll.setWidget(container)
         page_layout.addWidget(scroll)
@@ -10132,6 +10298,15 @@ if __name__ == "__main__":
         if _cleaned_up:
             return
         _cleaned_up = True
+        try:
+            cleanup_all_appbars()
+        except Exception:
+            pass
+        try:
+            import keyboard
+            keyboard.unhook_all()
+        except Exception:
+            pass
         try:
             if 'window' in locals() and window:
                 window.close()
