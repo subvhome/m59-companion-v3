@@ -7,21 +7,51 @@ from datetime import datetime
 from m59_utils import resource_path, get_safe_name
 
 # Standard spellcast patterns in Meridian 59
-TRANCE_START_REGEX = re.compile(r"^(?:You focus your whole will on casting|You start to cast)\s+([^.]+)\.?", re.I)
+TRANCE_START_REGEX = re.compile(
+    r"^(?:You focus your whole will on casting|You start to cast)\s+([^.]+)\.?",
+    re.I
+)
+
 TRANCE_BREAK_REGEX = re.compile(
     r"(?:You lose your concentration|Your concentration is broken|Your spell fizzles|"
     r"You fail to cast|You are interrupted|You cannot cast while|Your spell has no effect|"
-    r"The spell fizzles|You are unable to cast)",
+    r"The spell fizzles|You are unable to cast|unsuccessful in casting|unsuccessful in|"
+    r"You fail in your attempt|Your spell was resisted|don't have the reagents|"
+    r"don't have enough mana|too tired to cast|can't cast spells while resting|"
+    r"hands are too full|not powerful enough|not worthy to cast|not vile enough|"
+    r"guardian angel tells you|safety was on|antisocial cast|turned into an outlaw|"
+    r"out of range|can't cast .* on|no proper targets|can't cast .* here|"
+    r"already in effect here|resists your|catch in your throat|can't quite remember|"
+    r"tip of your tongue|Klaatu Veratu|notes of .* song tangle|unseen force rips)",
     re.I
 )
+
 CAST_SUCCESS_GENERIC_REGEX = re.compile(
     r"^(?:You complete your spell|Your spell takes effect|You invoke the power of|You channel the power of|"
-    r"You cast (?:the spell )?([^.]+)|You summon|A magical glow surrounds|You send forth)",
+    r"You cast (?:the spell )?([^.]+?)(?: on [^.]+)?\.|You summon|A magical glow surrounds|You send forth)",
     re.I
 )
-SPELL_ADVANCE_REGEX = re.compile(r"^You have improved in the art of ([^.]+)\.?", re.I)
-CAST_FAILED_CHANCE_REGEX = re.compile(r"^(?:You fail in your attempt to cast|You struggle to cast but fail)\s+([^.]+)\.?", re.I)
-CAST_RESISTED_REGEX = re.compile(r"^Your spell was resisted by\s+([^.]+)\.?", re.I)
+
+SPELL_ADVANCE_REGEX = re.compile(
+    r"^(?:You have improved in the art of|You advanced in)\s+([^.!]+)",
+    re.I
+)
+
+CAST_FAILED_CHANCE_REGEX = re.compile(
+    r"^(?:You fail in your attempt to cast|You struggle to cast but fail|You were unsuccessful in casting|You was unsuccessful in casting)\s+([^.]+)\.?",
+    re.I
+)
+
+CAST_RESISTED_REGEX = re.compile(r"^(?:Your spell was resisted by|[^.]+\s+resists your spell)\s*([^.]*)\.?", re.I)
+
+BACKGROUND_NOISE_REGEX = re.compile(
+    r"^(?:You open the door|You enter|You exit|You walk|You are unable to go|You cannot go|"
+    r"You see|You look|There is|It is|You block|The \w+ claws|The \w+ burns|The \w+ bites|"
+    r"The \w+ hits|The \w+ misses|The \w+ attacks|The \w+ slashes|The \w+ strikes|"
+    r"You avoid|You hit|You miss|You swing|You slash|You stab|You shoot|You punch|"
+    r"\[|say,|says,|tells you,|you tell|shouts,|yells,|group:)",
+    re.I
+)
 
 
 class SpellManager:
@@ -275,6 +305,9 @@ class SpellManager:
         canonical_name = info["name"] if info else spell_name.title()
         reagents = info["reagents"] if info else {}
         
+        # Track last recorded cast time to prevent duplicate triggers from skill advance messages
+        self.last_recorded_cast = (canonical_name, time.time())
+
         # 1. Update All-Time and Session Spells Cast
         spells_cast = self.reagent_stats.setdefault("spells_cast", {})
         spells_cast[canonical_name] = spells_cast.get(canonical_name, 0) + 1
@@ -327,7 +360,7 @@ class SpellManager:
     def process_line(self, line, is_historical=False):
         """
         Parses a log line for spell trance start, trance interruption/fizzle,
-        instant cast, success, or skill improvement.
+        instant cast, success (including spell flavor text), or skill improvement.
         Returns event dict or None.
         """
         clean = line.strip()
@@ -355,51 +388,58 @@ class SpellManager:
                 "cast_time": cast_time
             }
             
-        # 2. Trance Interrupted / Fizzled
-        if self.active_trance and TRANCE_BREAK_REGEX.search(clean):
-            interrupted_spell = self.active_trance["canonical_name"]
-            self.active_trance = None
+        # 2. Trance Interrupted / Failed / Fizzled Check
+        if TRANCE_BREAK_REGEX.search(clean) or CAST_FAILED_CHANCE_REGEX.search(clean) or CAST_RESISTED_REGEX.search(clean):
+            if self.active_trance:
+                interrupted_spell = self.active_trance["canonical_name"]
+                self.active_trance = None
+                return {
+                    "type": "SPELL_FIZZLED",
+                    "spell_name": interrupted_spell,
+                    "message": clean
+                }
             return {
-                "type": "SPELL_FIZZLED",
-                "spell_name": interrupted_spell,
+                "type": "SPELL_FAILED",
                 "message": clean
             }
             
-        # 3. Spell Improvement (Always signals a successful cast)
+        # 3. Spell Improvement (Skill Advance line)
         advance_m = SPELL_ADVANCE_REGEX.match(clean)
         if advance_m:
             adv_name = advance_m.group(1).strip()
             info = self.find_spell_info(adv_name)
-            # If it's a known spell in the spell DB, record reagent usage
-            if info:
-                # Clear active trance if matched
-                self.active_trance = None
-                return self.record_spell_success(adv_name, is_historical=is_historical)
+            c_name = info["name"] if info else adv_name.title()
+            
+            self.active_trance = None
+            
+            # Check if this exact spell was recorded within the last 4 seconds to avoid double-counting
+            now = time.time()
+            last_name, last_time = getattr(self, 'last_recorded_cast', (None, 0))
+            if last_name == c_name and (now - last_time) < 4.0:
+                return {
+                    "type": "SPELL_IMPROVED",
+                    "spell_name": c_name,
+                    "message": clean
+                }
                 
-        # 4. Generic Success / Completion
-        # If in active trance, any completion message or elapsed cast time confirms completion
+            return self.record_spell_success(adv_name, is_historical=is_historical)
+            
+        # 4. If in active trance, handle the next outcome line (spell completion flavor text)
         if self.active_trance:
-            # Check for generic cast success or finish
-            if CAST_SUCCESS_GENERIC_REGEX.search(clean) or "take effect" in clean.lower():
-                s_name = self.active_trance["canonical_name"]
-                self.active_trance = None
-                return self.record_spell_success(s_name, is_historical=is_historical)
+            # Ignore combat attacks/misses, movement, door messages, or chat messages
+            if BACKGROUND_NOISE_REGEX.search(clean):
+                return None
                 
-        # Check if line explicitly mentions casting a specific spell
+            # Any line arriving after trance start (that is not a failure, new trance, or noise)
+            # IS the spell success / flavor text! (e.g., "Your hands weave through...", "You are amazed...")
+            s_name = self.active_trance["canonical_name"]
+            self.active_trance = None
+            return self.record_spell_success(s_name, is_historical=is_historical)
+            
+        # 5. Direct Standalone Success Match (for instant spells without prior trance message)
         success_m = CAST_SUCCESS_GENERIC_REGEX.match(clean)
         if success_m and success_m.group(1):
             s_name = success_m.group(1).strip()
             return self.record_spell_success(s_name, is_historical=is_historical)
-            
-        # 5. Failed Chance / Resisted
-        fail_m = CAST_FAILED_CHANCE_REGEX.match(clean)
-        if fail_m:
-            f_name = fail_m.group(1).strip()
-            self.active_trance = None
-            return {
-                "type": "SPELL_FAILED",
-                "spell_name": f_name,
-                "message": clean
-            }
             
         return None

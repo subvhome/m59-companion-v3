@@ -3215,14 +3215,15 @@ class M59SplashScreen(QWidget):
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.SplashScreen)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.setFixedSize(580, 420)
+        self.setFixedSize(580, 430)
+        self._drag_pos = None
 
         # Center on Primary Screen
         screen = QApplication.primaryScreen()
         if screen:
             geo = screen.geometry()
             x = (geo.width() - 580) // 2
-            y = (geo.height() - 420) // 2
+            y = (geo.height() - 430) // 2
             self.move(x, y)
 
         self.setStyleSheet("""
@@ -3237,8 +3238,35 @@ class M59SplashScreen(QWidget):
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setContentsMargins(20, 16, 20, 24)
         layout.setAlignment(Qt.AlignCenter)
+
+        # Top Bar with Drag Handle / Cross-Arrow Icon
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(0, 0, 0, 0)
+        top_bar.addStretch(1)
+
+        self.drag_lbl = QLabel("✥ Drag to Move")
+        self.drag_lbl.setCursor(Qt.SizeAllCursor)
+        self.drag_lbl.setToolTip("Click and drag to move splash overlay away from game login window")
+        self.drag_lbl.setStyleSheet("""
+            QLabel {
+                color: #94a3b8;
+                background-color: #1E293B;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QLabel:hover {
+                color: #f8fafc;
+                background-color: #334155;
+                border-color: #3b82f6;
+            }
+        """)
+        top_bar.addWidget(self.drag_lbl)
+        layout.addLayout(top_bar)
 
         # Image Container Label
         self.img_lbl = QLabel()
@@ -3252,21 +3280,21 @@ class M59SplashScreen(QWidget):
         if os.path.exists(img_path):
             pix = QPixmap(img_path)
             if not pix.isNull():
-                scaled_pix = pix.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                scaled_pix = pix.scaled(190, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 self.img_lbl.setPixmap(scaled_pix)
         else:
             self.img_lbl.setText("🛡️")
             self.img_lbl.setStyleSheet("font-size: 64px; color: #94a3b8;")
 
         layout.addWidget(self.img_lbl, 0, Qt.AlignCenter)
-        layout.addSpacing(12)
+        layout.addSpacing(10)
 
         title_lbl = QLabel("MERIDIAN 59 COMPANION")
         title_lbl.setStyleSheet("font-size: 20px; font-weight: 900; color: #f8fafc; letter-spacing: 1.5px;")
         title_lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(title_lbl, 0, Qt.AlignCenter)
 
-        layout.addSpacing(14)
+        layout.addSpacing(12)
 
         self.status_title_lbl = QLabel("↻ SCANNING FOR GAME PROCESS")
         self.status_title_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #94a3b8; letter-spacing: 1px;")
@@ -3277,6 +3305,23 @@ class M59SplashScreen(QWidget):
         self.status_sub_lbl.setStyleSheet("font-size: 11px; color: #94a3b8;")
         self.status_sub_lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.status_sub_lbl, 0, Qt.AlignCenter)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+            self._drag_pos = pos - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton and hasattr(self, '_drag_pos') and self._drag_pos is not None:
+            pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+            self.move(pos - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = None
+            event.accept()
 
     def set_status(self, mode="searching", title=None, msg=None):
         if mode == "initializing":
@@ -7470,41 +7515,6 @@ class M59CompanionApp(QMainWindow):
         title_box.addWidget(s_lbl)
         hdr_layout.addLayout(title_box, 1)
 
-        self.reagent_test_btn = QPushButton("⚡ Simulate Sample")
-        self.reagent_test_btn.setProperty("class", "WebBtnSecondary")
-        self.reagent_test_btn.setStyleSheet("padding: 2px 8px; font-size: 10px; min-height: 22px;")
-        def _simulate_sample_casts():
-            if hasattr(self, 'spell_manager'):
-                self.spell_manager.record_spell_success("create food")
-                self.spell_manager.record_spell_success("create food")
-                self.spell_manager.record_spell_success("blink")
-                self.spell_manager.record_spell_success("fireball")
-                self.spell_manager.record_spell_success("heal")
-                self.spell_manager.record_spell_success("touch of flame")
-                self.update_reagents_ui()
-        self.reagent_test_btn.clicked.connect(_simulate_sample_casts)
-        hdr_layout.addWidget(self.reagent_test_btn)
-
-        self.reagent_clear_btn = QPushButton("🧹 Reset")
-        self.reagent_clear_btn.setProperty("class", "WebBtnSecondary")
-        self.reagent_clear_btn.setStyleSheet("padding: 2px 8px; font-size: 10px; min-height: 22px;")
-        def _clear_reagent_stats():
-            if hasattr(self, 'spell_manager'):
-                self.spell_manager.reagent_stats = {
-                    "spells_cast": {},
-                    "reagents_used": {},
-                    "spell_reagent_breakdown": {},
-                    "total_casts": 0,
-                    "total_reagents": 0,
-                    "session_casts": {},
-                    "session_reagents": {},
-                    "history": []
-                }
-                self.spell_manager.save_reagent_stats()
-                self.update_reagents_ui()
-        self.reagent_clear_btn.clicked.connect(_clear_reagent_stats)
-        hdr_layout.addWidget(self.reagent_clear_btn)
-
         page_layout.addWidget(hdr_frame)
 
         # Summary Metric Cards (Compact)
@@ -8546,6 +8556,10 @@ class M59CompanionApp(QMainWindow):
         except Exception:
             pass
 
+        # Reset initial sync state flags for fresh connection
+        self._initial_sync_done = False
+        self._initial_sync_started = False
+
         # Start login check loop
         self.check_for_login()
 
@@ -8564,7 +8578,7 @@ class M59CompanionApp(QMainWindow):
             self.load_knowledge_cache(self.char_name)
             self.load_dms_cache(self.char_name)
 
-            if not getattr(self, '_initial_sync_started', False):
+            if not getattr(self, '_initial_sync_done', False) and not getattr(self, '_initial_sync_started', False):
                 self._initial_sync_started = True
                 self.show_splash_overlay("initializing", "↻ INITIALIZING GAME STATE", f"Synchronizing memory state for {self.char_name}...")
                 self.trigger_manual_sync(is_initial=True)
@@ -8620,24 +8634,25 @@ class M59CompanionApp(QMainWindow):
                         if scraped_char == "--" and self.char_name != "--":
                             scraped_char = self.char_name
 
-                        # 4. If name still unknown, perform async background identity capture (5s retry cooldown)
-                        if (scraped_char == "--" or self.char_name == "--") and capture_identity and not getattr(self, '_is_capturing_identity', False):
-                            now = time.time()
-                            last_try = getattr(self, '_last_identity_capture_time', 0)
-                            if now - last_try > 5:
-                                self._last_identity_capture_time = now
-                                self._is_capturing_identity = True
-                                def bio_worker():
-                                    try:
-                                        print("[M59-LOGIN] Non-blocking identity capture started...", flush=True)
-                                        cid = capture_identity(self.main_hwnd, self.target_pid)
-                                        if cid and cid != "--":
-                                            self.signals.identity_found.emit(cid)
-                                    except Exception as ex:
-                                        print(f"[M59-LOGIN] Background bio capture exception: {ex}", flush=True)
-                                    finally:
-                                        self._is_capturing_identity = False
-                                threading.Thread(target=bio_worker, daemon=True).start()
+                        # 4. Perform background identity capture ONLY on initial startup if name still unknown
+                        if not getattr(self, '_initial_sync_done', False):
+                            if (scraped_char == "--" or self.char_name == "--") and capture_identity and not getattr(self, '_is_capturing_identity', False):
+                                now = time.time()
+                                last_try = getattr(self, '_last_identity_capture_time', 0)
+                                if now - last_try > 5:
+                                    self._last_identity_capture_time = now
+                                    self._is_capturing_identity = True
+                                    def bio_worker():
+                                        try:
+                                            print("[M59-LOGIN] Non-blocking identity capture started...", flush=True)
+                                            cid = capture_identity(self.main_hwnd, self.target_pid)
+                                            if cid and cid != "--":
+                                                self.signals.identity_found.emit(cid)
+                                        except Exception as ex:
+                                            print(f"[M59-LOGIN] Background bio capture exception: {ex}", flush=True)
+                                        finally:
+                                            self._is_capturing_identity = False
+                                    threading.Thread(target=bio_worker, daemon=True).start()
 
                         # 5. Handle character name update / login transition
                         if scraped_char != "--" and self.char_name != scraped_char:
@@ -8655,13 +8670,14 @@ class M59CompanionApp(QMainWindow):
                             self.load_knowledge_cache(self.char_name)
                             self.load_dms_cache(self.char_name)
 
-                            # Show splash overlay initializing state & trigger initial memory scrape
-                            self.show_splash_overlay("initializing", "↻ INITIALIZING GAME STATE", f"Synchronizing memory state for {self.char_name}...")
-                            self.trigger_manual_sync(is_initial=True)
-                            self._initial_sync_started = True
+                            # Trigger initial memory scrape ONLY ONCE on initial process startup
+                            if not getattr(self, '_initial_sync_done', False) and not getattr(self, '_initial_sync_started', False):
+                                self._initial_sync_started = True
+                                self.show_splash_overlay("initializing", "↻ INITIALIZING GAME STATE", f"Synchronizing memory state for {self.char_name}...")
+                                self.trigger_manual_sync(is_initial=True)
 
                         # 6. CRITICAL FALLBACK: If game is logged in, but char_name is still "--" and initial sync hasn't run yet, start sync!
-                        elif self.char_name == "--" and not getattr(self, '_initial_sync_started', False):
+                        elif not getattr(self, '_initial_sync_done', False) and not getattr(self, '_initial_sync_started', False):
                             self._initial_sync_started = True
                             print("[M59-LOGIN] Active game session detected. Starting initial sync cycle while identity resolves...", flush=True)
                             self.char_sub_lbl.setText(f"ATTACHED & SYNCING | PID: {self.target_pid} | HWND: {self.main_hwnd}")
@@ -8670,15 +8686,17 @@ class M59CompanionApp(QMainWindow):
 
                     else:
                         # Character is NOT logged in (timed out or back at character select / login screen)
-                        self._initial_sync_started = False
-                        if self.char_name != "--":
-                            print(f"[M59-LOGIN] Timeout / logoff detected! Resetting state from '{self.char_name}' to '--'.", flush=True)
-                            self.char_name = "--"
-                            self.char_name_lbl.setText("CHARACTER: --")
-                            self.char_sub_lbl.setText(f"ATTACHMENT: Waiting for character login | PID: {self.target_pid}")
+                        # IF initial sync was already performed once, silently wait without resetting or interrupting the user
+                        if not getattr(self, '_initial_sync_done', False):
+                            self._initial_sync_started = False
+                            if self.char_name != "--":
+                                print(f"[M59-LOGIN] Timeout / logoff detected! Resetting state from '{self.char_name}' to '--'.", flush=True)
+                                self.char_name = "--"
+                                self.char_name_lbl.setText("CHARACTER: --")
+                                self.char_sub_lbl.setText(f"ATTACHMENT: Waiting for character login | PID: {self.target_pid}")
 
-                            # Show splash overlay for login wait
-                            self.show_splash_overlay("login", "↻ WAITING FOR CHARACTER LOGIN", "Session timed out or logged off. Please select a character in Meridian 59.")
+                                # Show splash overlay for login wait
+                                self.show_splash_overlay("login", "↻ WAITING FOR CHARACTER LOGIN", "Session timed out or logged off. Please select a character in Meridian 59.")
                 except Exception as e:
                     print(f"[M59-LOGIN] Error checking login status: {e}", flush=True)
 
@@ -8694,6 +8712,8 @@ class M59CompanionApp(QMainWindow):
         self.target_pid = None
         self.pm_obj = None
         self.main_hwnd = None
+        self._initial_sync_done = False
+        self._initial_sync_started = False
         if getattr(self, 'pk_frame', None):
             self.pk_frame.set_target_hwnd(None)
         self.inventory_scraper = None
@@ -8750,6 +8770,7 @@ class M59CompanionApp(QMainWindow):
 
         if getattr(self, "_is_initial_sync", False):
             self._is_initial_sync = False
+            self._initial_sync_done = True
             self.show_splash_overlay("connected", f"🟢 CONNECTED: {self.char_name.upper()}", "Game state & memory synchronized successfully!")
             QTimer.singleShot(1200, self.hide_splash_overlay)
 

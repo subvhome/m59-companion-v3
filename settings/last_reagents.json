@@ -4,10 +4,11 @@
     "Blink": 1,
     "Fireball": 1,
     "Minor Heal": 1,
-    "Touch Of Flame": 1
+    "Touch Of Flame": 1,
+    "Holy Symbol": 1
   },
   "reagents_used": {
-    "Elderberry": 4,
+    "Elderberry": 7,
     "Herbs": 5,
     "Red Mushroom": 2,
     "Orc Tooth": 1
@@ -25,10 +26,13 @@
     "Minor Heal": {
       "Herbs": 1
     },
-    "Touch Of Flame": {}
+    "Touch Of Flame": {},
+    "Holy Symbol": {
+      "Elderberry": 3
+    }
   },
-  "total_casts": 6,
-  "total_reagents": 12,
+  "total_casts": 7,
+  "total_reagents": 15,
   "history": [
     {
       "ts": "17:40:26",
@@ -82,7 +86,16 @@
       "school": "Faren",
       "mana": 9,
       "reagents": {}
+    },
+    {
+      "ts": "18:42:24",
+      "spell": "Holy Symbol",
+      "school": "Shal'ille",
+      "mana": 8,
+      "reagents": {
+        "Elderberry": 3
+      }
     }
   ],
-  "last_updated": "2026-08-21 17:40:26"
+  "last_updated": "2026-08-23 18:42:24"
 }

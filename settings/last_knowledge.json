@@ -1,6 +1,10 @@
 {
-  "blink": 7,
-  "block": 6,
-  "brawling": 15,
-  "glow": 16
+  "blink": 6,
+  "block": 16,
+  "brawling": 12,
+  "holy symbol": 17,
+  "mace fighting": 28,
+  "minor heal": 28,
+  "punch": 11,
+  "slash": 31
 }

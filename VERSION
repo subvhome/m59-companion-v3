@@ -1,2 +1,2 @@
-3.1.8
-Added UW Node Resolver
+3.1.9
+logoff / logon doesn't sync anymore, resolve splash message blocking logon windows, added more spell support to reagent tracker.

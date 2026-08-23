@@ -1,0 +1,19 @@
+{
+  "player_dms": {
+    "markandeya": {
+      "player_name": "Markandeya",
+      "messages": [
+        {
+          "ts": "18:42:39",
+          "direction": "in",
+          "type": "tell",
+          "text": "one more thing   I dont know if its my mac  with parrlles   but   if i have  app  running and    hit the  meridian  Load screen     < the squar app logo > covers   the login in screen  .",
+          "raw": "Markandeya tells you, \" one more thing   I dont know if its my mac  with parrlles   but   if i have  app  running and    hit the  meridian  Load screen     < the squar app logo > covers   the login in screen  . \""
+        }
+      ]
+    }
+  },
+  "unread_dms": {
+    "markandeya": 1
+  }
+}
