@@ -1,6 +1,10 @@
 import os
 import json
 import sys
+from m59_logging import setup_logging, get_logger
+
+setup_logging(debug_enabled=True)
+prog_logger = get_logger("progression")
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -21,6 +25,45 @@ class SchoolCalculator:
         self.config_path = config_path
         self.schools = self._load_data()
         self.config = self._load_config()
+        self._build_spell_map()
+        self._validate_schools()
+
+    def _build_spell_map(self):
+        """Maps lowercased spell/skill names to (school_name, level). Logs duplicate spell definitions."""
+        self.spell_map = {}
+        for school, levels in self.schools.items():
+            for lvl_idx in range(1, 7):
+                lvl_key = f"Level_{lvl_idx}"
+                spells = levels.get(lvl_key, [])
+                for s in spells:
+                    s_lower = s.lower().strip()
+                    if s_lower in self.spell_map:
+                        prev_school, prev_lvl = self.spell_map[s_lower]
+                        prog_logger.warning(
+                            f"[SPELL-NAME-DUPLICATE] '{s}' appears in multiple schools: "
+                            f"{prev_school} (L{prev_lvl}) and {school} (L{lvl_idx})"
+                        )
+                    self.spell_map[s_lower] = (school, lvl_idx)
+
+    def _validate_schools(self):
+        """Validates school names against standard Meridian 59 schools."""
+        standard_schools = {"weaponcraft", "weaponmaster", "shal'ille", "riija", "qor", "kraanan", "jala", "faren"}
+        loaded_schools = {s.lower().strip() for s in self.schools.keys()}
+        
+        for loaded in self.schools.keys():
+            l_clean = loaded.lower().strip()
+            if l_clean not in standard_schools:
+                prog_logger.warning(f"[SCHOOL-NAME-MISMATCH] Unrecognized school name in dataset: '{loaded}'")
+            else:
+                prog_logger.debug(f"[SCHOOL-NAME-MATCH] Loaded school: '{loaded}'")
+        
+        # Check missing standard schools
+        missing = standard_schools - loaded_schools
+        if "weaponcraft" in loaded_schools or "weaponmaster" in loaded_schools:
+            missing.discard("weaponcraft")
+            missing.discard("weaponmaster")
+        if missing:
+            prog_logger.warning(f"[SCHOOL-NAME-MISSING] Missing standard schools from dataset: {list(missing)}")
 
     def _load_data(self):
         try:
@@ -69,6 +112,7 @@ class SchoolCalculator:
         # Based on system.kod vlLevelPoints = [1, 2, 4, 6, 8, 10]
         point_values = {0: 0, 1: 1, 2: 2, 3: 4, 4: 6, 5: 8, 6: 10}
         if school_name == "Riija" and self._riija_blink_only(knowledge_cache, levels):
+            prog_logger.debug(f"[RIIJA-CHECK] Riija excluded: Blink is the only known spell in cache.")
             return 0, 0
 
         max_lvl = 0
@@ -82,33 +126,49 @@ class SchoolCalculator:
                 max_lvl = i
                 break
 
-        return max_lvl, point_values.get(max_lvl, 0)
+        pts = point_values.get(max_lvl, 0)
+        if max_lvl > 0:
+            prog_logger.debug(f"[SCHOOL-STATUS] {school_name}: Max Level = {max_lvl}, Points = {pts}")
+        return max_lvl, pts
 
     def calculate_progression(self, knowledge_cache, intellect=None):
         """
         The CORE ENGINE: Replicates the original Meridian 59 PlayerCanLearn logic.
-        
-        FORMULA REFERENCE (DO NOT CHANGE):
-        ----------------------------------
-        Target Sum (t_sum) is determined by:
-        1. iPoints = (Sum of points from all other schools) + (Points for target level of this school)
-           Points mapping: L1=1, L2=2, L3=4, L4=6, L5=8, L6=10
-        
-        2. Base Formula:
-           t_sum = (iPoints * points_slope) + (297 - (max_points * points_slope)) - ((intellect * 2.0 * points_slope) / 5.0)
-        
-        3. Scarcity Adjustment:
-           - If target school has only 1 skill in previous level: t_sum = t_sum / 3.0
-           - If target school has only 2 skills in previous level: t_sum = (t_sum * 2.0) / 3.0
-        
-        4. Minimum Cap: t_sum is always at least 75%.
-        ----------------------------------
         """
         if intellect is None:
             intellect = self.config.get("character", {}).get("intellect", 25)
             
         max_points = self.config.get("server", {}).get("max_points", 16)
         points_slope = self.config.get("server", {}).get("points_slope", 7)
+
+        prog_logger.info("=" * 60)
+        prog_logger.info(f"[PROG-CALC-START] Calculating progression | Intellect={intellect} | KnownSkillsCount={len(knowledge_cache)} | MaxPts={max_points} | Slope={points_slope}")
+        
+        # --- 0. Validate Knowledge Cache Spell/Skill Names ---
+        unrecognized_spells = []
+        recognized_count = 0
+        for skill_key, pct in knowledge_cache.items():
+            s_clean = str(skill_key).lower().strip()
+            if s_clean not in self.spell_map:
+                unrecognized_spells.append((skill_key, pct))
+                prog_logger.warning(
+                    f"[SPELL-NAME-MISMATCH] Knowledge cache key '{skill_key}' ({pct}%) "
+                    f"does NOT match any known spell/skill in m59_data.json!"
+                )
+            else:
+                school_found, lvl_found = self.spell_map[s_clean]
+                recognized_count += 1
+                prog_logger.debug(
+                    f"[SPELL-MATCH] '{skill_key}' -> School: '{school_found}', Level: {lvl_found} ({pct}%)"
+                )
+
+        if unrecognized_spells:
+            prog_logger.warning(
+                f"[VALIDATION-WARNING] {len(unrecognized_spells)} unrecognized skill(s) in knowledge cache: "
+                f"{[u[0] for u in unrecognized_spells]}"
+            )
+        else:
+            prog_logger.info(f"[VALIDATION-OK] All {recognized_count} knowledge cache skills matched valid school spells.")
         
         # --- 1. Identify Active Schools and Calculate Base iPoints ---
         school_stats = {}
@@ -118,6 +178,8 @@ class SchoolCalculator:
             if max_lvl > 0:
                 school_stats[name] = max_lvl
                 total_base_points += pts
+
+        prog_logger.info(f"[ACTIVE-SCHOOLS] Active={list(school_stats.keys())} | Total Base Points={total_base_points}")
 
         # --- 2. Calculate Progression for Each School ---
         results = []
@@ -129,13 +191,16 @@ class SchoolCalculator:
 
             # Handle Mastered Schools (Level 6)
             if current_lvl == 6:
+                prog_logger.debug(f"[MASTERED] {name} is Level 6 (Mastered).")
                 results.append({
                     'name': name,
                     'current_lvl': 6,
                     'target_lvl': 6,
                     'current_sum': 0,
                     'target_sum': 0,
+                    'max_possible': 297,
                     'needed': 0,
+                    'is_impossible': False,
                     'mastered': True
                 })
                 continue
@@ -161,28 +226,38 @@ class SchoolCalculator:
             i_points = total_base_points - point_values.get(current_lvl, 0) + point_values.get(target_lvl, 0)
             
             # The Formula from player.kod
-            t_sum = (i_points * points_slope) + \
-                    (297 - (max_points * points_slope)) - \
-                    ((intellect * 2.0 * points_slope) / 5.0)
+            t_sum_raw = (i_points * points_slope) + \
+                        (297 - (max_points * points_slope)) - \
+                        ((intellect * 2.0 * points_slope) / 5.0)
             
-            t_sum = max(75, t_sum)
+            t_sum = max(75, t_sum_raw)
             
-            # Scarcity adjustment
+            # Scarcity adjustment and max_possible cap determination
+            scarcity_factor = "1.0"
             if target_lvl > 1:
                 prev_lvl_skills = self._level_skills(school_data, target_lvl - 1, name)
-                num_in_prev = len(prev_lvl_skills)
+                num_in_prev = max(1, len(prev_lvl_skills))
                 if num_in_prev == 1:
                     t_sum = t_sum / 3.0
+                    max_possible = 99
+                    scarcity_factor = "1/3 (1 skill)"
                 elif num_in_prev == 2:
                     t_sum = (t_sum * 2.0) / 3.0
+                    max_possible = 198
+                    scarcity_factor = "2/3 (2 skills)"
+                else:
+                    max_possible = 297
             else:
                 t_sum = 297
+                max_possible = 297
             
             # --- Calculate iHave (Sum of top 3 of target_lvl - 1) ---
             if target_lvl == 1:
                 c_sum = 297
+                prev_skill_percents = []
             else:
                 prev_lvl_skills = self._level_skills(school_data, target_lvl - 1, name)
+                prev_skill_percents = [(s, knowledge_cache.get(s, 0)) for s in prev_lvl_skills]
                 percents = sorted([knowledge_cache.get(s, 0) for s in prev_lvl_skills], reverse=True)
                 c_sum = sum(percents[:3])
             
@@ -190,18 +265,32 @@ class SchoolCalculator:
             if target_lvl <= current_lvl:
                 display_lvl = current_lvl - 1
 
+            t_sum_int = int(t_sum)
+            is_impossible = t_sum_int > max_possible
+            needed_val = max(0, int(t_sum_int - c_sum))
+
+            prog_logger.info(
+                f"[SCHOOL-CALC] {name:<12} | CurrentLvl={display_lvl} -> TargetLvl={target_lvl} | "
+                f"iPoints={i_points} | RawTSum={t_sum_raw:.1f} | Scarcity={scarcity_factor} | "
+                f"TargetSum={t_sum_int}% | Cap={max_possible}% | CurrentSum={int(c_sum)}% | Needed={needed_val}% "
+                f"{'(IMPOSSIBLE - EXCEEDS CAP)' if is_impossible else ''}"
+            )
+            prog_logger.debug(f"              Skills at prev level (L{target_lvl - 1}): {prev_skill_percents}")
+
             results.append({
                 'name': name,
                 'current_lvl': display_lvl,
                 'target_lvl': target_lvl,
                 'current_sum': int(c_sum),
-                'target_sum': int(t_sum),
-                'needed': max(0, int(t_sum - c_sum)),
+                'target_sum': t_sum_int,
+                'max_possible': max_possible,
+                'needed': needed_val,
+                'is_impossible': is_impossible,
                 'mastered': False
             })
         
-        return results
-        
+        prog_logger.info(f"[PROG-CALC-END] Completed calculation for {len(results)} active schools.")
+        prog_logger.info("=" * 60)
         return results
 
 def test_calculator():
@@ -210,7 +299,7 @@ def test_calculator():
         "axe wielding": 52, "blink": 9, "block": 99, "brawling": 42,
         "dodge": 99, "fencing": 19, "glow": 19, "hammer wielding": 34,
         "mace fighting": 65, "punch": 73, "short sword fighting": 43,
-        "slash": 65, "super strength": 29
+        "slash": 65, "super strength": 29, "invalid test spell": 50
     }
     
     calc = SchoolCalculator()

@@ -34,5 +34,9 @@
   "window_maximized": false,
   "morph_x_offset": 391,
   "morph_y_offset": 92,
-  "morph_geometry": "208x30+391+92"
+  "morph_geometry": "208x30+391+92",
+  "console_output_enabled": true,
+  "console_debug_enabled": true,
+  "file_debug_enabled": true,
+  "progression_log_enabled": true
 }

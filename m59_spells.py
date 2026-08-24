@@ -229,7 +229,8 @@ class SpellManager:
             "total_reagents": 0,
             "session_casts": {},
             "session_reagents": {},
-            "history": []
+            "history": [],
+            "daily_usage": {}
         }
         
         candidates = []
@@ -251,6 +252,7 @@ class SpellManager:
                             defaults["total_casts"] = sum(defaults["spells_cast"].values())
                             defaults["total_reagents"] = sum(defaults["reagents_used"].values())
                             defaults["history"] = data.get("history", [])[-200:]
+                            defaults["daily_usage"] = data.get("daily_usage", {})
                             return defaults
                 except Exception as e:
                     print(f"[M59-SPELLS] Failed reading reagent stats from {p}: {e}", flush=True)
@@ -271,6 +273,7 @@ class SpellManager:
             "total_casts": self.reagent_stats.get("total_casts", 0),
             "total_reagents": self.reagent_stats.get("total_reagents", 0),
             "history": self.reagent_stats.get("history", [])[-200:],
+            "daily_usage": self.reagent_stats.get("daily_usage", {}),
             "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
@@ -330,9 +333,24 @@ class SpellManager:
             
         self.reagent_stats["total_reagents"] = sum(reagents_used.values())
         
-        # 3. Add to History
+        # 3. Update Daily Usage Metrics
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        daily_usage = self.reagent_stats.setdefault("daily_usage", {})
+        today_entry = daily_usage.setdefault(today_str, {"spells": {}, "reagents": {}, "casts": 0, "total_reagents": 0})
+        today_entry["casts"] = today_entry.get("casts", 0) + 1
+        today_entry["total_reagents"] = today_entry.get("total_reagents", 0) + sum(reagents.values())
+        
+        d_spells = today_entry.setdefault("spells", {})
+        d_spells[canonical_name] = d_spells.get(canonical_name, 0) + 1
+        
+        d_reagents = today_entry.setdefault("reagents", {})
+        for r_name, count in reagents.items():
+            d_reagents[r_name] = d_reagents.get(r_name, 0) + count
+        
+        # 4. Add to History
         ts = datetime.now().strftime("%H:%M:%S")
         entry = {
+            "date": today_str,
             "ts": ts,
             "spell": canonical_name,
             "school": info.get("school", "Unknown") if info else "Unknown",
@@ -341,8 +359,8 @@ class SpellManager:
         }
         hist = self.reagent_stats.setdefault("history", [])
         hist.append(entry)
-        if len(hist) > 200:
-            self.reagent_stats["history"] = hist[-200:]
+        if len(hist) > 300:
+            self.reagent_stats["history"] = hist[-300:]
             
         if not is_historical:
             self.save_reagent_stats()

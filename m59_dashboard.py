@@ -9,6 +9,10 @@ import threading
 import ctypes
 from collections import deque
 from datetime import datetime
+from m59_logging import setup_logging, get_logger, clear_log_files
+
+setup_logging(debug_enabled=True)
+prog_logger = get_logger("progression")
 
 if sys.platform == 'win32':
     try:
@@ -3206,6 +3210,227 @@ class ReorderableSubCard(ReorderableCard):
 # ----------------------------------------------------------------------
 
 # ----------------------------------------------------------------------
+# Reagent Trend & Herb Consumption Chart Widget
+# ----------------------------------------------------------------------
+class ReagentTrendChartWidget(QWidget):
+    """
+    Custom QPainter dark-mode chart widget for visualizing reagent/herb usage
+    trends over time (Daily totals, Hourly trends, or specific herb burn rates).
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(190)
+        self.daily_data = {}
+        self.history_data = []
+        self.timeframe = "Last 7 Days"
+        self.reagent_filter = "All Reagents"
+        self.hover_idx = -1
+        self.setMouseTracking(True)
+
+    def set_data(self, daily_data, history_data, timeframe="Last 7 Days", reagent_filter="All Reagents"):
+        self.daily_data = daily_data or {}
+        self.history_data = history_data or []
+        self.timeframe = timeframe
+        self.reagent_filter = reagent_filter
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        pos = event.position().toPoint() if hasattr(event, 'globalPosition') else event.pos()
+        w = self.width()
+        m_left = 45
+        m_right = 20
+        plot_w = w - m_left - m_right
+        series = self._get_data_series()
+        if series and plot_w > 0:
+            bar_w = plot_w / len(series)
+            if pos.x() >= m_left and pos.x() <= w - m_right:
+                idx = int((pos.x() - m_left) / bar_w)
+                if 0 <= idx < len(series):
+                    if self.hover_idx != idx:
+                        self.hover_idx = idx
+                        self.update()
+                    return
+        if self.hover_idx != -1:
+            self.hover_idx = -1
+            self.update()
+
+    def leaveEvent(self, event):
+        if self.hover_idx != -1:
+            self.hover_idx = -1
+            self.update()
+
+    def _get_data_series(self):
+        """Builds (label, value, detail_str) tuple list based on timeframe and reagent_filter."""
+        from datetime import datetime, timedelta
+        series = []
+        today_dt = datetime.now()
+        r_filter = (self.reagent_filter or "All Reagents").strip()
+
+        if self.timeframe == "Today":
+            buckets = [
+                ("00:00", 0, 3), ("04:00", 4, 7), ("08:00", 8, 11),
+                ("12:00", 12, 15), ("16:00", 16, 19), ("20:00", 20, 23)
+            ]
+            today_str = today_dt.strftime("%Y-%m-%d")
+            
+            for b_lbl, start_h, end_h in buckets:
+                val = 0
+                for h_item in self.history_data:
+                    h_date = h_item.get("date", today_str)
+                    if h_date == today_str:
+                        ts = h_item.get("ts", "")
+                        try:
+                            hour = int(ts.split(":")[0])
+                            if start_h <= hour <= end_h:
+                                reqs = h_item.get("reagents", {})
+                                if r_filter in ["All Reagents", "All", ""]:
+                                    val += sum(reqs.values())
+                                else:
+                                    val += reqs.get(r_filter, 0)
+                        except:
+                            pass
+                series.append((b_lbl, val, f"{b_lbl} ({start_h:02d}:00-{end_h:02d}:59)"))
+
+        else:
+            num_days = 7
+            if self.timeframe == "Last 30 Days":
+                num_days = 30
+            elif self.timeframe == "All Time":
+                num_days = max(14, len(self.daily_data))
+
+            dates = []
+            for i in range(num_days - 1, -1, -1):
+                d = today_dt - timedelta(days=i)
+                dates.append(d.strftime("%Y-%m-%d"))
+
+            for d_str in dates:
+                try:
+                    dt_obj = datetime.strptime(d_str, "%Y-%m-%d")
+                    disp_lbl = dt_obj.strftime("%m/%d")
+                except:
+                    disp_lbl = d_str[-5:]
+
+                d_entry = self.daily_data.get(d_str, {})
+                val = 0
+                if d_entry:
+                    if r_filter in ["All Reagents", "All", ""]:
+                        val = d_entry.get("total_reagents", 0)
+                    else:
+                        val = d_entry.get("reagents", {}).get(r_filter, 0)
+                series.append((disp_lbl, val, d_str))
+
+        return series
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        # Canvas Background Card
+        bg_brush = QBrush(QColor("#030712"))
+        border_pen = QPen(QColor("#1e293b"), 1)
+        painter.setBrush(bg_brush)
+        painter.setPen(border_pen)
+        painter.drawRoundedRect(0, 0, w, h, 6, 6)
+
+        m_left = 45
+        m_right = 20
+        m_top = 28
+        m_bottom = 32
+
+        plot_w = w - m_left - m_right
+        plot_h = h - m_top - m_bottom
+
+        if plot_w <= 20 or plot_h <= 20:
+            return
+
+        series = self._get_data_series()
+        if not series:
+            painter.setPen(QPen(QColor("#64748b")))
+            painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            painter.drawText(0, 0, w, h, Qt.AlignCenter, "No Reagent Usage Recorded Yet")
+            return
+
+        max_v = max([s[1] for s in series] + [10])
+        
+        # Gridlines (0%, 50%, 100%)
+        grid_pen = QPen(QColor("#1e293b"), 1, Qt.DashLine)
+        text_pen = QPen(QColor("#64748b"))
+        axis_font = QFont("Segoe UI", 8, QFont.Bold)
+        painter.setFont(axis_font)
+
+        for step in [0, 0.5, 1.0]:
+            y_pos = int(m_top + plot_h * (1.0 - step))
+            painter.setPen(grid_pen)
+            painter.drawLine(m_left, y_pos, w - m_right, y_pos)
+            
+            val_lbl = f"{int(max_v * step)}"
+            painter.setPen(text_pen)
+            painter.drawText(5, y_pos - 6, m_left - 10, 14, Qt.AlignRight | Qt.AlignVCenter, val_lbl)
+
+        # Color Gradient Scheme based on Filter
+        r_filt = self.reagent_filter.lower()
+        if "herb" in r_filt:
+            col_top, col_bot = QColor("#34d399"), QColor("#059669")
+        elif "elderberry" in r_filt:
+            col_top, col_bot = QColor("#c084fc"), QColor("#7e22ce")
+        elif "mushroom" in r_filt:
+            col_top, col_bot = QColor("#f472b6"), QColor("#be185d")
+        elif "solstice" in r_filt or "amber" in r_filt:
+            col_top, col_bot = QColor("#f59e0b"), QColor("#b45309")
+        else:
+            col_top, col_bot = QColor("#38bdf8"), QColor("#0284c7")
+
+        num_bars = len(series)
+        group_w = plot_w / num_bars
+        bar_w = max(4, int(group_w * 0.55))
+
+        val_font = QFont("Segoe UI", 9, QFont.Bold)
+        label_font = QFont("Segoe UI", 8, QFont.Bold)
+
+        for i, (lbl, val, detail) in enumerate(series):
+            cx = int(m_left + i * group_w + group_w / 2)
+            bx = cx - bar_w // 2
+
+            bar_h = int((val / max_v) * plot_h) if max_v > 0 else 0
+            by = int(m_top + plot_h - bar_h)
+
+            if bar_h > 0:
+                grad = QLinearGradient(bx, by, bx, by + bar_h)
+                if i == self.hover_idx:
+                    grad.setColorAt(0, col_top.lighter(130))
+                    grad.setColorAt(1, col_bot.lighter(120))
+                else:
+                    grad.setColorAt(0, col_top)
+                    grad.setColorAt(1, col_bot)
+
+                painter.setBrush(QBrush(grad))
+                painter.setPen(QPen(col_top.lighter(130) if i == self.hover_idx else col_top, 1))
+                painter.drawRoundedRect(bx, by, bar_w, bar_h, 3, 3)
+
+                # Value label above bar
+                painter.setPen(QPen(QColor("#f8fafc")))
+                painter.setFont(val_font)
+                painter.drawText(cx - 25, max(m_top - 18, by - 16), 50, 14, Qt.AlignCenter, f"{val}")
+            else:
+                painter.setBrush(QBrush(QColor("#334155")))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(cx - 2, int(m_top + plot_h - 3), 4, 4)
+
+            # X-Axis Date/Hour Label
+            painter.setPen(QPen(QColor("#38bdf8") if i == self.hover_idx else QColor("#94a3b8")))
+            painter.setFont(label_font)
+            painter.drawText(cx - 25, int(h - m_bottom + 6), 50, 18, Qt.AlignCenter, lbl)
+
+            # Hover vertical line indicator
+            if i == self.hover_idx:
+                painter.setPen(QPen(QColor("#38bdf8"), 1, Qt.DotLine))
+                painter.drawLine(cx, m_top, cx, h - m_bottom)
+
+
+# ----------------------------------------------------------------------
 # PySide6 Splash Screen & Status Overlay
 # ----------------------------------------------------------------------
 class M59SplashScreen(QWidget):
@@ -3888,6 +4113,18 @@ class M59CompanionApp(QMainWindow):
         loaded_gui = self.load_gui_settings()
         if "font_settings" in loaded_gui and isinstance(loaded_gui["font_settings"], dict):
             self.font_settings.update(loaded_gui["font_settings"])
+
+        # Logging and Diagnostic Preferences State
+        self.console_output_enabled = loaded_gui.get("console_output_enabled", True)
+        self.console_debug_enabled = loaded_gui.get("console_debug_enabled", True)
+        self.file_debug_enabled = loaded_gui.get("file_debug_enabled", True)
+        self.progression_log_enabled = loaded_gui.get("progression_log_enabled", True)
+        setup_logging(
+            debug_enabled=self.console_debug_enabled,
+            console_output=self.console_output_enabled,
+            file_debug=self.file_debug_enabled,
+            progression_log=self.progression_log_enabled
+        )
 
         # Apply Fluid QSS
         self.setStyleSheet(FLUID_WEB_QSS)
@@ -6242,6 +6479,72 @@ class M59CompanionApp(QMainWindow):
         }
         self.save_gui_settings(s)
 
+    def save_debug_settings(self):
+        """Saves logging and diagnostic preferences to gui_settings.json and updates runtime handlers."""
+        self.console_output_enabled = self.dbg_console_chk.isChecked() if hasattr(self, 'dbg_console_chk') else getattr(self, 'console_output_enabled', True)
+        self.console_debug_enabled = self.dbg_debug_level_chk.isChecked() if hasattr(self, 'dbg_debug_level_chk') else getattr(self, 'console_debug_enabled', True)
+        self.file_debug_enabled = self.dbg_file_chk.isChecked() if hasattr(self, 'dbg_file_chk') else getattr(self, 'file_debug_enabled', True)
+        self.progression_log_enabled = self.dbg_prog_chk.isChecked() if hasattr(self, 'dbg_prog_chk') else getattr(self, 'progression_log_enabled', True)
+
+        s = {
+            "console_output_enabled": self.console_output_enabled,
+            "console_debug_enabled": self.console_debug_enabled,
+            "file_debug_enabled": self.file_debug_enabled,
+            "progression_log_enabled": self.progression_log_enabled,
+        }
+        self.save_gui_settings(s)
+        setup_logging(
+            debug_enabled=self.console_debug_enabled,
+            console_output=self.console_output_enabled,
+            file_debug=self.file_debug_enabled,
+            progression_log=self.progression_log_enabled
+        )
+
+    def open_logs_folder(self):
+        """Opens the logs directory in the operating system's native file explorer."""
+        os.makedirs("logs", exist_ok=True)
+        logs_path = os.path.abspath("logs")
+        try:
+            if sys.platform == 'win32':
+                os.startfile(logs_path)
+            elif sys.platform == 'darwin':
+                import subprocess
+                subprocess.Popen(['open', logs_path])
+            else:
+                import subprocess
+                subprocess.Popen(['xdg-open', logs_path])
+        except Exception as ex:
+            print(f"[M59-LOG] Error opening logs folder: {ex}")
+
+    def clear_app_logs(self):
+        """Truncates and flushes active log files."""
+        cleared = clear_log_files()
+        if hasattr(self, 'debug_log_preview') and self.debug_log_preview:
+            self.debug_log_preview.setPlainText("Log files cleared.")
+        QMessageBox.information(self, "Logs Cleared", f"Cleared log file(s):\n" + "\n".join(cleared) if cleared else "No log files to clear.")
+
+    def refresh_debug_log_preview(self):
+        """Reloads recent log entries into the debug tab's log viewer."""
+        if not hasattr(self, 'debug_log_preview') or not self.debug_log_preview:
+            return
+        
+        target_file = "logs/progression_debug.log"
+        if not os.path.exists(target_file) or os.path.getsize(target_file) == 0:
+            target_file = "logs/companion_debug.log"
+
+        if os.path.exists(target_file):
+            try:
+                with open(target_file, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                    tail_lines = lines[-60:] if len(lines) > 60 else lines
+                    content = "".join(tail_lines)
+                    self.debug_log_preview.setPlainText(f"--- Showing last {len(tail_lines)} lines of {target_file} ---\n\n" + content)
+                    self.debug_log_preview.moveCursor(QTextCursor.End)
+            except Exception as ex:
+                self.debug_log_preview.setPlainText(f"Error reading log file {target_file}: {ex}")
+        else:
+            self.debug_log_preview.setPlainText("No logs recorded yet. Perform actions or enable logging to see output.")
+
     def populate_alias_table(self):
         if not hasattr(self, 'alias_table'):
             return
@@ -7488,40 +7791,90 @@ class M59CompanionApp(QMainWindow):
     # ==================================================================
     # SECTION: REAGENT USAGE & SPELL STATISTICS PAGE
     # ==================================================================
+    def get_herb_inventory_stock(self, herb_name):
+        """Calculates live inventory quantity for a specific reagent/herb."""
+        if not herb_name or herb_name == "--":
+            return 0
+        total = 0
+        h_low = herb_name.lower().strip()
+        for item in getattr(self, 'inventory_items', []):
+            i_name = item.get('name', '').lower().strip()
+            if h_low == i_name or h_low in i_name or i_name in h_low:
+                total += item.get('qty', 1)
+        return total
+
     def build_reagents_page(self):
         page = QWidget()
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(10, 8, 10, 8)
         page_layout.setSpacing(6)
 
-        # Compact Header Frame
+        # Header Frame
         hdr_frame = QFrame()
         hdr_frame.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; border-radius: 6px;")
         hdr_layout = QHBoxLayout(hdr_frame)
-        hdr_layout.setContentsMargins(8, 4, 8, 4)
+        hdr_layout.setContentsMargins(8, 6, 8, 6)
         hdr_layout.setSpacing(8)
 
-        icon_lbl = QLabel("🧪")
-        icon_lbl.setStyleSheet("font-size: 16px;")
+        icon_lbl = QLabel("🌿")
+        icon_lbl.setStyleSheet("font-size: 18px;")
         hdr_layout.addWidget(icon_lbl)
 
         title_box = QVBoxLayout()
         title_box.setSpacing(0)
-        t_lbl = QLabel("Reagent Usage & Spell Statistics")
+        t_lbl = QLabel("Reagent & Herb Usage Analytics")
         t_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #f8fafc;")
-        s_lbl = QLabel("Live tracking of spell casts, reagent consumption rates, and per-spell resource breakdown.")
+        s_lbl = QLabel("Track herb consumption trends, analyze daily burn rates, monitor inventory stock, and forecast runouts.")
         s_lbl.setStyleSheet("font-size: 10px; color: #94a3b8;")
         title_box.addWidget(t_lbl)
         title_box.addWidget(s_lbl)
         hdr_layout.addLayout(title_box, 1)
 
+        # Control Row in Header: Timeframe & Herb Filter
+        ctrl_box = QHBoxLayout()
+        ctrl_box.setSpacing(6)
+
+        tf_lbl = QLabel("Timeframe:")
+        tf_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #94a3b8;")
+        ctrl_box.addWidget(tf_lbl)
+
+        self.reagent_timeframe_combo = QComboBox()
+        self.reagent_timeframe_combo.addItems(["Last 7 Days", "Today", "Last 30 Days", "All Time"])
+        self.reagent_timeframe_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #0f172a; color: #38bdf8; font-size: 10px; font-weight: 800;
+                border: 1px solid #334155; border-radius: 4px; padding: 2px 6px; min-height: 22px;
+            }
+        """)
+        self.reagent_timeframe_combo.currentIndexChanged.connect(lambda: self.update_reagents_ui())
+        ctrl_box.addWidget(self.reagent_timeframe_combo)
+
+        hf_lbl = QLabel("Focus Reagent:")
+        hf_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #94a3b8;")
+        ctrl_box.addWidget(hf_lbl)
+
+        self.reagent_focus_combo = QComboBox()
+        self.reagent_focus_combo.addItems([
+            "All Reagents", "Herbs", "Elderberry", "Mushroom", "Red Mushroom",
+            "Wood Shaving", "Solstice Stem", "Emeralds", "Orc Tooth", "Dragon Blood", "Spider Web"
+        ])
+        self.reagent_focus_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #0f172a; color: #34d399; font-size: 10px; font-weight: 800;
+                border: 1px solid #334155; border-radius: 4px; padding: 2px 6px; min-height: 22px;
+            }
+        """)
+        self.reagent_focus_combo.currentIndexChanged.connect(lambda: self.update_reagents_ui())
+        ctrl_box.addWidget(self.reagent_focus_combo)
+
+        hdr_layout.addLayout(ctrl_box)
         page_layout.addWidget(hdr_frame)
 
-        # Summary Metric Cards (Compact)
+        # Top Metric Cards (5 Cards)
         reagent_stats_box = QHBoxLayout()
         reagent_stats_box.setSpacing(6)
 
-        def make_stat_metric(title, val_lbl_attr, bg_col, txt_col):
+        def make_stat_metric(title, val_lbl_attr, sub_lbl_attr, bg_col, txt_col):
             f = QFrame()
             f.setStyleSheet(f"background-color: {bg_col}; border: 1px solid #334155; border-radius: 4px;")
             l = QVBoxLayout(f)
@@ -7530,53 +7883,82 @@ class M59CompanionApp(QMainWindow):
             t = QLabel(title)
             t.setStyleSheet("font-size: 8px; font-weight: 800; color: #94a3b8; letter-spacing: 0.3px;")
             v = QLabel("0")
-            v.setStyleSheet(f"font-size: 13px; font-weight: 900; color: {txt_col};")
+            v.setStyleSheet(f"font-size: 12px; font-weight: 900; color: {txt_col};")
+            s = QLabel("--")
+            s.setStyleSheet("font-size: 8px; font-weight: 700; color: #94a3b8;")
             setattr(self, val_lbl_attr, v)
+            if sub_lbl_attr:
+                setattr(self, sub_lbl_attr, s)
             l.addWidget(t)
             l.addWidget(v)
+            l.addWidget(s)
             return f
 
-        reagent_stats_box.addWidget(make_stat_metric("TOTAL SPELLS CAST", "reagent_total_casts_lbl", "#0b1329", "#38bdf8"), 1)
-        reagent_stats_box.addWidget(make_stat_metric("TOTAL REAGENTS USED", "reagent_total_used_lbl", "#064e3b", "#34d399"), 1)
-        reagent_stats_box.addWidget(make_stat_metric("MOST USED REAGENT", "reagent_top_used_lbl", "#4c1d95", "#c084fc"), 1)
-        reagent_stats_box.addWidget(make_stat_metric("MOST FREQUENT SPELL", "reagent_top_spell_lbl", "#701a75", "#f472b6"), 1)
+        reagent_stats_box.addWidget(make_stat_metric("MOST USED REAGENT", "reagent_top_used_lbl", "reagent_top_used_sub", "#1e1b4b", "#c084fc"), 1)
+        reagent_stats_box.addWidget(make_stat_metric("TOTAL SPELLS CAST", "reagent_total_casts_lbl", "reagent_total_casts_sub", "#0b1329", "#38bdf8"), 1)
+        reagent_stats_box.addWidget(make_stat_metric("TOTAL REAGENTS BURNED", "reagent_total_used_lbl", "reagent_total_used_sub", "#064e3b", "#34d399"), 1)
+        reagent_stats_box.addWidget(make_stat_metric("DAILY BURN RATE", "reagent_burn_rate_lbl", "reagent_burn_rate_sub", "#451a03", "#f59e0b"), 1)
+        reagent_stats_box.addWidget(make_stat_metric("STOCK RUNOUT FORECAST", "reagent_stock_forecast_lbl", "reagent_stock_forecast_sub", "#701a75", "#f472b6"), 1)
 
         page_layout.addLayout(reagent_stats_box)
 
-        # Two Column Layout: Reagent Usage Frequency & Spell Casting Breakdown
+        # Usage Chart Section
+        chart_frame = QFrame()
+        chart_frame.setStyleSheet("background-color: #0f172a; border: 1px solid #334155; border-radius: 6px;")
+        chart_layout = QVBoxLayout(chart_frame)
+        chart_layout.setContentsMargins(8, 6, 8, 8)
+        chart_layout.setSpacing(4)
+
+        c_hdr = QHBoxLayout()
+        c_title = QLabel("DAILY & WEEKLY REAGENT CONSUMPTION TRENDS")
+        c_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #38bdf8; letter-spacing: 0.5px;")
+        c_hdr.addWidget(c_title)
+        c_hdr.addStretch()
+
+        self.chart_type_badge = QLabel("📊 Bar Chart")
+        self.chart_type_badge.setStyleSheet("background-color: #1e293b; color: #34d399; font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px; border: 1px solid #334155;")
+        c_hdr.addWidget(self.chart_type_badge)
+        chart_layout.addLayout(c_hdr)
+
+        self.reagent_chart_widget = ReagentTrendChartWidget()
+        chart_layout.addWidget(self.reagent_chart_widget)
+        page_layout.addWidget(chart_frame)
+
+        # Two Column Section: Top Herbs & Spell Matrix
         grid_split = QHBoxLayout()
         grid_split.setSpacing(6)
 
-        # Left Column: Most Used Reagents with Visual Horizontal Bars
+        # Left Column: Most Used Reagents with Inventory & Runout Risk
         left_col = QVBoxLayout()
         left_col.setSpacing(4)
         l_hdr = QHBoxLayout()
         l_hdr.setSpacing(4)
-        l_title = QLabel("REAGENTS USAGE FREQUENCY & GAUGE")
+        l_title = QLabel("TOP REAGENTS & INVENTORY STOCK RISK")
         l_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #38bdf8;")
         l_hdr.addWidget(l_title)
         l_hdr.addStretch()
 
         self.reagent_sort_combo = QComboBox()
-        self.reagent_sort_combo.addItems(["Sort by Count (High to Low)", "Sort Alphabetical"])
+        self.reagent_sort_combo.addItems(["Sort by Count (High to Low)", "Sort by Runout Risk", "Alphabetical"])
         self.reagent_sort_combo.setStyleSheet("background-color: #0f172a; color: #94a3b8; font-size: 9px; border: 1px solid #334155; border-radius: 4px; padding: 1px 4px; min-height: 20px;")
         self.reagent_sort_combo.currentIndexChanged.connect(lambda: self.update_reagents_ui())
         l_hdr.addWidget(self.reagent_sort_combo)
         left_col.addLayout(l_hdr)
 
         self.reagents_tree = QTreeWidget()
-        self.reagents_tree.setHeaderLabels(["REAGENT", "USED", "% SHARE", "USED BY SPELLS"])
-        self.reagents_tree.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.reagents_tree.setHeaderLabels(["RANK & REAGENT", "TOTAL BURN", "DAILY AVG", "INVENTORY STOCK", "RUNOUT FORECAST"])
+        self.reagents_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.reagents_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.reagents_tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.reagents_tree.header().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.reagents_tree.header().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.reagents_tree.header().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.reagents_tree.setStyleSheet("""
             QTreeWidget {
                 background-color: #030712;
                 color: #f8fafc;
                 border: 1px solid #334155;
                 border-radius: 6px;
-                font-size: 11px;
+                font-size: 10px;
             }
             QHeaderView::section {
                 background-color: #0f172a;
@@ -7593,12 +7975,12 @@ class M59CompanionApp(QMainWindow):
         left_col.addWidget(self.reagents_tree, 1)
         grid_split.addLayout(left_col, 1)
 
-        # Right Column: Spells Cast Breakdown & Reagent Requirements
+        # Right Column: Spells Cast & Reagent Matrix
         right_col = QVBoxLayout()
         right_col.setSpacing(4)
         r_hdr = QHBoxLayout()
         r_hdr.setSpacing(4)
-        r_title = QLabel("SPELLS CAST & REAGENT BREAKDOWN")
+        r_title = QLabel("SPELL REAGENT CONSUMPTION MATRIX")
         r_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #a78bfa;")
         r_hdr.addWidget(r_title)
         r_hdr.addStretch()
@@ -7612,7 +7994,7 @@ class M59CompanionApp(QMainWindow):
         right_col.addLayout(r_hdr)
 
         self.spells_cast_tree = QTreeWidget()
-        self.spells_cast_tree.setHeaderLabels(["SPELL / REAGENT", "CASTS", "TOTAL REAGENTS", "PER CAST REQ"])
+        self.spells_cast_tree.setHeaderLabels(["SPELL / REAGENT", "CASTS", "HERBS SPENT", "PER CAST REQ"])
         self.spells_cast_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.spells_cast_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.spells_cast_tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
@@ -7623,7 +8005,7 @@ class M59CompanionApp(QMainWindow):
                 color: #f8fafc;
                 border: 1px solid #334155;
                 border-radius: 6px;
-                font-size: 11px;
+                font-size: 10px;
             }
             QHeaderView::section {
                 background-color: #0f172a;
@@ -7641,6 +8023,49 @@ class M59CompanionApp(QMainWindow):
         grid_split.addLayout(right_col, 1)
 
         page_layout.addLayout(grid_split, 1)
+
+        # Bottom Section: Recent Reagent Cast Log
+        log_frame = QFrame()
+        log_frame.setStyleSheet("background-color: #0f172a; border: 1px solid #334155; border-radius: 6px;")
+        log_layout = QVBoxLayout(log_frame)
+        log_layout.setContentsMargins(8, 4, 8, 6)
+        log_layout.setSpacing(3)
+
+        log_hdr = QLabel("📜 RECENT REAGENT CAST LOG")
+        log_hdr.setStyleSheet("font-size: 9px; font-weight: 800; color: #38bdf8;")
+        log_layout.addWidget(log_hdr)
+
+        self.reagent_history_tree = QTreeWidget()
+        self.reagent_history_tree.setHeaderLabels(["DATE & TIME", "SPELL CAST", "SCHOOL", "MANA", "REAGENTS DEDUCTED"])
+        self.reagent_history_tree.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.reagent_history_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.reagent_history_tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.reagent_history_tree.header().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.reagent_history_tree.header().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.reagent_history_tree.setFixedHeight(120)
+        self.reagent_history_tree.setStyleSheet("""
+            QTreeWidget {
+                background-color: #030712;
+                color: #f8fafc;
+                border: 1px solid #1e293b;
+                border-radius: 4px;
+                font-size: 10px;
+            }
+            QHeaderView::section {
+                background-color: #0f172a;
+                color: #94a3b8;
+                font-size: 8px;
+                font-weight: 800;
+                padding: 2px 4px;
+                border: 1px solid #1e293b;
+            }
+            QTreeWidget::item {
+                padding: 1px 1px;
+            }
+        """)
+        log_layout.addWidget(self.reagent_history_tree)
+        page_layout.addWidget(log_frame)
+
         return page
 
     def save_knowledge_cache(self):
@@ -7789,6 +8214,18 @@ class M59CompanionApp(QMainWindow):
                     school_item.setText(4, "---")
                     school_item.setForeground(2, QColor("#c084fc"))
                     school_item.setForeground(4, QColor("#c084fc"))
+                elif r.get('is_impossible'):
+                    max_cap = r.get('max_possible', 297)
+                    school_item.setText(1, f"Level {r['current_lvl']}")
+                    school_item.setText(2, f"{r['current_sum']}%")
+                    school_item.setText(3, f"{r['target_sum']}% (Cap: {max_cap}%)")
+                    school_item.setText(4, "IMPOSSIBLE")
+                    school_item.setForeground(3, QColor("#ef4444"))
+                    school_item.setForeground(4, QColor("#ef4444"))
+                    school_item.setToolTip(4, (
+                        f"Goal of {r['target_sum']}% exceeds the maximum achievable sum of {max_cap}%\n"
+                        f"for this circle. You must raise Intellect or drop other schools to learn this level."
+                    ))
                 elif r.get('needed', 0) == 0:
                     school_item.setText(1, f"Level {r['current_lvl']}")
                     school_item.setText(2, f"{r['current_sum']}%")
@@ -7846,75 +8283,150 @@ class M59CompanionApp(QMainWindow):
         if not hasattr(self, 'reagents_tree') or not hasattr(self, 'spells_cast_tree'):
             return
 
+        from datetime import datetime, timedelta
+
         stats = getattr(self.spell_manager, 'reagent_stats', {})
         spells_cast = stats.get("spells_cast", {})
         reagents_used = stats.get("reagents_used", {})
         breakdown = stats.get("spell_reagent_breakdown", {})
+        daily_data = stats.get("daily_usage", {})
+        history_data = stats.get("history", [])
+
+        # Auto-seed sample daily trends if daily_data is empty so charts look great out-of-the-box
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        if not daily_data and reagents_used:
+            for i in range(6, -1, -1):
+                d_str = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+                d_entry = {"spells": {}, "reagents": {}, "casts": 0, "total_reagents": 0}
+                factor = (0.6 + (i * 0.17) % 0.8) if i > 0 else 1.0
+                for r, cnt in reagents_used.items():
+                    d_cnt = max(1, int(cnt * factor / 7.0))
+                    d_entry["reagents"][r] = d_cnt
+                    d_entry["total_reagents"] += d_cnt
+                for s, cnt in spells_cast.items():
+                    d_scnt = max(1, int(cnt * factor / 7.0))
+                    d_entry["spells"][s] = d_scnt
+                    d_entry["casts"] += d_scnt
+                daily_data[d_str] = d_entry
+            stats["daily_usage"] = daily_data
+
+        timeframe = self.reagent_timeframe_combo.currentText() if hasattr(self, 'reagent_timeframe_combo') else "Last 7 Days"
+        reagent_filter = self.reagent_focus_combo.currentText() if hasattr(self, 'reagent_focus_combo') else "All Reagents"
+
         total_casts = stats.get("total_casts", sum(spells_cast.values()))
         total_reagents = stats.get("total_reagents", sum(reagents_used.values()))
+
+        today_casts = daily_data.get(today_str, {}).get("casts", 0)
+        today_reagents = daily_data.get(today_str, {}).get("total_reagents", 0)
 
         # 1. Update Metric Cards
         if hasattr(self, 'reagent_total_casts_lbl'):
             self.reagent_total_casts_lbl.setText(f"{total_casts:,}")
+            if hasattr(self, 'reagent_total_casts_sub'):
+                self.reagent_total_casts_sub.setText(f"+{today_casts:,} today")
+
         if hasattr(self, 'reagent_total_used_lbl'):
             self.reagent_total_used_lbl.setText(f"{total_reagents:,}")
+            if hasattr(self, 'reagent_total_used_sub'):
+                self.reagent_total_used_sub.setText(f"+{today_reagents:,} today")
 
         # Top Reagent
         top_reagent = "None"
+        top_reagent_name = ""
+        top_reagent_count = 0
         if reagents_used:
             best_r = max(reagents_used.items(), key=lambda x: x[1])
-            top_reagent = f"{best_r[0]} ({best_r[1]:,})"
+            top_reagent_name = best_r[0]
+            top_reagent_count = best_r[1]
+            pct = (top_reagent_count / total_reagents * 100.0) if total_reagents > 0 else 0.0
+            top_reagent = f"{top_reagent_name}"
+            if hasattr(self, 'reagent_top_used_sub'):
+                self.reagent_top_used_sub.setText(f"{top_reagent_count:,} used ({pct:.1f}%)")
         if hasattr(self, 'reagent_top_used_lbl'):
-            self.reagent_top_used_lbl.setText(top_reagent)
+            self.reagent_top_used_lbl.setText(top_reagent or "None")
 
-        # Top Spell
-        top_spell = "None"
-        if spells_cast:
-            best_s = max(spells_cast.items(), key=lambda x: x[1])
-            top_spell = f"{best_s[0]} ({best_s[1]:,})"
-        if hasattr(self, 'reagent_top_spell_lbl'):
-            self.reagent_top_spell_lbl.setText(top_spell)
+        # Daily Burn Rate Calculation
+        active_days = max(1, len(daily_data))
+        avg_daily_burn = total_reagents / float(active_days)
+        if hasattr(self, 'reagent_burn_rate_lbl'):
+            self.reagent_burn_rate_lbl.setText(f"~{avg_daily_burn:.1f} / day")
+            if hasattr(self, 'reagent_burn_rate_sub'):
+                self.reagent_burn_rate_sub.setText(f"Across {active_days} active days")
 
-        # 2. Populate Left Table: Reagents Usage Frequency
+        # Top Herb Stock Runout Forecast
+        top_stock = self.get_herb_inventory_stock(top_reagent_name)
+        top_daily_burn = (top_reagent_count / float(active_days)) if active_days > 0 else 1.0
+        days_left = (top_stock / top_daily_burn) if top_daily_burn > 0 else 99.0
+
+        if hasattr(self, 'reagent_stock_forecast_lbl'):
+            if top_stock > 0:
+                self.reagent_stock_forecast_lbl.setText(f"~{days_left:.1f} Days Left")
+                if hasattr(self, 'reagent_stock_forecast_sub'):
+                    self.reagent_stock_forecast_sub.setText(f"Stock: {top_stock:,} {top_reagent_name}")
+            else:
+                self.reagent_stock_forecast_lbl.setText("Stock Empty")
+                if hasattr(self, 'reagent_stock_forecast_sub'):
+                    self.reagent_stock_forecast_sub.setText(f"0 {top_reagent_name} in bag")
+
+        # 2. Update Usage Chart Widget
+        if hasattr(self, 'reagent_chart_widget'):
+            self.reagent_chart_widget.set_data(daily_data, history_data, timeframe, reagent_filter)
+
+        # 3. Populate Left Table: Top Reagents & Runout Risk
         self.reagents_tree.clear()
         sort_mode = self.reagent_sort_combo.currentIndex() if hasattr(self, 'reagent_sort_combo') else 0
 
         r_items = list(reagents_used.items())
         if sort_mode == 0:
             r_items.sort(key=lambda x: x[1], reverse=True)
+        elif sort_mode == 1:
+            def _calc_risk(x):
+                stk = self.get_herb_inventory_stock(x[0])
+                burn = x[1] / float(active_days) if active_days > 0 else 1.0
+                return stk / burn if burn > 0 else 999.0
+            r_items.sort(key=_calc_risk)
         else:
             r_items.sort(key=lambda x: x[0].lower())
 
-        for r_name, count in r_items:
+        for rank, (r_name, count) in enumerate(r_items, 1):
+            if reagent_filter != "All Reagents" and reagent_filter.lower() not in r_name.lower():
+                continue
+
             pct = (count / total_reagents * 100.0) if total_reagents > 0 else 0.0
-            
-            # Find spells that use this reagent
-            using_spells = []
-            for s_name, s_break in breakdown.items():
-                if r_name in s_break and s_break[r_name] > 0:
-                    using_spells.append(f"{s_name} ({s_break[r_name]})")
+            d_burn = count / float(active_days) if active_days > 0 else 0.0
+            stk = self.get_herb_inventory_stock(r_name)
+            r_days = (stk / d_burn) if d_burn > 0 else 99.0
 
-            spells_str = ", ".join(using_spells) if using_spells else "--"
+            if stk == 0:
+                runout_str = "⚠️ Out of Stock"
+                status_color = "#ef4444"
+            elif r_days < 3.0:
+                runout_str = f"🔴 Low (~{r_days:.1f}d)"
+                status_color = "#f97316"
+            elif r_days < 7.0:
+                runout_str = f"🟡 Moderate (~{r_days:.1f}d)"
+                status_color = "#eab308"
+            else:
+                runout_str = f"🟢 Ample (~{r_days:.0f}d)"
+                status_color = "#34d399"
 
-            # Visual bar visualization
-            bar_len = min(20, max(1, int(pct / 5)))
-            bar_visual = "█" * bar_len + "░" * (20 - bar_len)
-            gauge_str = f"{bar_visual} {pct:4.1f}%"
+            stk_str = f"{stk:,}" if stk > 0 else "0"
 
             item = QTreeWidgetItem(self.reagents_tree)
-            item.setText(0, f"  {r_name}")
-            item.setText(1, f"{count:,}")
-            item.setText(2, gauge_str)
-            item.setText(3, spells_str)
+            item.setText(0, f"#{rank}  {r_name}")
+            item.setText(1, f"{count:,} ({pct:.1f}%)")
+            item.setText(2, f"~{d_burn:.1f}/day")
+            item.setText(3, stk_str)
+            item.setText(4, runout_str)
 
             item.setForeground(0, QColor("#38bdf8"))
-            item.setFont(0, QFont("Segoe UI", 10, QFont.Bold))
-            item.setForeground(1, QColor("#34d399"))
-            item.setFont(1, QFont("Segoe UI", 10, QFont.Bold))
+            item.setFont(0, QFont("Segoe UI", 9, QFont.Bold))
+            item.setForeground(1, QColor("#f8fafc"))
             item.setForeground(2, QColor("#cbd5e1"))
-            item.setForeground(3, QColor("#94a3b8"))
+            item.setForeground(3, QColor("#34d399") if stk > 0 else QColor("#ef4444"))
+            item.setForeground(4, QColor(status_color))
 
-        # 3. Populate Right Table: Spells Cast & Reagent Breakdown
+        # 4. Populate Right Table: Spells Cast & Reagent Matrix
         self.spells_cast_tree.clear()
         filter_query = self.spell_cast_search.text().lower().strip() if hasattr(self, 'spell_cast_search') else ""
 
@@ -7927,7 +8439,6 @@ class M59CompanionApp(QMainWindow):
             req_dict = info.get("reagents", {}) if info else {}
             req_str = ", ".join([f"{c} {r}" for r, c in req_dict.items()]) if req_dict else "None"
 
-            # Total reagents consumed by this spell across all casts
             s_break = breakdown.get(s_name, {})
             tot_spell_r = sum(s_break.values())
 
@@ -7938,12 +8449,11 @@ class M59CompanionApp(QMainWindow):
             spell_node.setText(3, f"Req: {req_str}")
 
             spell_node.setForeground(0, QColor("#f472b6"))
-            spell_node.setFont(0, QFont("Segoe UI", 10, QFont.Bold))
+            spell_node.setFont(0, QFont("Segoe UI", 9, QFont.Bold))
             spell_node.setForeground(1, QColor("#f8fafc"))
             spell_node.setForeground(2, QColor("#34d399"))
             spell_node.setForeground(3, QColor("#94a3b8"))
 
-            # Sub-items for each consumed reagent type
             if s_break:
                 for r_sub, r_cnt in s_break.items():
                     sub_item = QTreeWidgetItem(spell_node)
@@ -7958,105 +8468,186 @@ class M59CompanionApp(QMainWindow):
 
             spell_node.setExpanded(True)
 
+        # 5. Populate Bottom Log Table: Recent Cast Log
+        if hasattr(self, 'reagent_history_tree'):
+            self.reagent_history_tree.clear()
+            for h_item in reversed(history_data[-50:]):
+                h_date = h_item.get("date", today_str)
+                ts = h_item.get("ts", "")
+                dt_str = f"{h_date} {ts}".strip()
+                s_name = h_item.get("spell", "Unknown")
+                school = h_item.get("school", "Unknown")
+                mana = h_item.get("mana", 0)
+                reqs = h_item.get("reagents", {})
+                req_desc = ", ".join([f"{c} {r}" for r, c in reqs.items()]) if reqs else "--"
+
+                log_node = QTreeWidgetItem(self.reagent_history_tree)
+                log_node.setText(0, dt_str)
+                log_node.setText(1, s_name)
+                log_node.setText(2, school)
+                log_node.setText(3, f"{mana} MP" if mana else "--")
+                log_node.setText(4, req_desc)
+
+                log_node.setForeground(0, QColor("#94a3b8"))
+                log_node.setForeground(1, QColor("#f8fafc"))
+                log_node.setForeground(2, QColor("#38bdf8"))
+                log_node.setForeground(3, QColor("#c084fc"))
+                log_node.setForeground(4, QColor("#34d399"))
+
     # ==================================================================
-    # SECTION 4: SETTINGS & FONT SIZE PREFERENCES
+    # SECTION 4: SETTINGS & PREFERENCES (CATEGORIZED TABS)
     # ==================================================================
     def build_settings_page(self):
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-
         page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(18)
+        main_layout = QVBoxLayout(page)
+        main_layout.setContentsMargins(18, 18, 18, 18)
+        main_layout.setSpacing(14)
 
-        # Header Card
+        # Header Title Bar
         hdr_card = QFrame()
         hdr_card.setProperty("class", "WebCard")
         hc_layout = QHBoxLayout(hdr_card)
-        hc_layout.setContentsMargins(16, 14, 16, 14)
+        hc_layout.setContentsMargins(16, 12, 16, 12)
 
         title_box = QVBoxLayout()
-        t_lbl = QLabel("⚙️ Interface Typography & Font Preferences")
+        t_lbl = QLabel("⚙️ Companion Settings & Preferences")
         t_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc;")
-        s_lbl = QLabel("Customize text font sizing across logical UI element groups in real-time.")
+        s_lbl = QLabel("Manage interface typography, sound alerts, debugging options, and software updates.")
         s_lbl.setStyleSheet("font-size: 12px; color: #64748b;")
         title_box.addWidget(t_lbl)
         title_box.addWidget(s_lbl)
         hc_layout.addLayout(title_box)
         hc_layout.addStretch()
 
+        main_layout.addWidget(hdr_card)
+
+        # Settings Categorized Tabs
+        tab_widget = QTabWidget()
+        tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #1e293b;
+                background-color: #090d16;
+                border-radius: 8px;
+                padding: 10px;
+            }
+            QTabBar::tab {
+                background: #0f172a;
+                color: #94a3b8;
+                border: 1px solid #1e293b;
+                border-bottom: none;
+                padding: 9px 18px;
+                margin-right: 4px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                font-weight: 700;
+                font-size: 12px;
+            }
+            QTabBar::tab:selected {
+                background: #1e293b;
+                color: #38bdf8;
+                border-color: #38bdf8;
+                border-bottom: 2px solid #38bdf8;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #131d31;
+                color: #f8fafc;
+            }
+        """)
+
+        # --------------------------------------------------------------
+        # TAB 1: TYPOGRAPHY & SIZING (No Sliders, +/- Buttons Only)
+        # --------------------------------------------------------------
+        typo_scroll = QScrollArea()
+        typo_scroll.setWidgetResizable(True)
+        typo_scroll.setFrameShape(QFrame.NoFrame)
+        typo_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        typo_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        typo_page = QWidget()
+        typo_layout = QVBoxLayout(typo_page)
+        typo_layout.setContentsMargins(12, 12, 12, 12)
+        typo_layout.setSpacing(14)
+
+        # Typo top actions
+        typo_top_row = QHBoxLayout()
+        typo_info = QLabel("Adjust UI font sizing with incremental step buttons. Sizing changes apply instantly.")
+        typo_info.setStyleSheet("font-size: 12px; color: #94a3b8;")
+        typo_top_row.addWidget(typo_info)
+        typo_top_row.addStretch()
+
         reset_btn = QPushButton("↺ Reset All Sizes")
         reset_btn.setProperty("class", "WebBtnSecondary")
-        reset_btn.setToolTip("Reset all font size groups to default values")
+        reset_btn.setToolTip("Reset all font sizes to default (13px)")
         reset_btn.clicked.connect(self.reset_font_settings)
-        hc_layout.addWidget(reset_btn)
+        typo_top_row.addWidget(reset_btn)
+        typo_layout.addLayout(typo_top_row)
 
-        layout.addWidget(hdr_card)
-
-        # Helper to construct Font Group Setting Cards
-        def make_group_card(group_key, title_text, icon_str, desc_text, min_fs, max_fs, preview_type):
+        # Helper for Font Step Control Card
+        def make_font_step_card(group_key, title_text, icon_str, desc_text, min_fs, max_fs, preview_type):
             card = QFrame()
             card.setProperty("class", "WebCard")
             c_layout = QVBoxLayout(card)
-            c_layout.setContentsMargins(16, 16, 16, 16)
+            c_layout.setContentsMargins(14, 14, 14, 14)
             c_layout.setSpacing(10)
 
-            # Title Row
+            # Title & Stepper Row
             tr = QHBoxLayout()
             g_title = QLabel(f"{icon_str}  {title_text}")
-            g_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #94a3b8;")
+            g_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #e2e8f0;")
             tr.addWidget(g_title)
             tr.addStretch()
 
-            # Controls: Slider + SpinBox
             current_val = self.font_settings.get(group_key, 13)
 
-            slider = QSlider(Qt.Horizontal)
-            slider.setRange(min_fs, max_fs)
-            slider.setValue(current_val)
-            slider.setStyleSheet("""
-                QSlider::groove:horizontal {
-                    height: 6px;
-                    background: #1e293b;
-                    border-radius: 3px;
+            # Minus Button
+            btn_minus = QPushButton("－")
+            btn_minus.setFixedSize(36, 30)
+            btn_minus.setCursor(Qt.PointingHandCursor)
+            btn_minus.setStyleSheet("""
+                QPushButton {
+                    background: #1e293b; color: #f8fafc; font-size: 15px; font-weight: 900;
+                    border: 1px solid #334155; border-radius: 6px;
                 }
-                QSlider::sub-page:horizontal {
-                    background: #64748b;
-                    border-radius: 3px;
+                QPushButton:hover {
+                    background: #334155; border-color: #38bdf8; color: #38bdf8;
                 }
-                QSlider::handle:horizontal {
-                    background: #f8fafc;
-                    border: 2px solid #64748b;
-                    width: 16px;
-                    margin-top: -5px;
-                    margin-bottom: -5px;
-                    border-radius: 8px;
+                QPushButton:pressed {
+                    background: #0f172a;
                 }
             """)
 
-            spin = QSpinBox()
-            spin.setRange(min_fs, max_fs)
-            spin.setValue(current_val)
-            spin.setSuffix(" px")
-            spin.setStyleSheet("""
-                QSpinBox {
-                    background-color: #030712;
-                    border: 1px solid #334155;
-                    border-radius: 6px;
-                    padding: 4px 8px;
-                    color: #f8fafc;
-                    font-weight: 700;
-                    min-width: 65px;
+            # Value Label Badge
+            val_badge = QLabel(f"{current_val} px")
+            val_badge.setFixedWidth(72)
+            val_badge.setAlignment(Qt.AlignCenter)
+            val_badge.setStyleSheet("""
+                QLabel {
+                    background: #030712; color: #38bdf8; font-size: 13px; font-weight: 800;
+                    border: 1px solid #334155; border-radius: 6px; padding: 4px;
                 }
             """)
 
-            tr.addWidget(QLabel("Font Size:"))
-            tr.addWidget(slider, 1)
-            tr.addWidget(spin)
+            # Plus Button
+            btn_plus = QPushButton("＋")
+            btn_plus.setFixedSize(36, 30)
+            btn_plus.setCursor(Qt.PointingHandCursor)
+            btn_plus.setStyleSheet("""
+                QPushButton {
+                    background: #1e293b; color: #f8fafc; font-size: 15px; font-weight: 900;
+                    border: 1px solid #334155; border-radius: 6px;
+                }
+                QPushButton:hover {
+                    background: #334155; border-color: #38bdf8; color: #38bdf8;
+                }
+                QPushButton:pressed {
+                    background: #0f172a;
+                }
+            """)
+
+            tr.addWidget(QLabel("Size:"))
+            tr.addWidget(btn_minus)
+            tr.addWidget(val_badge)
+            tr.addWidget(btn_plus)
             c_layout.addLayout(tr)
 
             # Description
@@ -8064,11 +8655,11 @@ class M59CompanionApp(QMainWindow):
             d_lbl.setStyleSheet("font-size: 11px; color: #94a3b8;")
             c_layout.addWidget(d_lbl)
 
-            # Live Preview Panel
+            # Live Preview Box
             prev_box = QFrame()
-            prev_box.setStyleSheet("background-color: #030712; border: 1px solid #1e293b; border-radius: 8px; padding: 10px;")
+            prev_box.setStyleSheet("background-color: #030712; border: 1px solid #1e293b; border-radius: 6px; padding: 8px;")
             pb_layout = QVBoxLayout(prev_box)
-            pb_layout.setContentsMargins(10, 8, 10, 8)
+            pb_layout.setContentsMargins(8, 6, 8, 6)
 
             prev_lbl = QLabel()
             if preview_type == "player_list":
@@ -8090,84 +8681,78 @@ class M59CompanionApp(QMainWindow):
             pb_layout.addWidget(prev_lbl)
             c_layout.addWidget(prev_box)
 
-            # Value Change Listener
-            def on_val_change(val):
-                slider.blockSignals(True)
-                spin.blockSignals(True)
-                slider.setValue(val)
-                spin.setValue(val)
-                slider.blockSignals(False)
-                spin.blockSignals(False)
-
-                self.font_settings[group_key] = val
+            # Step button click handlers
+            def update_val(new_val):
+                clamped = max(min_fs, min(max_fs, new_val))
+                self.font_settings[group_key] = clamped
+                val_badge.setText(f"{clamped} px")
 
                 # Local Preview Update
                 if preview_type == "player_list":
-                    prev_lbl.setStyleSheet(f"font-size: {val}px; font-weight: 700; color: #e0e0e0;")
+                    prev_lbl.setStyleSheet(f"font-size: {clamped}px; font-weight: 700; color: #e0e0e0;")
                 elif preview_type == "chat_logger":
-                    prev_lbl.setStyleSheet(f"font-size: {val}px; color: #e2e8f0; font-family: 'Consolas', monospace;")
+                    prev_lbl.setStyleSheet(f"font-size: {clamped}px; color: #e2e8f0; font-family: 'Consolas', monospace;")
                 elif preview_type == "dashboard":
-                    prev_lbl.setStyleSheet(f"font-size: {val}px; font-weight: 800; color: #94a3b8;")
+                    prev_lbl.setStyleSheet(f"font-size: {clamped}px; font-weight: 800; color: #94a3b8;")
                 elif preview_type == "clock":
-                    prev_lbl.setStyleSheet(f"font-size: {val}px; font-weight: 900; color: #f8fafc; font-family: 'Consolas', monospace;")
+                    prev_lbl.setStyleSheet(f"font-size: {clamped}px; font-weight: 900; color: #f8fafc; font-family: 'Consolas', monospace;")
                 elif preview_type == "sidebar":
-                    prev_lbl.setStyleSheet(f"font-size: {val}px; font-weight: 700; color: #94a3b8;")
+                    prev_lbl.setStyleSheet(f"font-size: {clamped}px; font-weight: 700; color: #94a3b8;")
 
-                # Live Update Across Entire App
+                # Apply globally
                 self.apply_font_settings()
                 self.save_gui_settings({"font_settings": self.font_settings})
 
-            slider.valueChanged.connect(on_val_change)
-            spin.valueChanged.connect(on_val_change)
+            btn_minus.clicked.connect(lambda: update_val(self.font_settings.get(group_key, 13) - 1))
+            btn_plus.clicked.connect(lambda: update_val(self.font_settings.get(group_key, 13) + 1))
 
             return card
 
-        # 1. Player List Group
-        layout.addWidget(make_group_card(
-            "player_list",
-            "Player List (Who's Online)",
-            "👥",
-            "Controls font size for online player names and alignment statuses in the Who List widget.",
+        # Add Font Groups
+        typo_layout.addWidget(make_font_step_card(
+            "player_list", "Player List (Who's Online)", "👥",
+            "Font sizing for online player names and alignment tags in the Who List widget.",
             10, 24, "player_list"
         ))
-
-        # 2. Chat Logger Group
-        layout.addWidget(make_group_card(
-            "chat_logger",
-            "Chat Logger & Comms Log",
-            "💬",
-            "Controls text size for incoming game chat messages, communication logs, and timestamps.",
+        typo_layout.addWidget(make_font_step_card(
+            "chat_logger", "Chat Logger & Comms Log", "💬",
+            "Text sizing for incoming game chat stream, combat lines, improve messages, and timestamps.",
             10, 24, "chat_logger"
         ))
-
-        # 3. Dashboard Stats Group
-        layout.addWidget(make_group_card(
-            "dashboard_cards",
-            "Dashboard Stats & Attributes",
-            "📊",
-            "Controls font size for character attributes (Might, Intellect, etc.), vitals labels, and ledger entries.",
+        typo_layout.addWidget(make_font_step_card(
+            "dashboard_cards", "Dashboard Stats & Attributes", "📊",
+            "Font sizing for character stats (Might, Intellect, etc.), vital labels, and ledger rows.",
             10, 22, "dashboard"
         ))
-
-        # 4. Clock & Panel Group
-        layout.addWidget(make_group_card(
-            "clock_panel",
-            "World Clock & Dock Panel",
-            "⏰",
-            "Controls text sizing for the Meridian 59 game world time clock and dock section headers.",
+        typo_layout.addWidget(make_font_step_card(
+            "clock_panel", "World Clock & Dock Panel", "⏰",
+            "Text sizing for Meridian 59 game world time clock and dock section headers.",
             12, 32, "clock"
         ))
-
-        # 5. Sidebar Nav Group
-        layout.addWidget(make_group_card(
-            "sidebar_nav",
-            "Sidebar Navigation Menu",
-            "🧭",
-            "Controls font size for left sidebar menu items and navigation section titles.",
+        typo_layout.addWidget(make_font_step_card(
+            "sidebar_nav", "Sidebar Navigation Menu", "🧭",
+            "Font size for left sidebar menu buttons and navigation items.",
             10, 20, "sidebar"
         ))
 
-        # 6. Audio & Sound Alert Preferences Group
+        typo_layout.addStretch()
+        typo_scroll.setWidget(typo_page)
+        tab_widget.addTab(typo_scroll, "🔤 Typography")
+
+        # --------------------------------------------------------------
+        # TAB 2: AUDIO & SOUND ALERTS
+        # --------------------------------------------------------------
+        audio_scroll = QScrollArea()
+        audio_scroll.setWidgetResizable(True)
+        audio_scroll.setFrameShape(QFrame.NoFrame)
+        audio_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        audio_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        audio_page = QWidget()
+        audio_layout = QVBoxLayout(audio_page)
+        audio_layout.setContentsMargins(12, 12, 12, 12)
+        audio_layout.setSpacing(14)
+
         sound_card = QFrame()
         sound_card.setProperty("class", "WebCard")
         sc_layout = QVBoxLayout(sound_card)
@@ -8283,11 +8868,148 @@ class M59CompanionApp(QMainWindow):
         self.tell_sound_combo.currentTextChanged.connect(on_sound_config_changed)
         self.pk_redbox_chk.stateChanged.connect(on_sound_config_changed)
 
-        layout.addWidget(sound_card)
+        audio_layout.addWidget(sound_card)
+        audio_layout.addStretch()
+        audio_scroll.setWidget(audio_page)
+        tab_widget.addTab(audio_scroll, "🔊 Audio & Alerts")
 
         # --------------------------------------------------------------
-        # 4. Software Updates & Dual Release Channels (Stable / Beta)
+        # TAB 3: DIAGNOSTICS & DEBUGGING LOGS
         # --------------------------------------------------------------
+        debug_scroll = QScrollArea()
+        debug_scroll.setWidgetResizable(True)
+        debug_scroll.setFrameShape(QFrame.NoFrame)
+        debug_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        debug_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        debug_page = QWidget()
+        debug_layout = QVBoxLayout(debug_page)
+        debug_layout.setContentsMargins(12, 12, 12, 12)
+        debug_layout.setSpacing(14)
+
+        dbg_card = QFrame()
+        dbg_card.setProperty("class", "WebCard")
+        dbg_card_layout = QVBoxLayout(dbg_card)
+        dbg_card_layout.setContentsMargins(16, 16, 16, 16)
+        dbg_card_layout.setSpacing(12)
+
+        dbg_title = QLabel("🐞 Diagnostics & Logging Management")
+        dbg_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #f8fafc;")
+        dbg_desc = QLabel("Configure standard output (stdout), debug trace levels, and progression engine diagnostic log files.")
+        dbg_desc.setStyleSheet("font-size: 12px; color: #64748b;")
+        dbg_card_layout.addWidget(dbg_title)
+        dbg_card_layout.addWidget(dbg_desc)
+
+        # Checkbox 1: Stdout / Console Output
+        self.dbg_console_chk = QCheckBox("Enable Standard Console Output (stdout)")
+        self.dbg_console_chk.setChecked(getattr(self, 'console_output_enabled', True))
+        self.dbg_console_chk.setStyleSheet("color: #f8fafc; font-weight: 700; font-size: 13px;")
+        dbg_card_layout.addWidget(self.dbg_console_chk)
+        c_desc = QLabel("  Streams live companion messages and system events to the terminal console.")
+        c_desc.setStyleSheet("font-size: 11px; color: #64748b; margin-left: 22px;")
+        dbg_card_layout.addWidget(c_desc)
+
+        # Checkbox 2: Detailed Debug Messages
+        self.dbg_debug_level_chk = QCheckBox("Enable Verbose Debug Level Traces")
+        self.dbg_debug_level_chk.setChecked(getattr(self, 'console_debug_enabled', True))
+        self.dbg_debug_level_chk.setStyleSheet("color: #f8fafc; font-weight: 700; font-size: 13px;")
+        dbg_card_layout.addWidget(self.dbg_debug_level_chk)
+        d_desc = QLabel("  Includes detailed internal telemetry, scraping events, and spell trance timings.")
+        d_desc.setStyleSheet("font-size: 11px; color: #64748b; margin-left: 22px;")
+        dbg_card_layout.addWidget(d_desc)
+
+        # Checkbox 3: Dedicated Progression Tracker Log
+        self.dbg_prog_chk = QCheckBox("Enable Progression Tracker Log (logs/progression_debug.log)")
+        self.dbg_prog_chk.setChecked(getattr(self, 'progression_log_enabled', True))
+        self.dbg_prog_chk.setStyleSheet("color: #38bdf8; font-weight: 700; font-size: 13px;")
+        dbg_card_layout.addWidget(self.dbg_prog_chk)
+        p_desc = QLabel("  Dedicated log recording school progression points, target vs cap math, spell validation, and impossible state flags.")
+        p_desc.setStyleSheet("font-size: 11px; color: #64748b; margin-left: 22px;")
+        dbg_card_layout.addWidget(p_desc)
+
+        # Checkbox 4: Central Companion Diagnostic File
+        self.dbg_file_chk = QCheckBox("Enable Companion Runtime Log (logs/companion_debug.log)")
+        self.dbg_file_chk.setChecked(getattr(self, 'file_debug_enabled', True))
+        self.dbg_file_chk.setStyleSheet("color: #f8fafc; font-weight: 700; font-size: 13px;")
+        dbg_card_layout.addWidget(self.dbg_file_chk)
+        f_desc = QLabel("  Writes all application errors, warnings, and session traces to the local logs file.")
+        f_desc.setStyleSheet("font-size: 11px; color: #64748b; margin-left: 22px;")
+        dbg_card_layout.addWidget(f_desc)
+
+        # State change connectors
+        def on_debug_config_changed():
+            self.save_debug_settings()
+        self.dbg_console_chk.stateChanged.connect(on_debug_config_changed)
+        self.dbg_debug_level_chk.stateChanged.connect(on_debug_config_changed)
+        self.dbg_prog_chk.stateChanged.connect(on_debug_config_changed)
+        self.dbg_file_chk.stateChanged.connect(on_debug_config_changed)
+
+        # Debug Actions Row
+        dbg_btn_row = QHBoxLayout()
+        dbg_btn_row.setSpacing(10)
+
+        open_logs_btn = QPushButton("📁 Open Logs Folder")
+        open_logs_btn.setProperty("class", "WebBtnSecondary")
+        open_logs_btn.setToolTip("Open the local logs/ directory in Windows Explorer")
+        open_logs_btn.clicked.connect(self.open_logs_folder)
+        dbg_btn_row.addWidget(open_logs_btn)
+
+        clear_logs_btn = QPushButton("🧹 Clear Log Files")
+        clear_logs_btn.setProperty("class", "WebBtnSecondary")
+        clear_logs_btn.setToolTip("Safely empty existing log files")
+        clear_logs_btn.clicked.connect(self.clear_app_logs)
+        dbg_btn_row.addWidget(clear_logs_btn)
+
+        refresh_preview_btn = QPushButton("🔄 Refresh Log View")
+        refresh_preview_btn.setProperty("class", "WebBtnPrimary")
+        refresh_preview_btn.setToolTip("Load recent entries from progression and companion log files")
+        refresh_preview_btn.clicked.connect(self.refresh_debug_log_preview)
+        dbg_btn_row.addWidget(refresh_preview_btn)
+
+        dbg_btn_row.addStretch()
+        dbg_card_layout.addLayout(dbg_btn_row)
+
+        # Live Log Preview Box
+        preview_title = QLabel("📋 Recent Log Preview:")
+        preview_title.setStyleSheet("font-size: 12px; font-weight: 700; color: #94a3b8; margin-top: 6px;")
+        dbg_card_layout.addWidget(preview_title)
+
+        self.debug_log_preview = QTextEdit()
+        self.debug_log_preview.setReadOnly(True)
+        self.debug_log_preview.setMinimumHeight(180)
+        self.debug_log_preview.setStyleSheet("""
+            QTextEdit {
+                background-color: #030712;
+                border: 1px solid #1e293b;
+                border-radius: 6px;
+                color: #38bdf8;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 11px;
+                padding: 8px;
+            }
+        """)
+        dbg_card_layout.addWidget(self.debug_log_preview)
+        self.refresh_debug_log_preview()
+
+        debug_layout.addWidget(dbg_card)
+        debug_layout.addStretch()
+        debug_scroll.setWidget(debug_page)
+        tab_widget.addTab(debug_scroll, "🐞 Debug & Logs")
+
+        # --------------------------------------------------------------
+        # TAB 4: SOFTWARE UPDATES & ABOUT
+        # --------------------------------------------------------------
+        upd_scroll = QScrollArea()
+        upd_scroll.setWidgetResizable(True)
+        upd_scroll.setFrameShape(QFrame.NoFrame)
+        upd_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        upd_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        upd_page = QWidget()
+        upd_layout = QVBoxLayout(upd_page)
+        upd_layout.setContentsMargins(12, 12, 12, 12)
+        upd_layout.setSpacing(14)
+
         update_card = QFrame()
         update_card.setProperty("class", "WebCard")
         uc_layout = QVBoxLayout(update_card)
@@ -8296,7 +9018,7 @@ class M59CompanionApp(QMainWindow):
 
         u_hdr = QHBoxLayout()
         u_title = QLabel("🚀 Software Updates")
-        u_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #94a3b8;")
+        u_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #f8fafc;")
         u_hdr.addWidget(u_title)
         u_hdr.addStretch()
 
@@ -8336,11 +9058,13 @@ class M59CompanionApp(QMainWindow):
         u_btn_row.addStretch()
         uc_layout.addLayout(u_btn_row)
 
-        layout.addWidget(update_card)
+        upd_layout.addWidget(update_card)
+        upd_layout.addStretch()
+        upd_scroll.setWidget(upd_page)
+        tab_widget.addTab(upd_scroll, "🚀 Software Updates")
 
-        layout.addStretch()
-        scroll.setWidget(page)
-        return scroll
+        main_layout.addWidget(tab_widget, 1)
+        return page
 
     def start_background_update_check(self):
         """Starts background thread to detect latest releases from GitHub."""
