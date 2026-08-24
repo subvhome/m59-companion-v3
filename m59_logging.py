@@ -14,6 +14,72 @@ CURRENT_LOG_SETTINGS = {
     "progression_log_enabled": True
 }
 
+# --- Frida Memory Polling / Diagnostic Debug Flag ---
+# Set to True manually in code OR launch the application/compiled binary with '/frida_debug'
+ENABLE_FRIDA_DEBUG = False
+FRIDA_DEBUG = False
+
+def is_frida_debug_enabled():
+    """
+    Returns True if Frida debug logging is explicitly enabled.
+    Can be enabled via:
+      1. Setting ENABLE_FRIDA_DEBUG = True or FRIDA_DEBUG = True in python code.
+      2. Passing '/frida_debug', '--frida_debug', or '-frida_debug' CLI argument.
+      3. Setting environment variable M59_FRIDA_DEBUG=1 or FRIDA_DEBUG=1.
+    """
+    global ENABLE_FRIDA_DEBUG, FRIDA_DEBUG
+    if ENABLE_FRIDA_DEBUG or FRIDA_DEBUG:
+        return True
+    
+    # Check environment variable
+    if os.environ.get("FRIDA_DEBUG", "").lower() in ("1", "true", "yes") or \
+       os.environ.get("M59_FRIDA_DEBUG", "").lower() in ("1", "true", "yes"):
+        return True
+
+    # Check CLI arguments
+    for arg in sys.argv[1:]:
+        clean = arg.strip().lower()
+        if clean in ("/frida_debug", "--frida_debug", "-frida_debug", "/fridadebug", "--fridadebug", "/frida", "--frida"):
+            return True
+
+    return False
+
+def set_frida_debug(enabled: bool):
+    """Programmatically sets the Frida debug logging state."""
+    global ENABLE_FRIDA_DEBUG, FRIDA_DEBUG
+    ENABLE_FRIDA_DEBUG = bool(enabled)
+    FRIDA_DEBUG = bool(enabled)
+
+class FridaLogFilter(logging.Filter):
+    """
+    Suppresses all Frida instrumentation and memory polling log records
+    unless Frida debug is explicitly active.
+    """
+    def filter(self, record):
+        if is_frida_debug_enabled():
+            return True
+        name = str(getattr(record, 'name', ''))
+        if name.endswith('.frida') or '.frida.' in name or name == 'm59.frida':
+            return False
+        msg = str(record.getMessage() if hasattr(record, 'getMessage') else getattr(record, 'msg', ''))
+        if "FridaLog" in msg or "[Frida]" in msg or "Frida Error" in msg:
+            return False
+        return True
+
+def log_frida(msg, level="debug"):
+    """Logs a message from the Frida subsystem only if Frida debugging is enabled."""
+    if not is_frida_debug_enabled():
+        return
+    f_logger = logging.getLogger("m59.frida")
+    if level == "error":
+        f_logger.error(f"[Frida] {msg}")
+    elif level == "warning":
+        f_logger.warning(f"[Frida] {msg}")
+    elif level == "info":
+        f_logger.info(f"[Frida] {msg}")
+    else:
+        f_logger.debug(f"[Frida] {msg}")
+
 def load_stored_log_settings():
     """Loads logging preferences from settings/gui_settings.json if present."""
     candidate_paths = [
@@ -69,6 +135,8 @@ def setup_logging(debug_enabled=None, console_output=None, file_debug=None, prog
     # Root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
+    frida_filter = FridaLogFilter()
+    root_logger.addFilter(frida_filter)
     
     # Clean existing root handlers
     for handler in root_logger.handlers[:]:
@@ -83,6 +151,7 @@ def setup_logging(debug_enabled=None, console_output=None, file_debug=None, prog
         c_handler = logging.StreamHandler(sys.stdout)
         c_handler.setLevel(logging.DEBUG if CURRENT_LOG_SETTINGS["console_debug_enabled"] else logging.INFO)
         c_handler.setFormatter(logging.Formatter(log_format))
+        c_handler.addFilter(frida_filter)
         root_logger.addHandler(c_handler)
 
     # File Handler (logs/companion_debug.log)
@@ -91,6 +160,7 @@ def setup_logging(debug_enabled=None, console_output=None, file_debug=None, prog
             f_handler = logging.FileHandler("logs/companion_debug.log", encoding="utf-8")
             f_handler.setLevel(logging.DEBUG if CURRENT_LOG_SETTINGS["console_debug_enabled"] else logging.INFO)
             f_handler.setFormatter(logging.Formatter(log_format))
+            f_handler.addFilter(frida_filter)
             root_logger.addHandler(f_handler)
         except Exception as e:
             if CURRENT_LOG_SETTINGS["console_output_enabled"]:
@@ -98,6 +168,7 @@ def setup_logging(debug_enabled=None, console_output=None, file_debug=None, prog
 
     # Dedicated Progression Log Handler (logs/progression_debug.log)
     prog_logger = logging.getLogger("m59.progression")
+    prog_logger.addFilter(frida_filter)
     for handler in prog_logger.handlers[:]:
         try:
             handler.close()
@@ -110,6 +181,7 @@ def setup_logging(debug_enabled=None, console_output=None, file_debug=None, prog
             prog_handler = logging.FileHandler("logs/progression_debug.log", encoding="utf-8")
             prog_handler.setLevel(logging.DEBUG)
             prog_handler.setFormatter(logging.Formatter(log_format))
+            prog_handler.addFilter(frida_filter)
             prog_logger.addHandler(prog_handler)
         except Exception as e:
             if CURRENT_LOG_SETTINGS["console_output_enabled"]:

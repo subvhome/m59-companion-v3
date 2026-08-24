@@ -9,7 +9,18 @@ import threading
 import ctypes
 from collections import deque
 from datetime import datetime
-from m59_logging import setup_logging, get_logger, clear_log_files
+from m59_logging import (
+    setup_logging, get_logger, clear_log_files,
+    is_frida_debug_enabled, set_frida_debug, ENABLE_FRIDA_DEBUG
+)
+
+# ----------------------------------------------------------------------
+# Frida Diagnostics Control Flag:
+# Set to True manually in code or run application/executable with '/frida_debug'
+# ----------------------------------------------------------------------
+FRIDA_DEBUG = False
+if FRIDA_DEBUG:
+    set_frida_debug(True)
 
 setup_logging(debug_enabled=True)
 prog_logger = get_logger("progression")
@@ -385,7 +396,10 @@ from PySide6.QtWidgets import (
     QCompleter, QTreeWidget, QTreeWidgetItem, QSizeGrip, QStyleOptionComboBox, QStyle, QMenu
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QMimeData, QPoint, QRect
-from PySide6.QtGui import QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QDrag, QPainter, QPen, QBrush, QGuiApplication
+from PySide6.QtGui import (
+    QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QDrag, QPainter, QPen, QBrush,
+    QGuiApplication, QLinearGradient, QRadialGradient, QConicalGradient, QGradient
+)
 
 # ----------------------------------------------------------------------
 # PK / PvP Alert Red Box Overlay Window around Game Client
@@ -829,6 +843,19 @@ class QtFloatingHotkeyButton(QWidget):
     def closeEvent(self, event):
         if hasattr(self, 'dock_timer') and self.dock_timer:
             self.dock_timer.stop()
+        if self.dashboard and not getattr(self.dashboard, '_is_shutting_down', False):
+            try:
+                aliases = self.dashboard.load_commaliases()
+                updated = False
+                for alias in aliases:
+                    if alias.get('name') == self.alias_name:
+                        alias['show_float'] = False
+                        updated = True
+                        break
+                if updated:
+                    self.dashboard.save_commaliases(aliases, rebuild_buttons=False)
+            except Exception as ex:
+                print(f"[M59-HOTKEY] Error updating alias float state on user close: {ex}", flush=True)
         event.accept()
 
 
@@ -1186,7 +1213,7 @@ class QtFloatingEludeBar(QWidget):
         loc = self.combo.currentText()
         if not loc:
             return
-        phrase = 'say "I wish to travel to {loc}."'
+        phrase = 'say I wish to travel to {loc}.'
         if self.dashboard and hasattr(self.dashboard, 'shortcut_phrase_combo'):
             phrase = self.dashboard.shortcut_phrase_combo.currentText()
         formatted = phrase.replace("{loc}", loc)
@@ -1206,6 +1233,16 @@ class QtFloatingEludeBar(QWidget):
     def closeEvent(self, event):
         if hasattr(self, 'dock_timer') and self.dock_timer:
             self.dock_timer.stop()
+        if self.dashboard:
+            if getattr(self.dashboard, 'active_elude_bar', None) == self:
+                self.dashboard.active_elude_bar = None
+            if not getattr(self.dashboard, '_is_shutting_down', False):
+                try:
+                    s = self.dashboard.load_gui_settings()
+                    s['elude_bar_open'] = False
+                    self.dashboard.save_gui_settings(s)
+                except Exception as ex:
+                    print(f"[M59-ELUDE] Error saving closed state: {ex}", flush=True)
         event.accept()
 
 
@@ -1562,6 +1599,16 @@ class QtFloatingMorphBar(QWidget):
     def closeEvent(self, event):
         if hasattr(self, 'dock_timer') and self.dock_timer:
             self.dock_timer.stop()
+        if self.dashboard:
+            if getattr(self.dashboard, 'active_morph_bar', None) == self:
+                self.dashboard.active_morph_bar = None
+            if not getattr(self.dashboard, '_is_shutting_down', False):
+                try:
+                    s = self.dashboard.load_gui_settings()
+                    s['morph_bar_open'] = False
+                    self.dashboard.save_gui_settings(s)
+                except Exception as ex:
+                    print(f"[M59-MORPH] Error saving closed state: {ex}", flush=True)
         event.accept()
 
 
@@ -2078,8 +2125,16 @@ class QtFloatingChatBox(QWidget):
     def closeEvent(self, event):
         if hasattr(self, 'dock_timer') and self.dock_timer:
             self.dock_timer.stop()
-        if self.dashboard and getattr(self.dashboard, 'active_floating_chat', None) == self:
-            self.dashboard.active_floating_chat = None
+        if self.dashboard:
+            if getattr(self.dashboard, 'active_floating_chat', None) == self:
+                self.dashboard.active_floating_chat = None
+            if not getattr(self.dashboard, '_is_shutting_down', False):
+                try:
+                    s = self.dashboard.load_gui_settings()
+                    s['floating_chat_open'] = False
+                    self.dashboard.save_gui_settings(s)
+                except Exception as ex:
+                    print(f"[M59-CHAT] Error saving closed state: {ex}", flush=True)
         event.accept()
 
 # ----------------------------------------------------------------------
@@ -4440,6 +4495,7 @@ class M59CompanionApp(QMainWindow):
         self.player_groups = self.load_player_groups()
         self.discovered_players = self.load_discovered_players()
         self.collapsed_groups = set(loaded_gui.get("collapsed_groups", []))
+        self.collapsed_groups.add("__OFFLINE__")  # Always ensure offline group is collapsed by default
         self.group_toast_duration_sec = loaded_gui.get("group_toast_duration_sec", 3)
         self.group_toast_position = loaded_gui.get("group_toast_position", "bottom-right")
         self.previous_online_players = {}
@@ -4451,6 +4507,9 @@ class M59CompanionApp(QMainWindow):
 
         # Build Interface
         self.setup_ui()
+
+        # Load Attributes Cache (Character Intellect, Might, etc.)
+        self.load_attributes_cache()
 
         # Load Knowledge Cache & Progression
         self.load_knowledge_cache()
@@ -4475,6 +4534,9 @@ class M59CompanionApp(QMainWindow):
         # Initialize Floating Action Buttons & Global Hotkeys
         self.update_floating_hotkey_buttons()
         self.register_global_hotkeys()
+
+        # Restore any open floating action bars (Elude, Morph, Floating Chat)
+        QTimer.singleShot(300, self.restore_launched_floating_bars)
 
         # Automatic Background Check for Dual Stable & Beta Releases
         self.start_background_update_check()
@@ -4578,8 +4640,59 @@ class M59CompanionApp(QMainWindow):
         main_layout.addWidget(sidebar)
 
         # --------------------------------------------------------------
-        # 2. MAIN WORKSPACE (STACKED WIDGET)
+        # 2. MAIN WORKSPACE (STACKED WIDGET & TOAST BANNER)
         # --------------------------------------------------------------
+        workspace_container = QWidget()
+        workspace_layout = QVBoxLayout(workspace_container)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(0)
+
+        # Non-intrusive Update Toast Notification Overlay Banner
+        self.update_toast_widget = QFrame()
+        self.update_toast_widget.setObjectName("UpdateToastBanner")
+        self.update_toast_widget.setVisible(False)
+        self.update_toast_widget.setStyleSheet("""
+            QFrame#UpdateToastBanner {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1e1b4b, stop:1 #311b92);
+                border: 1px solid #6366f1;
+                border-radius: 6px;
+                margin: 6px 10px 4px 10px;
+            }
+        """)
+        toast_layout = QHBoxLayout(self.update_toast_widget)
+        toast_layout.setContentsMargins(12, 6, 12, 6)
+        toast_layout.setSpacing(12)
+
+        self.toast_msg_lbl = QLabel("🚀 Software Update Available!")
+        self.toast_msg_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #f8fafc;")
+
+        self.toast_action_btn = QPushButton("🚀 Update Now")
+        self.toast_action_btn.setCursor(Qt.PointingHandCursor)
+        self.toast_action_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6366f1; color: #ffffff; font-size: 10px; font-weight: 800;
+                border-radius: 4px; padding: 4px 12px; border: none; min-height: 22px;
+            }
+            QPushButton:hover { background-color: #4f46e5; }
+        """)
+
+        self.toast_dismiss_btn = QPushButton("✖ Dismiss")
+        self.toast_dismiss_btn.setCursor(Qt.PointingHandCursor)
+        self.toast_dismiss_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #334155; color: #cbd5e1; font-size: 10px; font-weight: 700;
+                border-radius: 4px; padding: 4px 12px; border: 1px solid #475569; min-height: 22px;
+            }
+            QPushButton:hover { background-color: #475569; color: #f8fafc; }
+        """)
+        self.toast_dismiss_btn.clicked.connect(self.hide_update_toast)
+
+        toast_layout.addWidget(self.toast_msg_lbl, 1)
+        toast_layout.addWidget(self.toast_action_btn)
+        toast_layout.addWidget(self.toast_dismiss_btn)
+
+        workspace_layout.addWidget(self.update_toast_widget)
+
         self.stacked_widget = QStackedWidget()
 
         # Section 1: Dashboard Page
@@ -4617,6 +4730,9 @@ class M59CompanionApp(QMainWindow):
         # Section 9: Settings Preferences Page
         self.page_settings = self.build_settings_page()
         self.stacked_widget.addWidget(self.page_settings)
+
+        workspace_layout.addWidget(self.stacked_widget, 1)
+        main_layout.addWidget(workspace_container, 1)
 
         # --------------------------------------------------------------
         # 3. RIGHT COLLAPSIBLE SIDE PANEL (Who List, Game Clock & Bottom Dock)
@@ -4772,8 +4888,59 @@ class M59CompanionApp(QMainWindow):
         self.who_list_widget.setStyleSheet("border: none; background: transparent; padding: 0px; margin: 0px;")
         self.who_list_widget.itemDoubleClicked.connect(lambda item: self.open_dm_with_player(item.data(Qt.UserRole)) if item and item.data(Qt.UserRole) else None)
         self.who_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.who_list_widget.customContextMenuRequested.connect(self.on_who_list_context_menu)
+        self.who_list_widget.customContextMenuRequested.connect(lambda pos: self.on_who_list_context_menu(pos, self.who_list_widget))
         who_card.content_layout.addWidget(self.who_list_widget, 1)
+
+        # Docked Offline Container at the foot of Player List (Always collapsed by default)
+        self.who_offline_dock = QFrame()
+        self.who_offline_dock.setObjectName("WhoOfflineDock")
+        self.who_offline_dock.setStyleSheet("""
+            QFrame#WhoOfflineDock {
+                background-color: #090f1d;
+                border-top: 1px solid #1e293b;
+                border-radius: 4px;
+                margin-top: 2px;
+            }
+        """)
+        self.who_offline_layout = QVBoxLayout(self.who_offline_dock)
+        self.who_offline_layout.setContentsMargins(0, 0, 0, 0)
+        self.who_offline_layout.setSpacing(0)
+
+        self.who_offline_hdr_widget = QWidget()
+        self.who_offline_hdr_widget.setCursor(Qt.PointingHandCursor)
+        self.who_offline_hdr_widget.setStyleSheet("background: transparent;")
+        wo_hdr_layout = QHBoxLayout(self.who_offline_hdr_widget)
+        wo_hdr_layout.setContentsMargins(6, 4, 6, 4)
+        wo_hdr_layout.setSpacing(6)
+
+        self.who_offline_arrow_lbl = QLabel("▶")
+        self.who_offline_arrow_lbl.setStyleSheet("font-size: 9px; font-weight: 800; color: #64748b; background: transparent;")
+        wo_hdr_layout.addWidget(self.who_offline_arrow_lbl)
+
+        self.who_offline_title_lbl = QLabel("OFFLINE")
+        self.who_offline_title_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #64748b; letter-spacing: 0.6px; background: transparent;")
+        wo_hdr_layout.addWidget(self.who_offline_title_lbl)
+        wo_hdr_layout.addStretch()
+
+        self.who_offline_cnt_badge = QLabel("0 Offline")
+        self.who_offline_cnt_badge.setStyleSheet("background-color: #1e293b; color: #94a3b8; font-size: 9px; font-weight: 800; border-radius: 4px; padding: 1px 5px;")
+        wo_hdr_layout.addWidget(self.who_offline_cnt_badge)
+
+        self.who_offline_hdr_widget.mousePressEvent = lambda e: self.toggle_group_collapse("__OFFLINE__") if e.button() == Qt.LeftButton else None
+        self.who_offline_layout.addWidget(self.who_offline_hdr_widget)
+
+        self.who_offline_list_widget = QListWidget()
+        self.who_offline_list_widget.setObjectName("WhoOfflineListWidget")
+        self.who_offline_list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.who_offline_list_widget.setMaximumHeight(160)
+        self.who_offline_list_widget.setVisible(False)
+        self.who_offline_list_widget.setStyleSheet("border: none; background: transparent; padding: 0px; margin: 0px;")
+        self.who_offline_list_widget.itemDoubleClicked.connect(lambda item: self.open_dm_with_player(item.data(Qt.UserRole)) if item and item.data(Qt.UserRole) else None)
+        self.who_offline_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.who_offline_list_widget.customContextMenuRequested.connect(lambda pos: self.on_who_list_context_menu(pos, self.who_offline_list_widget))
+        self.who_offline_layout.addWidget(self.who_offline_list_widget)
+
+        who_card.content_layout.addWidget(self.who_offline_dock, 0)
 
         rpc_layout.addWidget(who_card, 1)
 
@@ -5310,6 +5477,7 @@ class M59CompanionApp(QMainWindow):
 
     def closeEvent(self, event):
         """Ensure window position, size, layout config, standalone AppBar, Frida monitors, background threads, and floating dialogs are cleanly saved and shutdown when exiting."""
+        self._is_shutting_down = True
         try:
             self.save_window_position_and_size()
             self.save_layout_config()
@@ -6218,8 +6386,8 @@ class M59CompanionApp(QMainWindow):
         self.shortcut_phrase_combo.setStyleSheet(combo_box_qss)
         self.shortcut_phrase_combo.setEditable(True)
         base_phrases = [
-            'say "I wish to travel to {loc}."',
-            'say "By the grace of the High Council, I demand passage to {loc}!"',
+            'say I wish to travel to {loc}.',
+            'say By the grace of the High Council, I demand passage to {loc}!',
             'emote separates the earths and forms a path to {loc}',
             'emote traces a rune in the air, opening a rift to {loc}',
             'emote bends the fabric of space with Riija\'s chaotic magic, stepping towards {loc}'
@@ -6501,37 +6669,48 @@ class M59CompanionApp(QMainWindow):
 
     def cast_spell_with_trance(self, spell_name, steer_command, target_hwnd=None):
         """Initiates casting a trance-steered spell (e.g. elusion, morph).
-        Passes the steer_command to the target game window ONLY if in trance
-        (verified by 'You focus your whole will on casting [spellname].' in chat log)."""
+        Passes the steer_command to the target game window ONLY when trance is confirmed
+        by 'You focus your whole will on casting [spellname].' in chat log."""
         target = target_hwnd or getattr(self, 'main_hwnd', None)
         if not target:
             print(f"[M59-SPELL] Cannot cast {spell_name}: game window not attached.", flush=True)
             return
 
         clean_spell = spell_name.strip().lower()
+        t_cast = time.time()
+
+        # Sanitize steer command if it has redundant quotes around say phrase
+        cmd = steer_command.strip()
+        m_say_quotes = re.match(r'^say\s+"(.*)"$', cmd, re.IGNORECASE)
+        if m_say_quotes:
+            cmd = f'say {m_say_quotes.group(1)}'
+
         self.pending_spell_trance = {
             "spell_name": clean_spell,
-            "steer_command": steer_command,
+            "steer_command": cmd,
             "target_hwnd": target,
-            "cast_time": time.time(),
+            "cast_time": t_cast,
             "trance_entered": False,
+            "fizzled": False,
             "completed": False
         }
-        print(f"[M59-SPELL] Initiating trance-steered spell '{clean_spell}' with target command: {steer_command}", flush=True)
+        print(f"[M59-SPELL] Initiating trance-steered spell '{clean_spell}' with target command: {cmd}", flush=True)
         send_chat_command(target, f'cast "{clean_spell}"')
 
-        # Safety expiration thread in case no trance line occurs
-        def _expire_check(t_cast):
-            time.sleep(12.0)
+        # Safety cleanup thread: after 10s, clear pending state if spell was not completed or failed
+        def _expire_cleanup():
+            time.sleep(10.0)
             if hasattr(self, 'pending_spell_trance') and self.pending_spell_trance:
-                if self.pending_spell_trance.get('cast_time') == t_cast and not self.pending_spell_trance.get('completed'):
-                    print(f"[M59-SPELL] Trance window expired for '{clean_spell}'.", flush=True)
+                cur = self.pending_spell_trance
+                if cur.get('cast_time') == t_cast and not cur.get('completed'):
+                    print(f"[M59-SPELL] Trance timeout reached for '{clean_spell}' without focus confirmation. Steering aborted.", flush=True)
                     self.pending_spell_trance = None
-        threading.Thread(target=_expire_check, args=(self.pending_spell_trance['cast_time'],), daemon=True).start()
+
+        threading.Thread(target=_expire_cleanup, daemon=True).start()
 
     def trigger_cast_elude(self):
         loc = self.shortcut_loc_combo.currentText() if hasattr(self, 'shortcut_loc_combo') else "Marion"
-        phrase = self.shortcut_phrase_combo.currentText() if hasattr(self, 'shortcut_phrase_combo') else 'say "I wish to travel to {loc}."'
+        phrase = self.shortcut_phrase_combo.currentText() if hasattr(self, 'shortcut_phrase_combo') else 'say I wish to travel to {loc}.'
         formatted = phrase.replace("{loc}", loc)
         hwnd = getattr(self, 'main_hwnd', None)
         self.cast_spell_with_trance("elusion", formatted, target_hwnd=hwnd)
@@ -6539,6 +6718,10 @@ class M59CompanionApp(QMainWindow):
     def trigger_launch_elude_bar(self):
         try:
             hwnd = getattr(self, 'main_hwnd', None)
+            s = self.load_gui_settings()
+            s['elude_bar_open'] = True
+            self.save_gui_settings(s)
+
             if hasattr(self, 'active_elude_bar') and self.active_elude_bar:
                 try:
                     if self.active_elude_bar.isVisible():
@@ -6576,6 +6759,10 @@ class M59CompanionApp(QMainWindow):
     def trigger_launch_morph_bar(self):
         try:
             hwnd = getattr(self, 'main_hwnd', None)
+            s = self.load_gui_settings()
+            s['morph_bar_open'] = True
+            self.save_gui_settings(s)
+
             if hasattr(self, 'active_morph_bar') and self.active_morph_bar:
                 try:
                     if self.active_morph_bar.isVisible():
@@ -6595,6 +6782,10 @@ class M59CompanionApp(QMainWindow):
     def trigger_launch_floating_chat(self):
         try:
             hwnd = getattr(self, 'main_hwnd', None)
+            s = self.load_gui_settings()
+            s['floating_chat_open'] = True
+            self.save_gui_settings(s)
+
             if hasattr(self, 'active_floating_chat') and self.active_floating_chat:
                 try:
                     if self.active_floating_chat.isVisible():
@@ -6610,6 +6801,19 @@ class M59CompanionApp(QMainWindow):
             self.active_floating_chat.show()
         except Exception as ex:
             print(f"[M59-CHAT] Error launching floating chatbox: {ex}", flush=True)
+
+    def restore_launched_floating_bars(self):
+        """Restores any floating action bars (Elude, Morph, Floating Chat) that were open when app was last closed."""
+        try:
+            s = self.load_gui_settings()
+            if s.get("elude_bar_open", False):
+                self.trigger_launch_elude_bar()
+            if s.get("morph_bar_open", False):
+                self.trigger_launch_morph_bar()
+            if s.get("floating_chat_open", False):
+                self.trigger_launch_floating_chat()
+        except Exception as ex:
+            print(f"[M59-RESTORE] Error restoring floating bars: {ex}", flush=True)
 
     def update_floating_hotkey_buttons(self):
         if hasattr(self, 'floating_hotkey_buttons'):
@@ -6873,9 +7077,10 @@ class M59CompanionApp(QMainWindow):
         except Exception as ex:
             print(f"[M59-TOAST] Error showing toast notification: {ex}")
 
-    def on_who_list_context_menu(self, pos):
-        """Right-click context menu handler for Who's Online list items."""
-        item = self.who_list_widget.itemAt(pos)
+    def on_who_list_context_menu(self, pos, target_widget=None):
+        """Right-click context menu handler for Who's Online and Offline list items."""
+        src_widget = target_widget if target_widget is not None else self.who_list_widget
+        item = src_widget.itemAt(pos)
         if not item:
             return
         
@@ -6922,7 +7127,7 @@ class M59CompanionApp(QMainWindow):
                             self.update_wholist_gui(self.wholist_data)
                 act_del.triggered.connect(delete_grp)
 
-            menu.exec(self.who_list_widget.mapToGlobal(pos))
+            menu.exec(src_widget.mapToGlobal(pos))
             return
 
         # Player item right-clicked
@@ -7001,7 +7206,7 @@ class M59CompanionApp(QMainWindow):
             act_rem = menu.addAction(f"✕ Remove from '{current_grp}'")
             act_rem.triggered.connect(lambda: self.remove_player_from_group(player_name))
 
-        menu.exec(self.who_list_widget.mapToGlobal(pos))
+        menu.exec(src_widget.mapToGlobal(pos))
 
     def toggle_group_collapse(self, group_name):
         """Toggles collapsed/expanded state of a player group in the who list."""
@@ -8285,13 +8490,6 @@ class M59CompanionApp(QMainWindow):
         self.full_prog_known_badge.setStyleSheet("background-color: #1e1b4b; color: #a78bfa; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 4px; border: 1px solid #6366f1;")
         hdr_layout.addWidget(self.full_prog_known_badge)
 
-        self.prog_sample_btn = QPushButton("⚡ Sample")
-        self.prog_sample_btn.setProperty("class", "WebBtnSecondary")
-        self.prog_sample_btn.setStyleSheet("padding: 2px 8px; font-size: 10px; min-height: 22px;")
-        self.prog_sample_btn.setToolTip("Loads realistic Meridian 59 spell and skill training data for testing")
-        self.prog_sample_btn.clicked.connect(self.load_sample_knowledge)
-        hdr_layout.addWidget(self.prog_sample_btn)
-
         self.full_prog_sync_btn = QPushButton("🔄 Sync (Tab Dance)")
         self.full_prog_sync_btn.setProperty("class", "WebBtnPrimary")
         self.full_prog_sync_btn.setStyleSheet("padding: 2px 8px; font-size: 10px; min-height: 22px;")
@@ -8313,15 +8511,17 @@ class M59CompanionApp(QMainWindow):
         self.prog_search_input.textChanged.connect(lambda: self.update_progression_ui())
         ctrl_bar.addWidget(self.prog_search_input)
 
-        # Intellect Selector
+        # Intellect Selector (Auto-populated from Character Tab Dance)
         int_lbl = QLabel("Intellect:")
         int_lbl.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 10px;")
+        int_lbl.setToolTip("Character Intellect (automatically pulled from Character Stats / Tab Dance)")
         ctrl_bar.addWidget(int_lbl)
 
         self.prog_intellect_spin = QSpinBox()
         self.prog_intellect_spin.setRange(1, 50)
         self.prog_intellect_spin.setValue(25)
         self.prog_intellect_spin.setFixedWidth(50)
+        self.prog_intellect_spin.setToolTip("Current Character Intellect (pulled from Tab Dance, or adjust manually)")
         self.prog_intellect_spin.setStyleSheet("""
             QSpinBox {
                 background-color: #0f172a;
@@ -8334,7 +8534,7 @@ class M59CompanionApp(QMainWindow):
                 min-height: 20px;
             }
         """)
-        self.prog_intellect_spin.valueChanged.connect(lambda: self.update_progression_ui())
+        self.prog_intellect_spin.valueChanged.connect(self.on_intellect_spin_changed)
         ctrl_bar.addWidget(self.prog_intellect_spin)
 
         self.prog_expand_btn = QPushButton("Expand All")
@@ -8714,20 +8914,6 @@ class M59CompanionApp(QMainWindow):
             except Exception as e:
                 print(f"[M59-PROG] Error loading last knowledge: {e}", flush=True)
 
-        if not loaded and not self.knowledge_cache:
-            self.load_sample_knowledge()
-        else:
-            self.update_progression_ui()
-
-    def load_sample_knowledge(self):
-        """Loads realistic Meridian 59 skill and spell knowledge data for instant calculation."""
-        self.knowledge_cache = {
-            "axe wielding": 52, "blink": 9, "block": 99, "brawling": 42,
-            "dodge": 99, "fencing": 19, "glow": 19, "hammer wielding": 34,
-            "mace fighting": 65, "punch": 73, "short sword fighting": 43,
-            "slash": 65, "super strength": 29
-        }
-        self.save_knowledge_cache()
         self.update_progression_ui()
 
     def clear_knowledge_cache(self):
@@ -8736,8 +8922,69 @@ class M59CompanionApp(QMainWindow):
         self.save_knowledge_cache()
         self.update_progression_ui()
 
+    def save_attributes_cache(self):
+        """Persists character attributes (Might, Intellect, etc.) to JSON settings file."""
+        try:
+            os.makedirs("settings", exist_ok=True)
+            if self.char_name and self.char_name != "--":
+                sn = get_safe_name(self.char_name)
+                with open(f"settings/{sn}_attributes.json", "w", encoding="utf-8") as f:
+                    json.dump(self.attributes, f, indent=2)
+            with open("settings/last_attributes.json", "w", encoding="utf-8") as f:
+                json.dump(self.attributes, f, indent=2)
+        except Exception as e:
+            print(f"[M59-ATTR] Error saving attributes cache: {e}", flush=True)
+
+    def load_attributes_cache(self, char_name=None):
+        """Loads persistent character attributes from JSON settings file and updates GUI labels."""
+        loaded = False
+        name_to_check = char_name or (self.char_name if self.char_name != "--" else None)
+        if name_to_check:
+            sn = get_safe_name(name_to_check)
+            p = f"settings/{sn}_attributes.json"
+            if os.path.exists(p):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        d = json.load(f)
+                        if isinstance(d, dict) and d:
+                            self.attributes.update(d)
+                            loaded = True
+                except Exception as e:
+                    print(f"[M59-ATTR] Error loading character attributes: {e}", flush=True)
+
+        if not loaded and os.path.exists("settings/last_attributes.json"):
+            try:
+                with open("settings/last_attributes.json", "r", encoding="utf-8") as f:
+                    d = json.load(f)
+                    if isinstance(d, dict) and d:
+                        self.attributes.update(d)
+                        loaded = True
+            except Exception as e:
+                print(f"[M59-ATTR] Error loading last attributes: {e}", flush=True)
+
+        if loaded:
+            for k, val in self.attributes.items():
+                if k in getattr(self, 'attr_labels', {}):
+                    self.attr_labels[k].setText(str(val))
+            if hasattr(self, 'prog_intellect_spin') and self.prog_intellect_spin and self.attributes.get("Intellect") not in (None, "--", ""):
+                try:
+                    ival = int(self.attributes["Intellect"])
+                    self.prog_intellect_spin.blockSignals(True)
+                    self.prog_intellect_spin.setValue(ival)
+                    self.prog_intellect_spin.blockSignals(False)
+                except Exception:
+                    pass
+
+    def on_intellect_spin_changed(self, val):
+        """Called when user manually modifies the progression intellect spinbox."""
+        self.attributes["Intellect"] = val
+        if "Intellect" in getattr(self, 'attr_labels', {}):
+            self.attr_labels["Intellect"].setText(str(val))
+        self.save_attributes_cache()
+        self.update_progression_ui()
+
     def update_progression_ui(self, knowledge=None):
-        """Calculates and refreshes the progression tree widgets in both the dashboard tile and the full progression section."""
+        """Calculates and refreshes the progression tree widgets using the current character's intellect pulled from tab dance."""
         if knowledge is not None:
             self.knowledge_cache = knowledge
             self.save_knowledge_cache()
@@ -8745,19 +8992,21 @@ class M59CompanionApp(QMainWindow):
         if not hasattr(self, 'calculator') or not self.calculator:
             self.calculator = SchoolCalculator()
 
-        # Determine Intellect
+        # Determine Intellect: prioritize current character's intellect pulled from tab dance / character attributes
         intellect = 25
-        if hasattr(self, 'prog_intellect_spin') and self.prog_intellect_spin:
-            intellect = self.prog_intellect_spin.value()
-        elif hasattr(self, 'attributes') and self.attributes.get("Intellect") not in (None, "--", ""):
+        char_int = self.attributes.get("Intellect") if hasattr(self, 'attributes') else None
+        if char_int not in (None, "--", ""):
             try:
-                intellect = int(self.attributes["Intellect"])
+                intellect = int(char_int)
                 if hasattr(self, 'prog_intellect_spin') and self.prog_intellect_spin:
-                    self.prog_intellect_spin.blockSignals(True)
-                    self.prog_intellect_spin.setValue(intellect)
-                    self.prog_intellect_spin.blockSignals(False)
-            except:
+                    if self.prog_intellect_spin.value() != intellect:
+                        self.prog_intellect_spin.blockSignals(True)
+                        self.prog_intellect_spin.setValue(intellect)
+                        self.prog_intellect_spin.blockSignals(False)
+            except Exception:
                 intellect = 25
+        elif hasattr(self, 'prog_intellect_spin') and self.prog_intellect_spin:
+            intellect = self.prog_intellect_spin.value()
 
         try:
             results_list = self.calculator.calculate_progression(self.knowledge_cache, intellect)
@@ -8898,23 +9147,7 @@ class M59CompanionApp(QMainWindow):
         daily_data = stats.get("daily_usage", {})
         history_data = stats.get("history", [])
 
-        # Auto-seed sample daily trends if daily_data is empty so charts look great out-of-the-box
         today_str = datetime.now().strftime("%Y-%m-%d")
-        if not daily_data and reagents_used:
-            for i in range(6, -1, -1):
-                d_str = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-                d_entry = {"spells": {}, "reagents": {}, "casts": 0, "total_reagents": 0}
-                factor = (0.6 + (i * 0.17) % 0.8) if i > 0 else 1.0
-                for r, cnt in reagents_used.items():
-                    d_cnt = max(1, int(cnt * factor / 7.0))
-                    d_entry["reagents"][r] = d_cnt
-                    d_entry["total_reagents"] += d_cnt
-                for s, cnt in spells_cast.items():
-                    d_scnt = max(1, int(cnt * factor / 7.0))
-                    d_entry["spells"][s] = d_scnt
-                    d_entry["casts"] += d_scnt
-                daily_data[d_str] = d_entry
-            stats["daily_usage"] = daily_data
 
         timeframe = self.reagent_timeframe_combo.currentText() if hasattr(self, 'reagent_timeframe_combo') else "Last 7 Days"
         reagent_filter = self.reagent_focus_combo.currentText() if hasattr(self, 'reagent_focus_combo') else "All Reagents"
@@ -9771,20 +10004,55 @@ class M59CompanionApp(QMainWindow):
         return page
 
     def start_background_update_check(self):
-        """Starts background thread to detect latest releases from GitHub."""
+        """Starts a recurring 5-minute background timer and thread to check for GitHub updates."""
         def _check():
             try:
-                time.sleep(2)
                 res = check_all_releases(self.version)
                 if res.get("update_available") or res.get("stable_update_available"):
                     self.signals.update_detected.emit(res)
             except Exception as ex:
                 print(f"[M59-UPDATER] Background check error: {ex}", flush=True)
-        threading.Thread(target=_check, daemon=True).start()
+
+        # Initial background check after 2s
+        QTimer.singleShot(2000, lambda: threading.Thread(target=_check, daemon=True).start())
+
+        # Setup 5-minute timer (300,000 ms)
+        if not hasattr(self, 'update_check_timer') or self.update_check_timer is None:
+            self.update_check_timer = QTimer(self)
+            self.update_check_timer.timeout.connect(lambda: threading.Thread(target=_check, daemon=True).start())
+            self.update_check_timer.start(300000)
+
+    def show_update_toast(self, release_data):
+        """Displays a non-intrusive toast banner when an update is available."""
+        if not hasattr(self, 'update_toast_widget'):
+            return
+        ver = release_data.get("latest_version") or release_data.get("stable_version") or "Newer"
+        if ver and getattr(self, "_dismissed_update_version", None) == ver:
+            return
+
+        self.current_release_data = release_data
+        self.toast_msg_lbl.setText(f"🚀 Software Update Available: v{ver}! (Installed: v{str(self.version).lstrip('v')})")
+
+        try:
+            self.toast_action_btn.clicked.disconnect()
+        except Exception:
+            pass
+        self.toast_action_btn.clicked.connect(lambda: show_qt_update_dialog(self, release_data))
+
+        self.update_toast_widget.setVisible(True)
+
+    def hide_update_toast(self):
+        """Hides the update toast banner until dismissed."""
+        ver = None
+        if hasattr(self, 'current_release_data') and self.current_release_data:
+            ver = self.current_release_data.get("latest_version") or self.current_release_data.get("stable_version")
+        self._dismissed_update_version = ver
+        if hasattr(self, 'update_toast_widget'):
+            self.update_toast_widget.setVisible(False)
 
     def on_update_detected(self, release_data):
-        """Displays Qt update dialog when an update is detected."""
-        show_qt_update_dialog(self, release_data)
+        """Displays non-intrusive toast notification when an update is detected."""
+        self.show_update_toast(release_data)
 
     def trigger_manual_update_check(self):
         """Manually checks for releases, opening the update dialog or informing user."""
@@ -10003,6 +10271,7 @@ class M59CompanionApp(QMainWindow):
             self.load_kill_book()
             self.bank_manager.load_balances(self.char_name)
             self.load_vault_cache()
+            self.load_attributes_cache(self.char_name)
             self.load_knowledge_cache(self.char_name)
             self.load_dms_cache(self.char_name)
 
@@ -10095,6 +10364,7 @@ class M59CompanionApp(QMainWindow):
                             self.load_kill_book()
                             self.bank_manager.load_balances(self.char_name)
                             self.load_vault_cache()
+                            self.load_attributes_cache(self.char_name)
                             self.load_knowledge_cache(self.char_name)
                             self.load_dms_cache(self.char_name)
 
@@ -10202,6 +10472,21 @@ class M59CompanionApp(QMainWindow):
             self.show_splash_overlay("connected", f"🟢 CONNECTED: {self.char_name.upper()}", "Game state & memory synchronized successfully!")
             QTimer.singleShot(1200, self.hide_splash_overlay)
 
+        # Post-sync game client focus restoration
+        def restore_game_focus():
+            if self.main_hwnd and win32gui and win32gui.IsWindow(self.main_hwnd):
+                try:
+                    win32gui.SetForegroundWindow(self.main_hwnd)
+                    lparam = (100 & 0xFFFF) | ((100 & 0xFFFF) << 16)
+                    win32gui.PostMessage(self.main_hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
+                    win32gui.PostMessage(self.main_hwnd, win32con.WM_LBUTTONUP, 0, lparam)
+                    win32gui.PostMessage(self.main_hwnd, win32con.WM_KEYDOWN, win32con.VK_ESCAPE, 0)
+                    win32gui.PostMessage(self.main_hwnd, win32con.WM_KEYUP, win32con.VK_ESCAPE, 0)
+                except Exception as ex:
+                    print(f"[M59-SYNC] Post-splash focus restore notice: {ex}", flush=True)
+
+        QTimer.singleShot(1400 if getattr(self, "_is_initial_sync", False) else 300, restore_game_focus)
+
     def update_gui_stats(self, stats):
         print(f"[M59-GUI] Updating GUI with real scraped stats: {stats}", flush=True)
 
@@ -10238,7 +10523,17 @@ class M59CompanionApp(QMainWindow):
                 if k in self.attr_labels:
                     self.attr_labels[k].setText(str(stats[k]))
 
+        self.save_attributes_cache()
+
         if "Intellect" in stats:
+            try:
+                int_val = int(stats["Intellect"])
+                if hasattr(self, 'prog_intellect_spin') and self.prog_intellect_spin:
+                    self.prog_intellect_spin.blockSignals(True)
+                    self.prog_intellect_spin.setValue(int_val)
+                    self.prog_intellect_spin.blockSignals(False)
+            except Exception:
+                pass
             self.update_progression_ui()
 
         if "Might" in stats:
@@ -10351,7 +10646,8 @@ class M59CompanionApp(QMainWindow):
         collapsed_set = getattr(self, 'collapsed_groups', set())
 
         # Helper function to render a single player row
-        def render_player_row(name, status, is_offline=False, last_ts=""):
+        def render_player_row(name, status, is_offline=False, last_ts="", target_list_widget=None):
+            dst_list = target_list_widget if target_list_widget is not None else self.who_list_widget
             color = "#94a3b8" if is_offline else status_colors.get(str(status).upper(), "#e0e0e0")
 
             item_widget = QWidget()
@@ -10418,8 +10714,8 @@ class M59CompanionApp(QMainWindow):
             list_item = QListWidgetItem()
             list_item.setSizeHint(QSize(0, max(22, fs + 6)))
             list_item.setData(Qt.UserRole, name)
-            self.who_list_widget.addItem(list_item)
-            self.who_list_widget.setItemWidget(list_item, item_widget)
+            dst_list.addItem(list_item)
+            dst_list.setItemWidget(list_item, item_widget)
 
         # Helper function to render a section / group header
         def render_section_header(grp_key, label_text, count_text, header_color="#38bdf8", is_collapsed=False, badge_bg="#0c4a6e"):
@@ -10588,6 +10884,9 @@ class M59CompanionApp(QMainWindow):
                         "last_status": "INNOCENT"
                     }
 
+        if hasattr(self, 'who_offline_list_widget'):
+            self.who_offline_list_widget.clear()
+
         if offline_players_map:
             offline_list = list(offline_players_map.values())
             # Sort offline players: unread messages first, custom group members next, then alphabetical name
@@ -10602,23 +10901,46 @@ class M59CompanionApp(QMainWindow):
             unread_total = sum(p["unread_c"] for p in offline_list)
             cnt_str = f"{len(offline_list)} Offline" + (f" • {unread_total} Unread" if unread_total > 0 else "")
 
-            render_section_header(
-                grp_key="__OFFLINE__",
-                label_text="⚪ Offline",
-                count_text=cnt_str,
-                header_color="#64748b",
-                is_collapsed=is_offline_collapsed,
-                badge_bg="#334155"
-            )
-
-            if not is_offline_collapsed:
-                for p_info in matching_offline:
-                    render_player_row(
-                        name=p_info["disp_name"],
-                        status=p_info.get("last_status", "INNOCENT"),
-                        is_offline=True,
-                        last_ts=p_info["last_ts"]
-                    )
+            if hasattr(self, 'who_offline_dock'):
+                self.who_offline_dock.setVisible(True)
+                self.who_offline_cnt_badge.setText(cnt_str)
+                if is_offline_collapsed:
+                    self.who_offline_arrow_lbl.setText("▶")
+                    self.who_offline_list_widget.setVisible(False)
+                else:
+                    self.who_offline_arrow_lbl.setText("▼")
+                    self.who_offline_list_widget.setVisible(True)
+                    for p_info in matching_offline:
+                        render_player_row(
+                            name=p_info["disp_name"],
+                            status=p_info.get("last_status", "INNOCENT"),
+                            is_offline=True,
+                            last_ts=p_info["last_ts"],
+                            target_list_widget=self.who_offline_list_widget
+                        )
+            else:
+                render_section_header(
+                    grp_key="__OFFLINE__",
+                    label_text="⚪ Offline",
+                    count_text=cnt_str,
+                    header_color="#64748b",
+                    is_collapsed=is_offline_collapsed,
+                    badge_bg="#334155"
+                )
+                if not is_offline_collapsed:
+                    for p_info in matching_offline:
+                        render_player_row(
+                            name=p_info["disp_name"],
+                            status=p_info.get("last_status", "INNOCENT"),
+                            is_offline=True,
+                            last_ts=p_info["last_ts"]
+                        )
+        else:
+            if hasattr(self, 'who_offline_dock'):
+                self.who_offline_cnt_badge.setText("0 Offline")
+                self.who_offline_arrow_lbl.setText("▶")
+                self.who_offline_list_widget.setVisible(False)
+                self.who_offline_dock.setVisible(False)
 
         self.who_count_badge.setText(f"{len(self.wholist_data)} Online")
 
@@ -11111,35 +11433,32 @@ class M59CompanionApp(QMainWindow):
             lower_msg = msg_text.lower()
             pending = self.pending_spell_trance
 
-            # Check if spell fizzled / interrupted
-            if any(fizz in lower_msg for fizz in ["fizzles", "lose your concentration", "interrupted", "fail to cast", "cannot cast"]):
-                print(f"[M59-SPELL] Spell '{pending.get('spell_name')}' fizzled or interrupted: {msg_text}", flush=True)
+            # Check for spell failure / error / fizzle / interruption
+            fail_keywords = [
+                "fizzles", "lose your concentration", "interrupted", "fail to cast", 
+                "cannot cast", "there is no spell", "don't know", "don't have", 
+                "you must be", "not enough mana", "no spell"
+            ]
+            if any(fizz in lower_msg for fizz in fail_keywords):
+                print(f"[M59-SPELL] Spell '{pending.get('spell_name')}' failed/fizzled: {msg_text}", flush=True)
+                pending["fizzled"] = True
                 self.pending_spell_trance = None
-            else:
-                # Check for Trance confirmation: "You focus your whole will on casting [spellname]."
-                trance_m = re.search(r"focus your whole will on casting\s+([^.]+)", msg_text, re.IGNORECASE)
-                if trance_m:
-                    detected_spell = trance_m.group(1).strip().lower()
-                    expected_spell = pending.get("spell_name", "").lower()
-                    if expected_spell in detected_spell or detected_spell in expected_spell:
-                        pending["trance_entered"] = True
-                        steer_cmd = pending.get("steer_command")
-                        target = pending.get("target_hwnd")
-                        t_cast = pending.get("cast_time")
-                        print(f"[M59-SPELL] In trance for '{detected_spell}'! Scheduled steering: {steer_cmd}", flush=True)
+            elif "focus your whole will on casting" in lower_msg:
+                # Trance confirmation detected
+                if not pending.get("completed") and not pending.get("fizzled"):
+                    pending["trance_entered"] = True
+                    pending["completed"] = True
+                    steer_cmd = pending.get("steer_command")
+                    target = pending.get("target_hwnd")
+                    print(f"[M59-SPELL] Trance confirmed in chat log! Executing steer payload -> {steer_cmd}", flush=True)
 
-                        def _send_steer():
-                            # Small pause shortly after the cast to ensure spell doesn't fizzle
-                            time.sleep(0.6)
-                            if hasattr(self, 'pending_spell_trance') and self.pending_spell_trance:
-                                cur = self.pending_spell_trance
-                                if cur.get('cast_time') == t_cast and cur.get('trance_entered') and not cur.get('completed'):
-                                    cur['completed'] = True
-                                    if target and steer_cmd:
-                                        print(f"[M59-SPELL] Executing trance steer payload -> {steer_cmd}", flush=True)
-                                        send_chat_command(target, steer_cmd)
-                                    self.pending_spell_trance = None
-                        threading.Thread(target=_send_steer, daemon=True).start()
+                    def _send_immediate_steer():
+                        time.sleep(0.3)
+                        if target and steer_cmd:
+                            send_chat_command(target, steer_cmd)
+                        self.pending_spell_trance = None
+
+                    threading.Thread(target=_send_immediate_steer, daemon=True).start()
 
         # 0. Check SpellManager for Spell Trance & Reagent Usage
         if hasattr(self, 'spell_manager') and self.spell_manager:

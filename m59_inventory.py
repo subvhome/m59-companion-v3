@@ -8,6 +8,7 @@ import ctypes
 import ctypes.wintypes
 import logging
 from m59_utils import resource_path
+from m59_logging import is_frida_debug_enabled, log_frida
 
 # --- Meridian 59 Unified Inventory Manager ---
 # Combines live memory scraping (Pymem-style direct memory read & Frida instrumentation) 
@@ -178,8 +179,14 @@ rpc.exports = {
 """
 
 def on_message(message, data):
+    if not is_frida_debug_enabled():
+        return
     if message['type'] == 'send':
-        print(f"[*] {message['payload']['data']}")
+        payload = message.get('payload', {})
+        if isinstance(payload, dict):
+            print(f"[*] {payload.get('data')}")
+        else:
+            print(f"[*] {payload}")
 
 def process_inventory(items):
     """Calculates cumulative weight, bulk, lists items, and returns unmapped/unknown items."""

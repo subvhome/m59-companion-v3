@@ -236,8 +236,9 @@ class SpellManager:
         candidates = []
         if self.safe_name and self.safe_name not in ["--", "Unknown"]:
             candidates.append(f"settings/{self.safe_name}_reagents.json")
-        candidates.append("settings/last_reagents.json")
-        candidates.append("settings/reagents.json")
+        else:
+            candidates.append("settings/last_reagents.json")
+            candidates.append("settings/reagents.json")
         
         for p in candidates:
             if os.path.exists(p):
@@ -264,7 +265,8 @@ class SpellManager:
         paths = []
         if self.safe_name and self.safe_name not in ["--", "Unknown"]:
             paths.append(f"settings/{self.safe_name}_reagents.json")
-        paths.append("settings/last_reagents.json")
+        else:
+            paths.append("settings/last_reagents.json")
         
         save_obj = {
             "spells_cast": self.reagent_stats.get("spells_cast", {}),

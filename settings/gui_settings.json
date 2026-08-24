@@ -7,7 +7,7 @@
   "tell_sound_enabled": true,
   "tell_sound_path": "sound/dm_chime.mp3",
   "elusion_phrase": "say \"By the grace of the High Council, I demand passage to {loc}!\"",
-  "elusion_geometry": "320x35+1138+172",
+  "elusion_geometry": "259x33+402+95",
   "guildhall_name": "",
   "custom_elusion_phrases": [],
   "debug_enabled": true,
@@ -27,9 +27,9 @@
   "floating_chat_width": 1101,
   "floating_chat_height": 359,
   "floating_chat_rolled_up": true,
-  "window_x": 197,
-  "window_y": 169,
-  "window_width": 1508,
+  "window_x": 193,
+  "window_y": 64,
+  "window_width": 1565,
   "window_height": 1025,
   "window_maximized": false,
   "morph_x_offset": 391,
@@ -39,7 +39,11 @@
   "console_debug_enabled": true,
   "file_debug_enabled": true,
   "progression_log_enabled": true,
-  "collapsed_groups": [],
+  "collapsed_groups": [
+    "__OFFLINE__"
+  ],
   "group_toast_duration_sec": 3,
-  "group_toast_position": "bottom-right"
+  "group_toast_position": "bottom-right",
+  "elusion_x_offset": 402,
+  "elusion_y_offset": 95
 }

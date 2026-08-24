@@ -1,6 +1,7 @@
 import threading
 import logging
 import time
+from m59_logging import is_frida_debug_enabled, log_frida
 
 # --- Meridian 59 Improved Wholist Engine (ASLR-Safe) ---
 # Based on wholist-perfect.py (Direct Memory Polling with Relative Offsets)
@@ -182,21 +183,28 @@ class WhoListMonitor:
         threading.Thread(target=self._run_frida, daemon=True).start()
 
     def stop(self):
-        """Stops the monitor and detaches Frida."""
+        """Stops the monitor and detaches Frida safely without blocking RPC threads."""
         self.running = False
-        if self.frida_script:
-            try: self.frida_script.unload()
-            except: pass
-        if self.frida_session:
-            try: self.frida_session.detach()
-            except: pass
+        script = self.frida_script
+        session = self.frida_session
         self.frida_script = None
         self.frida_session = None
+
+        def _async_detach():
+            if script:
+                try: script.unload()
+                except Exception: pass
+            if session:
+                try: session.detach()
+                except Exception: pass
+
+        threading.Thread(target=_async_detach, daemon=True).start()
 
     def _run_frida(self):
         try:
             import frida
-            logger.info(f"WhoList: Attaching to PID {self.target_pid}...")
+            if is_frida_debug_enabled():
+                log_frida(f"WhoList: Attaching to PID {self.target_pid}...", "info")
             session = frida.attach(self.target_pid)
             self.frida_session = session
             
@@ -204,19 +212,26 @@ class WhoListMonitor:
             self.frida_script = script
             
             def on_message(message, data):
+                if not is_frida_debug_enabled():
+                    return
                 if message['type'] == 'send':
                     payload = message['payload']
                     if isinstance(payload, dict) and payload.get('type') == 'log':
-                        logger.debug(f"FridaLog: {payload.get('data')}")
+                        log_frida(f"FridaLog: {payload.get('data')}", "debug")
             
             script.on('message', on_message)
             script.load()
-            logger.info("WhoList: ASLR-safe Memory Polling active.")
+            if is_frida_debug_enabled():
+                log_frida("WhoList: ASLR-safe Memory Polling active.", "info")
 
             # Polling Loop
-            while self.running and self.frida_script:
+            while self.running and script and self.frida_script:
+                if not self.running:
+                    break
                 try:
                     current_data = script.exports_sync.getlist()
+                    if not self.running:
+                        break
                     
                     # Map colors to Dashboard status tags
                     status_map = {
@@ -232,20 +247,28 @@ class WhoListMonitor:
                         raw_status = p['status']
                         new_players[p['name']] = status_map.get(raw_status, "INNOCENT")
 
-                    if new_players != self.players:
+                    if new_players != self.players and self.running:
                         self.players = new_players
                         if self.on_update_callback:
                             self.on_update_callback(self.players)
                             
                 except Exception as e:
-                    logger.debug(f"WhoList: Polling error: {e}")
+                    if is_frida_debug_enabled():
+                        log_frida(f"WhoList: Polling error: {e}", "debug")
+                    break
                 
-                time.sleep(2)
+                # Interruptible sleep in 100ms intervals
+                for _ in range(20):
+                    if not self.running:
+                        break
+                    time.sleep(0.1)
             
         except Exception as e:
-            logger.error(f"WhoList: Frida Error: {e}")
+            if is_frida_debug_enabled():
+                log_frida(f"WhoList: Frida Error: {e}", "error")
             self.running = False
 
     def trigger_silent_update(self):
         """Manual update requested - polling is already active."""
-        logger.debug("WhoList: Manual update requested (Polling is already active).")
+        if is_frida_debug_enabled():
+            log_frida("WhoList: Manual update requested (Polling is already active).", "debug")

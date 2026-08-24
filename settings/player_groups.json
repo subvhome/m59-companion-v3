@@ -7,7 +7,8 @@
   },
   "Testers": {
     "members": [
-      "Ahura Mazda"
+      "Ahura Mazda",
+      "Lobohotpants"
     ],
     "alert_login": true,
     "alert_logout": true,

@@ -247,7 +247,29 @@ def cycle_tabs_and_scrape(hwnd, mem):
     
     # Return to Spells
     win32gui.SendMessage(tab_handles[1], win32con.BM_CLICK, 0, 0)
-    
+
+    # Bring game window to foreground and click client render area to shift focus away from drawers
+    try:
+        time.sleep(0.15)
+        if win32gui.IsWindow(hwnd):
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+            time.sleep(0.1)
+            # Click upper-left client viewport area (x:100, y:100) to clear focus from control drawer tabs
+            lparam = (100 & 0xFFFF) | ((100 & 0xFFFF) << 16)
+            win32gui.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
+            time.sleep(0.05)
+            win32gui.PostMessage(hwnd, win32con.WM_LBUTTONUP, 0, lparam)
+            
+            time.sleep(0.15)
+            win32gui.PostMessage(hwnd, win32con.WM_KEYDOWN, win32con.VK_ESCAPE, 0)
+            time.sleep(0.05)
+            win32gui.PostMessage(hwnd, win32con.WM_KEYUP, win32con.VK_ESCAPE, 0)
+    except Exception as e:
+        print(f"[M59-SYNC] Error shifting focus to game client after tab dance: {e}", flush=True)
+
     return knowledge, stats
 
 def run_scraper():
