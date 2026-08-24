@@ -1,0 +1,16 @@
+{
+  "Friends": {
+    "members": [],
+    "alert_login": true,
+    "alert_logout": false,
+    "sound_enabled": true
+  },
+  "Testers": {
+    "members": [
+      "Ahura Mazda"
+    ],
+    "alert_login": true,
+    "alert_logout": true,
+    "sound_enabled": true
+  }
+}

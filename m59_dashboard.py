@@ -382,7 +382,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QFrame, QSplitter, QStackedWidget, QTabWidget, QTabBar,
     QHeaderView, QProgressBar, QTextEdit, QFileDialog, QSlider, QSpinBox, QScrollArea, QGroupBox,
     QSplashScreen, QSizePolicy, QComboBox, QDialog, QCheckBox, QFormLayout, QMessageBox, QAbstractItemView,
-    QCompleter, QTreeWidget, QTreeWidgetItem, QSizeGrip, QStyleOptionComboBox, QStyle
+    QCompleter, QTreeWidget, QTreeWidgetItem, QSizeGrip, QStyleOptionComboBox, QStyle, QMenu
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QMimeData, QPoint, QRect
 from PySide6.QtGui import QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QDrag, QPainter, QPen, QBrush, QGuiApplication
@@ -2081,6 +2081,316 @@ class QtFloatingChatBox(QWidget):
         if self.dashboard and getattr(self.dashboard, 'active_floating_chat', None) == self:
             self.dashboard.active_floating_chat = None
         event.accept()
+
+# ----------------------------------------------------------------------
+# Non-Intrusive Floating Toast Notification (Focus-Safe)
+# ----------------------------------------------------------------------
+class M59ToastNotification(QWidget):
+    """
+    Non-disruptive, frameless floating overlay notification that does not steal
+    focus from the Meridian 59 game client or active window.
+    Features:
+    - Custom event type / icon (🟢 Login, ⚪ Logout, ⚔️ PK, 💬 Message)
+    - Action buttons: Quick Whisper (💬), Dismiss (✕)
+    - Configurable auto-dismiss duration
+    - Click-through safe positioning in user-selected screen corner
+    """
+    def __init__(self, title, message, icon_type="login", player_name=None, group_name=None, duration_ms=3000, position="bottom-right", dashboard=None):
+        super().__init__(None, Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
+        self.dashboard = dashboard
+        self.player_name = player_name
+        self.group_name = group_name
+        self.duration_ms = max(1000, duration_ms)
+        self.position = position
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setFixedWidth(310)
+
+        # Style palette based on event type
+        border_color = "#38bdf8"
+        badge_bg = "#075985"
+        icon_str = "🟢"
+        if icon_type == "logout":
+            border_color = "#64748b"
+            badge_bg = "#334155"
+            icon_str = "⚪"
+        elif icon_type == "pk":
+            border_color = "#ef4444"
+            badge_bg = "#991b1b"
+            icon_str = "⚔️"
+        elif icon_type == "tell":
+            border_color = "#c084fc"
+            badge_bg = "#6b21a8"
+            icon_str = "💬"
+
+        container = QFrame(self)
+        container.setObjectName("ToastContainer")
+        container.setStyleSheet(f"""
+            QFrame#ToastContainer {{
+                background-color: #0b0f19;
+                border: 1.5px solid {border_color};
+                border-radius: 8px;
+            }}
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(12, 10, 12, 10)
+        c_layout.setSpacing(6)
+
+        # Top Bar: Icon + Title + Group Badge + Close
+        top_row = QHBoxLayout()
+        top_row.setSpacing(6)
+
+        icon_lbl = QLabel(icon_str)
+        icon_lbl.setStyleSheet("font-size: 14px; background: transparent;")
+        top_row.addWidget(icon_lbl)
+
+        t_lbl = QLabel(title)
+        t_lbl.setStyleSheet("font-size: 12px; font-weight: 800; color: #f8fafc; background: transparent;")
+        top_row.addWidget(t_lbl, 1)
+
+        if self.group_name:
+            grp_badge = QLabel(f" {self.group_name} ")
+            grp_badge.setStyleSheet(f"background-color: {badge_bg}; color: #f8fafc; font-size: 10px; font-weight: 800; border-radius: 4px; padding: 1px 5px;")
+            top_row.addWidget(grp_badge)
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(20, 20)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #94a3b8; font-size: 11px; font-weight: bold; border: none; border-radius: 3px;
+            }
+            QPushButton:hover {
+                background: #1e293b; color: #f87171;
+            }
+        """)
+        close_btn.clicked.connect(self.close)
+        top_row.addWidget(close_btn)
+        c_layout.addLayout(top_row)
+
+        # Message Body
+        msg_lbl = QLabel(message)
+        msg_lbl.setWordWrap(True)
+        msg_lbl.setStyleSheet("font-size: 11px; color: #cbd5e1; background: transparent;")
+        c_layout.addWidget(msg_lbl)
+
+        # Bottom Actions Row (if player_name is available)
+        if self.player_name:
+            act_row = QHBoxLayout()
+            act_row.setSpacing(6)
+            act_row.addStretch()
+
+            dm_btn = QPushButton("💬 Whisper")
+            dm_btn.setCursor(Qt.PointingHandCursor)
+            dm_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #1e293b; color: #38bdf8; font-size: 11px; font-weight: 700;
+                    border: 1px solid #334155; border-radius: 4px; padding: 3px 8px;
+                }
+                QPushButton:hover {
+                    background-color: #38bdf8; color: #0b0f19; font-weight: 800;
+                }
+            """)
+            dm_btn.clicked.connect(self.on_whisper_clicked)
+            act_row.addWidget(dm_btn)
+            c_layout.addLayout(act_row)
+
+        # Outer layout
+        main_l = QVBoxLayout(self)
+        main_l.setContentsMargins(0, 0, 0, 0)
+        main_l.addWidget(container)
+
+        self.adjustSize()
+        self.reposition()
+
+        # Auto-dismiss timer
+        self.dismiss_timer = QTimer(self)
+        self.dismiss_timer.setSingleShot(True)
+        self.dismiss_timer.timeout.connect(self.close)
+        self.dismiss_timer.start(self.duration_ms)
+
+    def on_whisper_clicked(self):
+        if self.dashboard and self.player_name and hasattr(self.dashboard, 'open_dm_with_player'):
+            self.dashboard.open_dm_with_player(self.player_name)
+        self.close()
+
+    def reposition(self):
+        """Positions the toast overlay at the user's preferred corner of the primary screen."""
+        screen = None
+        if self.dashboard:
+            window = self.dashboard.windowHandle()
+            if window:
+                screen = window.screen()
+        if not screen:
+            screen = QGuiApplication.primaryScreen()
+        if not screen:
+            return
+
+        geo = screen.availableGeometry()
+        margin = 20
+        self.adjustSize()
+        w = max(self.width(), 310)
+        h = max(self.height(), 60)
+
+        pos = (self.position or "bottom-right").lower()
+        if pos == "top-right":
+            x = geo.right() - w - margin
+            y = geo.top() + margin
+        elif pos == "top-left":
+            x = geo.left() + margin
+            y = geo.top() + margin
+        elif pos == "bottom-left":
+            x = geo.left() + margin
+            y = geo.bottom() - h - margin
+        else: # bottom-right
+            x = geo.right() - w - margin
+            y = geo.bottom() - h - margin
+
+        self.setGeometry(x, y, w, h)
+
+# ----------------------------------------------------------------------
+# Player Group Management / Assignment Dialog
+# ----------------------------------------------------------------------
+class M59PlayerGroupDialog(QDialog):
+    """
+    Dialog to add a player to an existing group or create a new custom group.
+    """
+    def __init__(self, player_name, existing_groups, current_group=None, parent=None):
+        super().__init__(parent)
+        self.player_name = player_name
+        self.existing_groups = existing_groups or {}
+        self.current_group = current_group
+        self.setWindowTitle(f"Group Manager - {self.player_name}")
+        self.setFixedWidth(360)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #0b0f19;
+                color: #f8fafc;
+                border: 1px solid #1e293b;
+            }
+            QLabel {
+                color: #f8fafc;
+                font-size: 12px;
+            }
+            QLineEdit, QComboBox {
+                background-color: #030712;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 6px 10px;
+                color: #f8fafc;
+                font-size: 12px;
+            }
+            QCheckBox {
+                color: #cbd5e1;
+                font-size: 12px;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        # Title Header
+        hdr = QLabel(f"Assign <b>{self.player_name}</b> to Group")
+        hdr.setStyleSheet("font-size: 14px; font-weight: 800; color: #38bdf8;")
+        layout.addWidget(hdr)
+
+        # Group Selector Mode
+        form = QFormLayout()
+        form.setSpacing(10)
+
+        self.group_combo = QComboBox()
+        self.group_combo.addItem("➕ Create New Group...", "__NEW__")
+        group_names = sorted(list(self.existing_groups.keys()))
+        for gn in group_names:
+            cnt = len(self.existing_groups[gn].get("members", []))
+            self.group_combo.addItem(f"📁 {gn} ({cnt} members)", gn)
+
+        if self.current_group and self.current_group in group_names:
+            idx = self.group_combo.findData(self.current_group)
+            if idx >= 0:
+                self.group_combo.setCurrentIndex(idx)
+        elif "Friends" in group_names:
+            idx = self.group_combo.findData("Friends")
+            if idx >= 0:
+                self.group_combo.setCurrentIndex(idx)
+
+        form.addRow("Target Group:", self.group_combo)
+
+        self.new_group_edit = QLineEdit()
+        self.new_group_edit.setPlaceholderText("Enter new group name (e.g. Friends, Guild, PK Targets)...")
+        form.addRow("New Name:", self.new_group_edit)
+
+        layout.addLayout(form)
+
+        # Alert Options
+        alert_box = QGroupBox("Group Alerts & Notifications")
+        alert_box.setStyleSheet("QGroupBox { font-size: 11px; font-weight: 800; color: #94a3b8; border: 1px solid #1e293b; border-radius: 6px; margin-top: 6px; padding-top: 10px; }")
+        ab_layout = QVBoxLayout(alert_box)
+        ab_layout.setContentsMargins(10, 10, 10, 10)
+        ab_layout.setSpacing(8)
+
+        self.alert_login_chk = QCheckBox("Show Toast Notification on Player Login")
+        self.alert_login_chk.setChecked(True)
+        ab_layout.addWidget(self.alert_login_chk)
+
+        self.alert_logout_chk = QCheckBox("Show Toast Notification on Player Logout")
+        self.alert_logout_chk.setChecked(False)
+        ab_layout.addWidget(self.alert_logout_chk)
+
+        self.sound_chk = QCheckBox("Play Audio Alert Chime")
+        self.sound_chk.setChecked(True)
+        ab_layout.addWidget(self.sound_chk)
+
+        layout.addWidget(alert_box)
+
+        # Dynamic visibility for new name field
+        def on_group_changed():
+            is_new = (self.group_combo.currentData() == "__NEW__")
+            self.new_group_edit.setEnabled(is_new)
+            if is_new:
+                self.new_group_edit.setFocus()
+            else:
+                sel_g = self.group_combo.currentData()
+                g_cfg = self.existing_groups.get(sel_g, {})
+                self.alert_login_chk.setChecked(g_cfg.get("alert_login", True))
+                self.alert_logout_chk.setChecked(g_cfg.get("alert_logout", False))
+                self.sound_chk.setChecked(g_cfg.get("sound_enabled", True))
+
+        self.group_combo.currentIndexChanged.connect(on_group_changed)
+        on_group_changed()
+
+        # Buttons Row
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setProperty("class", "WebBtnSecondary")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
+        save_btn = QPushButton("✓ Save to Group")
+        save_btn.setProperty("class", "WebBtnPrimary")
+        save_btn.clicked.connect(self.on_save)
+        btn_row.addWidget(save_btn)
+
+        layout.addLayout(btn_row)
+
+    def on_save(self):
+        sel_key = self.group_combo.currentData()
+        if sel_key == "__NEW__":
+            g_name = self.new_group_edit.text().strip()
+            if not g_name:
+                QMessageBox.warning(self, "Invalid Name", "Please enter a name for the new player group.")
+                return
+        else:
+            g_name = sel_key
+
+        self.result_group = g_name
+        self.result_alert_login = self.alert_login_chk.isChecked()
+        self.result_alert_logout = self.alert_logout_chk.isChecked()
+        self.result_sound = self.sound_chk.isChecked()
+        self.accept()
 
 # ----------------------------------------------------------------------
 # Player Direct Message Popup Dialog
@@ -4126,6 +4436,16 @@ class M59CompanionApp(QMainWindow):
             progression_log=self.progression_log_enabled
         )
 
+        # Player Groups & Wholist Tracking State
+        self.player_groups = self.load_player_groups()
+        self.discovered_players = self.load_discovered_players()
+        self.collapsed_groups = set(loaded_gui.get("collapsed_groups", []))
+        self.group_toast_duration_sec = loaded_gui.get("group_toast_duration_sec", 3)
+        self.group_toast_position = loaded_gui.get("group_toast_position", "bottom-right")
+        self.previous_online_players = {}
+        self.last_who_list_items_count = 0
+        self._active_toasts = []
+
         # Apply Fluid QSS
         self.setStyleSheet(FLUID_WEB_QSS)
 
@@ -4451,6 +4771,8 @@ class M59CompanionApp(QMainWindow):
         self.who_list_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.who_list_widget.setStyleSheet("border: none; background: transparent; padding: 0px; margin: 0px;")
         self.who_list_widget.itemDoubleClicked.connect(lambda item: self.open_dm_with_player(item.data(Qt.UserRole)) if item and item.data(Qt.UserRole) else None)
+        self.who_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.who_list_widget.customContextMenuRequested.connect(self.on_who_list_context_menu)
         who_card.content_layout.addWidget(self.who_list_widget, 1)
 
         rpc_layout.addWidget(who_card, 1)
@@ -6414,6 +6736,286 @@ class M59CompanionApp(QMainWindow):
             self.update_floating_hotkey_buttons()
             self.register_global_hotkeys()
 
+    def load_discovered_players(self):
+        """Loads persistently discovered players cache from settings/discovered_players.json."""
+        candidate_paths = [
+            os.path.join("settings", "discovered_players.json"),
+            "discovered_players.json"
+        ]
+        for p in candidate_paths:
+            if os.path.exists(p):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            return data
+                except Exception as e:
+                    print(f"Error loading discovered players from {p}: {e}")
+        return {}
+
+    def save_discovered_players(self):
+        """Saves discovered players cache to settings/discovered_players.json."""
+        os.makedirs("settings", exist_ok=True)
+        p = os.path.join("settings", "discovered_players.json")
+        try:
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(self.discovered_players, f, indent=2)
+        except Exception as ex:
+            print(f"Error saving discovered_players.json: {ex}")
+
+    def load_player_groups(self):
+        """Loads custom player group definitions and memberships from settings/player_groups.json."""
+        candidate_paths = [
+            os.path.join("settings", "player_groups.json"),
+            "player_groups.json"
+        ]
+        for p in candidate_paths:
+            if os.path.exists(p):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            return data
+                except Exception as e:
+                    print(f"Error loading player groups from {p}: {e}")
+        # Default starting template
+        return {
+            "Friends": {
+                "members": [],
+                "alert_login": True,
+                "alert_logout": False,
+                "sound_enabled": True
+            }
+        }
+
+    def save_player_groups(self, groups_dict=None):
+        """Saves current player groups to settings/player_groups.json."""
+        if groups_dict is not None:
+            self.player_groups = groups_dict
+        os.makedirs("settings", exist_ok=True)
+        p = os.path.join("settings", "player_groups.json")
+        try:
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(self.player_groups, f, indent=2)
+        except Exception as ex:
+            print(f"Error saving player_groups.json: {ex}")
+
+    def add_player_to_group(self, player_name, group_name, alert_login=True, alert_logout=False, sound_enabled=True):
+        """Adds or moves a player into a group, creating the group if it doesn't exist."""
+        clean_name = player_name.strip().strip('"')
+        # Remove from any existing groups first (each player belongs to at most one custom group)
+        for g_name, g_data in list(self.player_groups.items()):
+            members = [m for m in g_data.get("members", []) if m.lower() != clean_name.lower()]
+            g_data["members"] = members
+
+        if group_name not in self.player_groups:
+            self.player_groups[group_name] = {
+                "members": [],
+                "alert_login": alert_login,
+                "alert_logout": alert_logout,
+                "sound_enabled": sound_enabled
+            }
+        else:
+            self.player_groups[group_name]["alert_login"] = alert_login
+            self.player_groups[group_name]["alert_logout"] = alert_logout
+            self.player_groups[group_name]["sound_enabled"] = sound_enabled
+
+        if clean_name not in self.player_groups[group_name]["members"]:
+            self.player_groups[group_name]["members"].append(clean_name)
+
+        self.save_player_groups()
+        self.update_wholist_gui(self.wholist_data)
+
+    def remove_player_from_group(self, player_name):
+        """Removes a player from all custom groups."""
+        clean_name = player_name.strip().strip('"')
+        changed = False
+        for g_name, g_data in list(self.player_groups.items()):
+            prev_len = len(g_data.get("members", []))
+            g_data["members"] = [m for m in g_data.get("members", []) if m.lower() != clean_name.lower()]
+            if len(g_data["members"]) != prev_len:
+                changed = True
+
+        if changed:
+            self.save_player_groups()
+            self.update_wholist_gui(self.wholist_data)
+
+    def get_player_group(self, player_name):
+        """Returns the group name the player belongs to, or None."""
+        clean_name = player_name.strip().strip('"').lower()
+        for g_name, g_data in self.player_groups.items():
+            for m in g_data.get("members", []):
+                if m.lower() == clean_name:
+                    return g_name
+        return None
+
+    def show_group_toast_notification(self, title, message, icon_type="login", player_name=None, group_name=None):
+        """Displays a non-disruptive floating overlay notification."""
+        try:
+            dur_ms = int(getattr(self, 'group_toast_duration_sec', 3) * 1000)
+            pos = getattr(self, 'group_toast_position', 'bottom-right')
+            toast = M59ToastNotification(
+                title=title,
+                message=message,
+                icon_type=icon_type,
+                player_name=player_name,
+                group_name=group_name,
+                duration_ms=dur_ms,
+                position=pos,
+                dashboard=self
+            )
+            if not hasattr(self, '_active_toasts'):
+                self._active_toasts = []
+            self._active_toasts.append(toast)
+            toast.destroyed.connect(lambda: self._active_toasts.remove(toast) if toast in self._active_toasts else None)
+            toast.show()
+            toast.raise_()
+        except Exception as ex:
+            print(f"[M59-TOAST] Error showing toast notification: {ex}")
+
+    def on_who_list_context_menu(self, pos):
+        """Right-click context menu handler for Who's Online list items."""
+        item = self.who_list_widget.itemAt(pos)
+        if not item:
+            return
+        
+        # Check if right-clicked item is a section header (toggle collapse or group settings)
+        hdr_group = item.data(Qt.UserRole + 1)
+        if hdr_group:
+            menu = QMenu(self)
+            menu.setStyleSheet("""
+                QMenu {
+                    background-color: #0f172a;
+                    color: #f8fafc;
+                    border: 1px solid #334155;
+                    border-radius: 6px;
+                    padding: 4px;
+                }
+                QMenu::item {
+                    padding: 6px 16px;
+                    border-radius: 4px;
+                    font-size: 12px;
+                }
+                QMenu::item:selected {
+                    background-color: #0284c7;
+                    color: #ffffff;
+                }
+            """)
+            is_collapsed = (hdr_group in getattr(self, 'collapsed_groups', set()))
+            toggle_txt = "▶ Expand Group" if is_collapsed else "▼ Collapse Group"
+            act_toggle = menu.addAction(toggle_txt)
+            act_toggle.triggered.connect(lambda: self.toggle_group_collapse(hdr_group))
+
+            if hdr_group not in ("__OFFLINE__", "Other Players"):
+                menu.addSeparator()
+                act_del = menu.addAction(f"🗑 Delete Group '{hdr_group}'")
+                def delete_grp(g=hdr_group):
+                    reply = QMessageBox.question(
+                        self, "Delete Group",
+                        f"Are you sure you want to delete the group '{g}'? Players will remain in the general list.",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.Yes:
+                        if g in self.player_groups:
+                            del self.player_groups[g]
+                            self.save_player_groups()
+                            self.update_wholist_gui(self.wholist_data)
+                act_del.triggered.connect(delete_grp)
+
+            menu.exec(self.who_list_widget.mapToGlobal(pos))
+            return
+
+        # Player item right-clicked
+        player_name = item.data(Qt.UserRole)
+        if not player_name:
+            return
+
+        current_grp = self.get_player_group(player_name)
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #0f172a;
+                color: #f8fafc;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 16px;
+                border-radius: 4px;
+                font-size: 12px;
+            }
+            QMenu::item:selected {
+                background-color: #0284c7;
+                color: #ffffff;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #334155;
+                margin: 4px 6px;
+            }
+        """)
+
+        # 1. Direct Message action
+        act_dm = menu.addAction(f"💬 Send Direct Message to {player_name}")
+        act_dm.triggered.connect(lambda: self.open_dm_with_player(player_name))
+
+        menu.addSeparator()
+
+        # 2. Add / Edit Group assignment
+        if current_grp:
+            act_grp = menu.addAction(f"📁 Change Group (Current: {current_grp})...")
+        else:
+            act_grp = menu.addAction("📁 Add to Group...")
+
+        def open_group_dialog():
+            dlg = M59PlayerGroupDialog(player_name, self.player_groups, current_group=current_grp, parent=self)
+            if dlg.exec():
+                self.add_player_to_group(
+                    player_name,
+                    dlg.result_group,
+                    alert_login=dlg.result_alert_login,
+                    alert_logout=dlg.result_alert_logout,
+                    sound_enabled=dlg.result_sound
+                )
+
+        act_grp.triggered.connect(open_group_dialog)
+
+        # Quick Add submenu if existing groups exist
+        if self.player_groups:
+            quick_menu = menu.addMenu("⚡ Quick Assign to...")
+            quick_menu.setStyleSheet(menu.styleSheet())
+            for gn, g_cfg in sorted(self.player_groups.items()):
+                if gn == current_grp:
+                    continue
+                q_act = quick_menu.addAction(f"📁 {gn}")
+                q_act.triggered.connect(lambda checked=False, g=gn, c=g_cfg: self.add_player_to_group(
+                    player_name, g,
+                    alert_login=c.get("alert_login", True),
+                    alert_logout=c.get("alert_logout", False),
+                    sound_enabled=c.get("sound_enabled", True)
+                ))
+
+        if current_grp:
+            act_rem = menu.addAction(f"✕ Remove from '{current_grp}'")
+            act_rem.triggered.connect(lambda: self.remove_player_from_group(player_name))
+
+        menu.exec(self.who_list_widget.mapToGlobal(pos))
+
+    def toggle_group_collapse(self, group_name):
+        """Toggles collapsed/expanded state of a player group in the who list."""
+        if not hasattr(self, 'collapsed_groups'):
+            self.collapsed_groups = set()
+        if group_name in self.collapsed_groups:
+            self.collapsed_groups.remove(group_name)
+        else:
+            self.collapsed_groups.add(group_name)
+        
+        # Save collapse preference
+        self.save_gui_settings({"collapsed_groups": list(self.collapsed_groups)})
+        self.update_wholist_gui(self.wholist_data)
+
     def load_gui_settings(self):
         candidate_paths = [
             os.path.join("settings", "gui_settings.json"),
@@ -6461,13 +7063,15 @@ class M59CompanionApp(QMainWindow):
             play_audio_file(snd)
 
     def save_sound_settings(self):
-        """Saves current sound alert configuration to gui_settings.json."""
+        """Saves current sound and alert configuration to gui_settings.json."""
         self.pk_alert_enabled = self.pk_chk.isChecked() if hasattr(self, 'pk_chk') else getattr(self, 'pk_alert_enabled', True)
         self.pk_sound_enabled = self.pk_alert_enabled
         self.pk_sound_path = self.pk_sound_combo.currentText() if hasattr(self, 'pk_sound_combo') else getattr(self, 'pk_sound_path', "sound/alert.wav")
         self.tell_sound_enabled = self.tell_chk.isChecked() if hasattr(self, 'tell_chk') else getattr(self, 'tell_sound_enabled', True)
         self.tell_sound_path = self.tell_sound_combo.currentText() if hasattr(self, 'tell_sound_combo') else getattr(self, 'tell_sound_path', "sound/dm_chime.wav")
         self.pk_frame_enabled = self.pk_redbox_chk.isChecked() if hasattr(self, 'pk_redbox_chk') else getattr(self, 'pk_frame_enabled', True)
+        self.group_toast_duration_sec = self.toast_dur_spin.value() if hasattr(self, 'toast_dur_spin') else getattr(self, 'group_toast_duration_sec', 3)
+        self.group_toast_position = self.toast_pos_combo.currentData() if hasattr(self, 'toast_pos_combo') else getattr(self, 'group_toast_position', "bottom-right")
 
         s = {
             "pk_alert_enabled": self.pk_alert_enabled,
@@ -6476,6 +7080,8 @@ class M59CompanionApp(QMainWindow):
             "tell_sound_enabled": self.tell_sound_enabled,
             "tell_sound_path": self.tell_sound_path,
             "pk_frame_enabled": self.pk_frame_enabled,
+            "group_toast_duration_sec": self.group_toast_duration_sec,
+            "group_toast_position": self.group_toast_position,
         }
         self.save_gui_settings(s)
 
@@ -8868,7 +9474,105 @@ class M59CompanionApp(QMainWindow):
         self.tell_sound_combo.currentTextChanged.connect(on_sound_config_changed)
         self.pk_redbox_chk.stateChanged.connect(on_sound_config_changed)
 
+        # 4. Non-Disruptive Toast Notifications Card (Player Groups / Logins / Messages)
+        toast_card = QFrame()
+        toast_card.setProperty("class", "SettingsCard")
+        tc_layout = QVBoxLayout(toast_card)
+        tc_layout.setContentsMargins(16, 16, 16, 16)
+        tc_layout.setSpacing(12)
+
+        tc_title = QLabel("Floating Toast Alerts (Non-Disruptive)")
+        tc_title.setProperty("class", "SettingsCardTitle")
+        tc_desc = QLabel("Configure the duration, screen anchor position, and behavior of floating popup notifications for player group logins, logouts, and messages.")
+        tc_desc.setProperty("class", "SettingsCardDesc")
+        tc_layout.addWidget(tc_title)
+        tc_layout.addWidget(tc_desc)
+
+        # Toast Duration Row (Tactile Minus / Plus Stepper)
+        dur_row = QHBoxLayout()
+        dur_row.setSpacing(10)
+        dur_label = QLabel("Toast Duration:")
+        dur_label.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 13px; min-width: 140px;")
+
+        cur_dur = int(getattr(self, 'group_toast_duration_sec', 3))
+        dur_val_lbl = QLabel(f"{cur_dur}s")
+        dur_val_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #38bdf8; min-width: 35px; text-align: center;")
+        dur_val_lbl.setAlignment(Qt.AlignCenter)
+
+        dur_minus_btn = QPushButton("－")
+        dur_minus_btn.setFixedSize(28, 28)
+        dur_minus_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1e293b; color: #f8fafc; font-weight: 800; font-size: 14px;
+                border: 1px solid #334155; border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #334155; }
+        """)
+
+        dur_plus_btn = QPushButton("＋")
+        dur_plus_btn.setFixedSize(28, 28)
+        dur_plus_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1e293b; color: #f8fafc; font-weight: 800; font-size: 14px;
+                border: 1px solid #334155; border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #334155; }
+        """)
+
+        def adjust_toast_dur(delta):
+            v = max(1, min(15, int(getattr(self, 'group_toast_duration_sec', 3)) + delta))
+            self.group_toast_duration_sec = v
+            dur_val_lbl.setText(f"{v}s")
+            self.save_sound_settings()
+
+        dur_minus_btn.clicked.connect(lambda: adjust_toast_dur(-1))
+        dur_plus_btn.clicked.connect(lambda: adjust_toast_dur(1))
+
+        dur_row.addWidget(dur_label)
+        dur_row.addWidget(dur_minus_btn)
+        dur_row.addWidget(dur_val_lbl)
+        dur_row.addWidget(dur_plus_btn)
+        dur_row.addStretch()
+        tc_layout.addLayout(dur_row)
+
+        # Toast Screen Position Row
+        pos_row = QHBoxLayout()
+        pos_row.setSpacing(10)
+        pos_label = QLabel("Screen Anchor:")
+        pos_label.setStyleSheet("color: #cbd5e1; font-weight: 600; font-size: 13px; min-width: 140px;")
+
+        self.toast_pos_combo = QComboBox()
+        self.toast_pos_combo.setFixedWidth(200)
+        self.toast_pos_combo.addItem("Bottom-Right (Default)", "bottom-right")
+        self.toast_pos_combo.addItem("Top-Right", "top-right")
+        self.toast_pos_combo.addItem("Bottom-Left", "bottom-left")
+        self.toast_pos_combo.addItem("Top-Left", "top-left")
+
+        cur_pos = getattr(self, 'group_toast_position', 'bottom-right')
+        idx = self.toast_pos_combo.findData(cur_pos)
+        if idx >= 0:
+            self.toast_pos_combo.setCurrentIndex(idx)
+
+        self.toast_pos_combo.currentIndexChanged.connect(lambda: self.save_sound_settings())
+
+        toast_test_btn = QPushButton("🔔 Test Toast Alert")
+        toast_test_btn.setProperty("class", "WebBtnPrimary")
+        toast_test_btn.clicked.connect(lambda: self.show_group_toast_notification(
+            title="Player Logged In",
+            message="<b>TestPlayer</b> (Friends) is now online!",
+            icon_type="login",
+            player_name="TestPlayer",
+            group_name="Friends"
+        ))
+
+        pos_row.addWidget(pos_label)
+        pos_row.addWidget(self.toast_pos_combo)
+        pos_row.addWidget(toast_test_btn)
+        pos_row.addStretch()
+        tc_layout.addLayout(pos_row)
+
         audio_layout.addWidget(sound_card)
+        audio_layout.addWidget(toast_card)
         audio_layout.addStretch()
         audio_scroll.setWidget(audio_page)
         tab_widget.addTab(audio_scroll, "🔊 Audio & Alerts")
@@ -9541,11 +10245,74 @@ class M59CompanionApp(QMainWindow):
             self.poll_inventory()
 
     def update_wholist_gui(self, players):
-        self.wholist_data = players or {}
+        current_players = players or {}
+        prev_players = getattr(self, 'previous_online_players', {})
+
+        # Check for Login / Logout transitions for group alerts (if not the very first load)
+        if prev_players:
+            curr_keys = {str(k).lower(): (str(k), str(v)) for k, v in current_players.items()}
+            prev_keys = {str(k).lower(): (str(k), str(v)) for k, v in prev_players.items()}
+
+            # 1. New Logins
+            for p_low, (orig_name, st) in curr_keys.items():
+                if p_low not in prev_keys:
+                    grp_name = self.get_player_group(orig_name)
+                    if grp_name and grp_name in self.player_groups:
+                        g_cfg = self.player_groups[grp_name]
+                        if g_cfg.get("alert_login", True):
+                            self.show_group_toast_notification(
+                                title=f"Player Logged In",
+                                message=f"<b>{orig_name}</b> ({grp_name}) is now online!",
+                                icon_type="login",
+                                player_name=orig_name,
+                                group_name=grp_name
+                            )
+                        if g_cfg.get("sound_enabled", True):
+                            self.play_tell_alert()
+
+            # 2. Logouts
+            for p_low, (orig_name, st) in prev_keys.items():
+                if p_low not in curr_keys:
+                    grp_name = self.get_player_group(orig_name)
+                    if grp_name and grp_name in self.player_groups:
+                        g_cfg = self.player_groups[grp_name]
+                        if g_cfg.get("alert_logout", False):
+                            self.show_group_toast_notification(
+                                title=f"Player Logged Out",
+                                message=f"<b>{orig_name}</b> ({grp_name}) has logged off.",
+                                icon_type="logout",
+                                player_name=orig_name,
+                                group_name=grp_name
+                            )
+                        if g_cfg.get("sound_enabled", True):
+                            self.play_tell_alert()
+
+        # Record all currently online players into discovered_players cache
+        discovered_changed = False
+        if not hasattr(self, 'discovered_players') or not isinstance(self.discovered_players, dict):
+            self.discovered_players = {}
+        for p_name, p_stat in current_players.items():
+            clean_p = str(p_name).strip().strip('"')
+            if clean_p and clean_p.lower() not in self.discovered_players:
+                self.discovered_players[clean_p.lower()] = {
+                    "name": clean_p,
+                    "last_status": str(p_stat)
+                }
+                discovered_changed = True
+            elif clean_p and clean_p.lower() in self.discovered_players:
+                # Update display name or status if changed
+                if self.discovered_players[clean_p.lower()].get("last_status") != str(p_stat):
+                    self.discovered_players[clean_p.lower()]["last_status"] = str(p_stat)
+                    discovered_changed = True
+
+        if discovered_changed:
+            self.save_discovered_players()
+
+        self.previous_online_players = dict(current_players)
+        self.wholist_data = current_players
         self.who_list_widget.clear()
 
         query = self.who_search_input.text().lower().strip()
-        filtered_count = 0
 
         status_colors = {
             "INNOCENT": "#e0e0e0",
@@ -9580,25 +10347,28 @@ class M59CompanionApp(QMainWindow):
             return (group, has_unread_flag, p_lower)
 
         fs = getattr(self, 'font_settings', {}).get("player_list", 13)
+        online_keys_lower = {str(k).lower() for k in self.wholist_data.keys()}
+        collapsed_set = getattr(self, 'collapsed_groups', set())
 
-        sorted_players = sorted(self.wholist_data.items(), key=player_sort_key)
-
-        for name, status in sorted_players:
-            if query and query not in str(name).lower():
-                continue
-
-            filtered_count += 1
-            color = status_colors.get(str(status).upper(), "#e0e0e0")
+        # Helper function to render a single player row
+        def render_player_row(name, status, is_offline=False, last_ts=""):
+            color = "#94a3b8" if is_offline else status_colors.get(str(status).upper(), "#e0e0e0")
 
             item_widget = QWidget()
             item_layout = QHBoxLayout(item_widget)
             item_layout.setContentsMargins(6, 1, 6, 1)
             item_layout.setSpacing(4)
 
-            name_lbl = QLabel(name)
+            p_prefix = "⚪ " if is_offline else ""
+            name_lbl = QLabel(f"{p_prefix}{name}")
             name_lbl.setStyleSheet(f"font-size: {fs}px; font-weight: 700; color: {color}; background: transparent;")
             item_layout.addWidget(name_lbl)
             item_layout.addStretch()
+
+            if is_offline and last_ts:
+                ts_lbl = QLabel(last_ts)
+                ts_lbl.setStyleSheet("font-size: 9px; color: #64748b; background: transparent;")
+                item_layout.addWidget(ts_lbl)
 
             p_lower = str(name).lower()
             unread_c = getattr(self, 'unread_dms', {}).get(p_lower, 0)
@@ -9620,7 +10390,8 @@ class M59CompanionApp(QMainWindow):
                         color: #ffffff;
                     }
                 """)
-                dm_badge.setToolTip(f"{unread_c} unread message(s) from {name}. Click to view DMs.")
+                tip_suffix = " (Offline)" if is_offline else ""
+                dm_badge.setToolTip(f"{unread_c} unread message(s) from {name}{tip_suffix}. Click to view DMs.")
                 dm_badge.clicked.connect(lambda checked=False, n=name: self.open_dm_with_player(n))
                 item_layout.addWidget(dm_badge)
             else:
@@ -9650,87 +10421,204 @@ class M59CompanionApp(QMainWindow):
             self.who_list_widget.addItem(list_item)
             self.who_list_widget.setItemWidget(list_item, item_widget)
 
-        # -------------------------------------------------------------
-        # OFFLINE PLAYERS WITH UNREAD DMs SECTION
-        # -------------------------------------------------------------
-        online_keys = {str(k).lower() for k in self.wholist_data.keys()}
-        unread_offline_players = []
-        for p_key, count in getattr(self, 'unread_dms', {}).items():
-            if count > 0 and p_key not in online_keys:
-                thread_info = getattr(self, 'player_dms', {}).get(p_key, {})
-                disp_name = thread_info.get("player_name", p_key.capitalize())
-                msgs = thread_info.get("messages", [])
-                last_ts = msgs[-1]["ts"] if msgs else ""
-                unread_offline_players.append((disp_name, p_key, count, last_ts))
-
-        # Sort offline players with unread messages by latest message or unread count
-        unread_offline_players.sort(key=lambda x: (x[2], x[3]), reverse=True)
-
-        matching_offline = [p for p in unread_offline_players if not query or query in p[0].lower()]
-
-        if matching_offline:
-            # Section Header Divider
+        # Helper function to render a section / group header
+        def render_section_header(grp_key, label_text, count_text, header_color="#38bdf8", is_collapsed=False, badge_bg="#0c4a6e"):
             hdr_item = QListWidgetItem()
-            hdr_item.setFlags(Qt.NoItemFlags)
+            hdr_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             hdr_item.setSizeHint(QSize(0, 24))
+            hdr_item.setData(Qt.UserRole + 1, grp_key) # Tag as section header
 
             hdr_widget = QWidget()
+            hdr_widget.setCursor(Qt.PointingHandCursor)
             hw_layout = QHBoxLayout(hdr_widget)
-            hw_layout.setContentsMargins(6, 4, 6, 2)
-            hw_layout.setSpacing(4)
+            hw_layout.setContentsMargins(6, 3, 6, 2)
+            hw_layout.setSpacing(6)
 
-            total_off_unread = sum(p[2] for p in matching_offline)
-            hdr_lbl = QLabel(f"✉️ OFFLINE DMs ({total_off_unread})")
-            hdr_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #c084fc; letter-spacing: 0.8px; background: transparent;")
+            arrow = "▶" if is_collapsed else "▼"
+            hdr_lbl = QLabel(f"{arrow} {label_text.upper()}")
+            hdr_lbl.setStyleSheet(f"font-size: 10px; font-weight: 800; color: {header_color}; letter-spacing: 0.6px; background: transparent;")
             hw_layout.addWidget(hdr_lbl)
             hw_layout.addStretch()
+
+            cnt_badge = QLabel(f" {count_text} ")
+            cnt_badge.setStyleSheet(f"background-color: {badge_bg}; color: #f8fafc; font-size: 9px; font-weight: 800; border-radius: 4px; padding: 1px 4px;")
+            hw_layout.addWidget(cnt_badge)
+
+            # Click on header toggles collapse
+            def on_hdr_clicked(event, g=grp_key):
+                if event.button() == Qt.LeftButton:
+                    self.toggle_group_collapse(g)
+            hdr_widget.mousePressEvent = on_hdr_clicked
 
             self.who_list_widget.addItem(hdr_item)
             self.who_list_widget.setItemWidget(hdr_item, hdr_widget)
 
-            # Render each logged-off player with unread DMs
-            for disp_name, p_key, unread_c, last_ts in matching_offline:
-                item_widget = QWidget()
-                item_layout = QHBoxLayout(item_widget)
-                item_layout.setContentsMargins(6, 1, 6, 1)
-                item_layout.setSpacing(4)
+        # Separate online players into custom groups and ungrouped ("Other Players")
+        custom_groups_online = {g: [] for g in self.player_groups.keys()}
+        ungrouped_online = []
+        player_to_custom_group = {}
+        for g_name, g_data in self.player_groups.items():
+            for m in g_data.get("members", []):
+                player_to_custom_group[m.lower()] = g_name
 
-                name_lbl = QLabel(f"⚪ {disp_name}")
-                name_lbl.setStyleSheet(f"font-size: {fs}px; font-weight: 700; color: #c4b5fd; background: transparent;")
-                item_layout.addWidget(name_lbl)
-                item_layout.addStretch()
+        for name, status in self.wholist_data.items():
+            p_low = str(name).lower()
+            if p_low in player_to_custom_group:
+                g_target = player_to_custom_group[p_low]
+                if g_target in custom_groups_online:
+                    custom_groups_online[g_target].append((name, status))
+                else:
+                    ungrouped_online.append((name, status))
+            else:
+                ungrouped_online.append((name, status))
 
-                if last_ts:
-                    ts_lbl = QLabel(last_ts)
-                    ts_lbl.setStyleSheet("font-size: 9px; color: #64748b; background: transparent;")
-                    item_layout.addWidget(ts_lbl)
+        has_custom_groups = bool(self.player_groups)
 
-                dm_badge = QPushButton(f"💬 {unread_c}")
-                dm_badge.setCursor(Qt.PointingHandCursor)
-                dm_badge.setStyleSheet("""
-                    QPushButton {
-                        background-color: #581c87;
-                        color: #f0abfc;
-                        font-weight: 800;
-                        font-size: 10px;
-                        padding: 1px 5px;
-                        border-radius: 3px;
-                        border: 1px solid #c084fc;
+        # -------------------------------------------------------------
+        # 1. RENDER CUSTOM GROUPS (ONLINE MEMBERS)
+        # -------------------------------------------------------------
+        for g_name in sorted(self.player_groups.keys()):
+            g_online = custom_groups_online.get(g_name, [])
+            g_sorted = sorted(g_online, key=player_sort_key)
+            g_matching = [p for p in g_sorted if not query or query in str(p[0]).lower()]
+            total_g_members = len(self.player_groups[g_name].get("members", []))
+            is_collapsed = (g_name in collapsed_set)
+
+            render_section_header(
+                grp_key=g_name,
+                label_text=f"📁 {g_name}",
+                count_text=f"{len(g_online)}/{total_g_members} Online",
+                header_color="#38bdf8",
+                is_collapsed=is_collapsed,
+                badge_bg="#0c4a6e"
+            )
+
+            if not is_collapsed:
+                if not g_matching:
+                    empty_item = QListWidgetItem()
+                    empty_item.setFlags(Qt.NoItemFlags)
+                    empty_item.setSizeHint(QSize(0, 20))
+                    empty_lbl = QLabel(f"   <span style='color: #64748b; font-size: 11px; font-style: italic;'>No members currently online</span>")
+                    empty_lbl.setStyleSheet("background: transparent;")
+                    self.who_list_widget.addItem(empty_item)
+                    self.who_list_widget.setItemWidget(empty_item, empty_lbl)
+                else:
+                    for name, status in g_matching:
+                        render_player_row(name, status, is_offline=False)
+
+        # -------------------------------------------------------------
+        # 2. RENDER UNGROUPED PLAYERS ("OTHER PLAYERS" / GENERAL LIST)
+        # -------------------------------------------------------------
+        ungrouped_sorted = sorted(ungrouped_online, key=player_sort_key)
+        ungrouped_matching = [p for p in ungrouped_sorted if not query or query in str(p[0]).lower()]
+
+        if has_custom_groups:
+            is_other_collapsed = ("Other Players" in collapsed_set)
+            render_section_header(
+                grp_key="Other Players",
+                label_text="👥 Other Players",
+                count_text=f"{len(ungrouped_online)} Online",
+                header_color="#94a3b8",
+                is_collapsed=is_other_collapsed,
+                badge_bg="#1e293b"
+            )
+            if not is_other_collapsed:
+                for name, status in ungrouped_matching:
+                    render_player_row(name, status, is_offline=False)
+        else:
+            # No custom groups configured, render flat standard list
+            for name, status in ungrouped_matching:
+                render_player_row(name, status, is_offline=False)
+
+        # -------------------------------------------------------------
+        # 3. OFFLINE GROUP (COLLAPSIBLE, AT BOTTOM OF PLAYER LIST)
+        # -------------------------------------------------------------
+        # Collect all tracked players who are currently offline
+        # - Discovered players who were logged in and are now offline
+        # - Group members who are offline
+        # - Players with unread/historical DMs who are offline
+        offline_players_map = {} # name_lower -> dict(disp_name, unread_c, last_ts, group, last_status)
+        
+        # 1. Include all discovered players not currently online
+        for p_low, p_info in getattr(self, 'discovered_players', {}).items():
+            if p_low not in online_keys_lower:
+                disp = p_info.get("name", p_low.capitalize()) if isinstance(p_info, dict) else str(p_info)
+                l_stat = p_info.get("last_status", "INNOCENT") if isinstance(p_info, dict) else "INNOCENT"
+                offline_players_map[p_low] = {
+                    "disp_name": disp,
+                    "unread_c": getattr(self, 'unread_dms', {}).get(p_low, 0),
+                    "last_ts": "",
+                    "group": self.get_player_group(disp),
+                    "last_status": l_stat
+                }
+
+        # 2. Include all group members not currently online
+        for g_name, g_data in self.player_groups.items():
+            for m in g_data.get("members", []):
+                m_low = m.lower()
+                if m_low not in online_keys_lower:
+                    if m_low in offline_players_map:
+                        offline_players_map[m_low]["group"] = g_name
+                        offline_players_map[m_low]["disp_name"] = m
+                    else:
+                        offline_players_map[m_low] = {
+                            "disp_name": m,
+                            "unread_c": getattr(self, 'unread_dms', {}).get(m_low, 0),
+                            "last_ts": "",
+                            "group": g_name,
+                            "last_status": "INNOCENT"
+                        }
+
+        # 3. Include DM threads
+        for p_key, count in getattr(self, 'unread_dms', {}).items():
+            if p_key not in online_keys_lower:
+                thread_info = getattr(self, 'player_dms', {}).get(p_key, {})
+                disp_name = thread_info.get("player_name", p_key.capitalize())
+                msgs = thread_info.get("messages", [])
+                last_ts = msgs[-1]["ts"] if msgs else ""
+                if p_key in offline_players_map:
+                    offline_players_map[p_key]["unread_c"] = count
+                    offline_players_map[p_key]["last_ts"] = last_ts
+                else:
+                    offline_players_map[p_key] = {
+                        "disp_name": disp_name,
+                        "unread_c": count,
+                        "last_ts": last_ts,
+                        "group": self.get_player_group(disp_name),
+                        "last_status": "INNOCENT"
                     }
-                    QPushButton:hover {
-                        background-color: #7e22ce;
-                        color: #ffffff;
-                    }
-                """)
-                dm_badge.setToolTip(f"{unread_c} unread message(s) from {disp_name} (Offline). Click to view & respond.")
-                dm_badge.clicked.connect(lambda checked=False, n=disp_name: self.open_dm_with_player(n))
-                item_layout.addWidget(dm_badge)
 
-                list_item = QListWidgetItem()
-                list_item.setSizeHint(QSize(0, max(22, fs + 6)))
-                list_item.setData(Qt.UserRole, disp_name)
-                self.who_list_widget.addItem(list_item)
-                self.who_list_widget.setItemWidget(list_item, item_widget)
+        if offline_players_map:
+            offline_list = list(offline_players_map.values())
+            # Sort offline players: unread messages first, custom group members next, then alphabetical name
+            offline_list.sort(key=lambda x: (
+                0 if x["unread_c"] > 0 else (1 if x["group"] else 2),
+                x["disp_name"].lower()
+            ))
+            matching_offline = [p for p in offline_list if not query or query in p["disp_name"].lower()]
+
+            # Default offline group to collapsed if not explicitly set
+            is_offline_collapsed = ("__OFFLINE__" in collapsed_set)
+            unread_total = sum(p["unread_c"] for p in offline_list)
+            cnt_str = f"{len(offline_list)} Offline" + (f" • {unread_total} Unread" if unread_total > 0 else "")
+
+            render_section_header(
+                grp_key="__OFFLINE__",
+                label_text="⚪ Offline",
+                count_text=cnt_str,
+                header_color="#64748b",
+                is_collapsed=is_offline_collapsed,
+                badge_bg="#334155"
+            )
+
+            if not is_offline_collapsed:
+                for p_info in matching_offline:
+                    render_player_row(
+                        name=p_info["disp_name"],
+                        status=p_info.get("last_status", "INNOCENT"),
+                        is_offline=True,
+                        last_ts=p_info["last_ts"]
+                    )
 
         self.who_count_badge.setText(f"{len(self.wholist_data)} Online")
 

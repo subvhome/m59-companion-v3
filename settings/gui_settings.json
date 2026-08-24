@@ -27,8 +27,8 @@
   "floating_chat_width": 1101,
   "floating_chat_height": 359,
   "floating_chat_rolled_up": true,
-  "window_x": 201,
-  "window_y": 74,
+  "window_x": 197,
+  "window_y": 169,
   "window_width": 1508,
   "window_height": 1025,
   "window_maximized": false,
@@ -38,5 +38,8 @@
   "console_output_enabled": true,
   "console_debug_enabled": true,
   "file_debug_enabled": true,
-  "progression_log_enabled": true
+  "progression_log_enabled": true,
+  "collapsed_groups": [],
+  "group_toast_duration_sec": 3,
+  "group_toast_position": "bottom-right"
 }
