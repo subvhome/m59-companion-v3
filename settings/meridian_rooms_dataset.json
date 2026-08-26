@@ -4585,7 +4585,8 @@
                 "to_pos": [
                     19,
                     3
-                ]
+                ],
+                "travel_time": 7.57
             },
             {
                 "type": "point",
@@ -4597,7 +4598,8 @@
                 "to_pos": [
                     13,
                     7
-                ]
+                ],
+                "travel_time": 10.58
             },
             {
                 "type": "point",
@@ -4609,7 +4611,8 @@
                 "to_pos": [
                     13,
                     7
-                ]
+                ],
+                "travel_time": 10.58
             },
             {
                 "type": "point",
@@ -4621,7 +4624,8 @@
                 "to_pos": [
                     13,
                     7
-                ]
+                ],
+                "travel_time": 10.58
             },
             {
                 "type": "point",
@@ -4725,7 +4729,8 @@
                 "to_pos": [
                     49,
                     38
-                ]
+                ],
+                "travel_time": 6.05
             },
             {
                 "type": "point",
@@ -4737,7 +4742,8 @@
                 "to_pos": [
                     49,
                     38
-                ]
+                ],
+                "travel_time": 6.05
             }
         ],
         "pvp_status": "Safe (No PVP)",
@@ -4792,7 +4798,8 @@
                 "to_pos": [
                     36,
                     34
-                ]
+                ],
+                "travel_time": 12.07
             },
             {
                 "type": "point",
@@ -4804,7 +4811,8 @@
                 "to_pos": [
                     37,
                     34
-                ]
+                ],
+                "travel_time": 12.07
             },
             {
                 "type": "point",
@@ -4816,7 +4824,8 @@
                 "to_pos": [
                     38,
                     34
-                ]
+                ],
+                "travel_time": 12.07
             },
             {
                 "type": "point",
@@ -4828,7 +4837,8 @@
                 "to_pos": [
                     44,
                     33
-                ]
+                ],
+                "travel_time": 12.07
             },
             {
                 "type": "point",
@@ -4840,7 +4850,8 @@
                 "to_pos": [
                     44,
                     33
-                ]
+                ],
+                "travel_time": 12.07
             },
             {
                 "type": "point",
@@ -4852,7 +4863,8 @@
                 "to_pos": [
                     51,
                     28
-                ]
+                ],
+                "travel_time": 12.07
             },
             {
                 "type": "point",
@@ -4864,7 +4876,8 @@
                 "to_pos": [
                     51,
                     28
-                ]
+                ],
+                "travel_time": 12.07
             },
             {
                 "type": "point",
@@ -5013,7 +5026,8 @@
                 "from": [
                     55,
                     1
-                ]
+                ],
+                "travel_time": 15.02
             },
             {
                 "type": "edge",
@@ -7844,7 +7858,7 @@
                     40,
                     48
                 ],
-                "travel_time": 17.12
+                "travel_time": 4.55
             }
         ],
         "pvp_status": "Standard PVP",

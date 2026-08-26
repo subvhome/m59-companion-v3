@@ -148,19 +148,18 @@ class ElusionMenu(tk.Toplevel):
         try:
             from m59_vault import send_chat_command
             
-            # Cast elusion
-            send_chat_command(hwnd, 'cast "elusion"')
-            
-            # Wait for spell to cast and trance to start
-            time.sleep(1.5)
-            
-            # Send location
-            phrase = "I wish to travel to {loc}."
-            if hasattr(self, 'dashboard') and hasattr(self.dashboard, 'elusion_phrase'):
+            phrase = "say I wish to travel to {loc}."
+            if hasattr(self, 'dashboard') and hasattr(self.dashboard, 'shortcut_phrase_combo'):
+                phrase = self.dashboard.shortcut_phrase_combo.currentText()
+            elif hasattr(self, 'dashboard') and hasattr(self.dashboard, 'elusion_phrase'):
                 phrase = self.dashboard.elusion_phrase.get()
                 
             formatted_phrase = phrase.replace('{loc}', loc)
-            send_chat_command(hwnd, formatted_phrase)
+
+            if hasattr(self, 'dashboard') and hasattr(self.dashboard, 'cast_spell_with_trance'):
+                self.dashboard.cast_spell_with_trance("elusion", formatted_phrase, target_hwnd=hwnd)
+            else:
+                send_chat_command(hwnd, 'cast "elusion"')
             
         except Exception as e:
             print(f"Failed to cast elusion: {e}")

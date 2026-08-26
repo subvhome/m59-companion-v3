@@ -342,5 +342,101 @@
   "ominous villein": {
     "name": "Ominous Villein",
     "last_status": "INNOCENT"
+  },
+  "alcohol": {
+    "name": "Alcohol",
+    "last_status": "INNOCENT"
+  },
+  "babypickles": {
+    "name": "BabyPickles",
+    "last_status": "INNOCENT"
+  },
+  "dragula": {
+    "name": "Dragula",
+    "last_status": "INNOCENT"
+  },
+  "elanif": {
+    "name": "Elanif",
+    "last_status": "INNOCENT"
+  },
+  "guideclover": {
+    "name": "GuideClover",
+    "last_status": "STAFF"
+  },
+  "shal'ing": {
+    "name": "Shal'ing",
+    "last_status": "INNOCENT"
+  },
+  "sortenbrandt": {
+    "name": "Sortenbrandt",
+    "last_status": "INNOCENT"
+  },
+  "topgun": {
+    "name": "TopGun",
+    "last_status": "INNOCENT"
+  },
+  "scar": {
+    "name": "scar",
+    "last_status": "MURDERER"
+  },
+  "time": {
+    "name": "time",
+    "last_status": "INNOCENT"
+  },
+  "buckshot brady": {
+    "name": "Buckshot Brady",
+    "last_status": "INNOCENT"
+  },
+  "psychotica": {
+    "name": "Psychotica",
+    "last_status": "INNOCENT"
+  },
+  "mirror": {
+    "name": "MIRROR",
+    "last_status": "INNOCENT"
+  },
+  "the proctologist": {
+    "name": "The Proctologist",
+    "last_status": "INNOCENT"
+  },
+  "rickroy": {
+    "name": "RickRoy",
+    "last_status": "INNOCENT"
+  },
+  "fin1": {
+    "name": "FIN1",
+    "last_status": "INNOCENT"
+  },
+  "derin": {
+    "name": "Derin",
+    "last_status": "INNOCENT"
+  },
+  "reveal me": {
+    "name": "REVEAL ME",
+    "last_status": "INNOCENT"
+  },
+  "susan": {
+    "name": "susan",
+    "last_status": "INNOCENT"
+  },
+  "bruxo": {
+    "name": "Bruxo",
+    "last_status": "INNOCENT"
+  },
+  "walking vault": {
+    "name": "walking vault",
+    "last_status": "INNOCENT"
+  },
+  "maelstrom": {
+    "name": "Maelstrom",
+    "last_status": "INNOCENT"
+  },
+  "playtoh iv": {
+    "name": "Playtoh IV",
+    "last_status": "INNOCENT"
+  },
+  "lonesome traveller": {
+    "name": "Lonesome Traveller",
+    "last_status": "INNOCENT"
   }
 }

@@ -27,9 +27,9 @@
   "floating_chat_width": 1101,
   "floating_chat_height": 359,
   "floating_chat_rolled_up": true,
-  "window_x": 265,
-  "window_y": 50,
-  "window_width": 1563,
+  "window_x": -1,
+  "window_y": 63,
+  "window_width": 1683,
   "window_height": 1025,
   "window_maximized": false,
   "morph_x_offset": 391,
@@ -39,9 +39,7 @@
   "console_debug_enabled": true,
   "file_debug_enabled": true,
   "progression_log_enabled": true,
-  "collapsed_groups": [
-    "__OFFLINE__"
-  ],
+  "collapsed_groups": [],
   "group_toast_duration_sec": 3,
   "group_toast_position": "bottom-right",
   "elusion_x_offset": 402,
@@ -52,5 +50,6 @@
     "dashboard_cards": 13,
     "clock_panel": 13,
     "sidebar_nav": 13
-  }
+  },
+  "elude_bar_open": true
 }

@@ -12242,6 +12242,7 @@ class M59CompanionApp(QMainWindow):
         if not is_historical and hasattr(self, 'pending_spell_trance') and self.pending_spell_trance:
             lower_msg = msg_text.lower()
             pending = self.pending_spell_trance
+            s_name = pending.get("spell_name", "")
 
             # Check for spell failure / error / fizzle / interruption
             fail_keywords = [
@@ -12250,20 +12251,29 @@ class M59CompanionApp(QMainWindow):
                 "you must be", "not enough mana", "no spell"
             ]
             if any(fizz in lower_msg for fizz in fail_keywords):
-                print(f"[M59-SPELL] Spell '{pending.get('spell_name')}' failed/fizzled: {msg_text}", flush=True)
+                print(f"[M59-SPELL] Spell '{s_name}' failed/fizzled: {msg_text}", flush=True)
                 pending["fizzled"] = True
                 self.pending_spell_trance = None
-            elif "focus your whole will on casting" in lower_msg:
-                # Trance confirmation detected
-                if not pending.get("completed") and not pending.get("fizzled"):
+            else:
+                is_elude = s_name in ["elusion", "elude"]
+                success_match = False
+                if is_elude:
+                    # Elude successful cast path requires seeing "The world shimmers and secret paths are revealed"
+                    if "the world shimmers and secret paths are revealed" in lower_msg or "secret paths are revealed" in lower_msg:
+                        success_match = True
+                else:
+                    if "focus your whole will on casting" in lower_msg or "the world shimmers and secret paths are revealed" in lower_msg:
+                        success_match = True
+
+                if success_match and not pending.get("completed") and not pending.get("fizzled"):
                     pending["trance_entered"] = True
                     pending["completed"] = True
                     steer_cmd = pending.get("steer_command")
                     target = pending.get("target_hwnd")
-                    print(f"[M59-SPELL] Trance confirmed in chat log! Executing steer payload -> {steer_cmd}", flush=True)
+                    print(f"[M59-SPELL] Successful cast confirmed in chat log! ('{msg_text}') Waiting 0.5s before sending steer payload -> {steer_cmd}", flush=True)
 
                     def _send_immediate_steer():
-                        time.sleep(0.3)
+                        time.sleep(0.5)  # Wait half a second after "The world shimmers and secret paths are revealed" appears
                         if target and steer_cmd:
                             send_chat_command(target, steer_cmd)
                         self.pending_spell_trance = None
