@@ -36,15 +36,41 @@ class CombatMonitor:
         return mobs
 
     def _load_kill_book(self):
-        """Loads persistent kill counts from JSON."""
-        file_path = f"settings/{self.safe_name}_kills.json"
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, "r") as f:
-                    return json.load(f)
-            except:
-                pass
-        return {"monsters": {}, "players": {}}
+        """Loads persistent kill counts from JSON with fallback file support."""
+        candidates = []
+        if self.safe_name and self.safe_name not in ["--", "Unknown"]:
+            candidates.append(f"settings/{self.safe_name}_kills.json")
+            if self.char_name and self.char_name not in ["--", "Unknown"]:
+                candidates.append(f"settings/{self.char_name}_kills.json")
+        candidates.extend([
+            "settings/Unknown_kills.json",
+            "settings/kills.json"
+        ])
+        if os.path.exists("settings"):
+            import glob
+            existing = glob.glob("settings/*_kills.json")
+            for f in existing:
+                clean_f = f.replace("\\", "/")
+                if clean_f not in candidates:
+                    candidates.append(clean_f)
+
+        for file_path in candidates:
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            if "monsters" in data or "players" in data:
+                                return {
+                                    "monsters": data.get("monsters", {}),
+                                    "players": data.get("players", {}),
+                                    "player_kills_history": data.get("player_kills_history", [])
+                                }
+                            else:
+                                return {"monsters": data, "players": {}, "player_kills_history": []}
+                except Exception as e:
+                    print(f"COMBAT ERROR: Failed reading {file_path}: {e}")
+        return {"monsters": {}, "players": {}, "player_kills_history": []}
 
     def _save_kill_book(self):
         """Saves kill counts to JSON."""
@@ -57,7 +83,7 @@ class CombatMonitor:
         except Exception as e:
             print(f"COMBAT ERROR: Could not save kill book: {e}")
 
-    def process_line(self, line):
+    def process_line(self, line, msg_ts=None, room_name=None):
         """
         Analyzes a line for kills or incoming PK attacks.
         Returns event dict or None.
@@ -79,14 +105,56 @@ class CombatMonitor:
                 is_monster = test_name in self.mob_set
 
             category = "monsters" if is_monster else "players"
+            if category not in self.kill_book:
+                self.kill_book[category] = {}
             self.kill_book[category][victim] = self.kill_book[category].get(victim, 0) + 1
+            
+            pk_record = None
+            if category == "players":
+                if "player_kills_history" not in self.kill_book or not isinstance(self.kill_book["player_kills_history"], list):
+                    self.kill_book["player_kills_history"] = []
+                
+                now = datetime.now()
+                if msg_ts and len(str(msg_ts).strip()) >= 5:
+                    ts_raw = str(msg_ts).strip()
+                    if len(ts_raw) == 8 and ":" in ts_raw:
+                        ts_str = f"{now.strftime('%Y-%m-%d')} {ts_raw}"
+                        time_str = ts_raw
+                        try:
+                            hour_val = int(ts_raw.split(":")[0])
+                        except Exception:
+                            hour_val = now.hour
+                    else:
+                        ts_str = ts_raw
+                        time_str = ts_raw.split(" ")[-1] if " " in ts_raw else ts_raw
+                        try:
+                            hour_val = int(time_str.split(":")[0])
+                        except Exception:
+                            hour_val = now.hour
+                else:
+                    ts_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                    time_str = now.strftime("%H:%M:%S")
+                    hour_val = now.hour
+
+                pk_record = {
+                    "victim": victim,
+                    "timestamp": ts_str,
+                    "date": ts_str.split(" ")[0] if " " in ts_str else now.strftime("%Y-%m-%d"),
+                    "time": time_str,
+                    "hour": hour_val,
+                    "day_of_week": now.strftime("%A"),
+                    "room": room_name or "Unknown Location"
+                }
+                self.kill_book["player_kills_history"].append(pk_record)
+
             self._save_kill_book()
             
             return {
                 "type": "KILL",
                 "category": category,
                 "name": victim,
-                "total": self.kill_book[category][victim]
+                "total": self.kill_book[category][victim],
+                "pk_record": pk_record
             }
 
         # 2. Check for Incoming Attacks (PK Detection)

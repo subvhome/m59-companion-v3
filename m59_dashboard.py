@@ -393,13 +393,62 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QFrame, QSplitter, QStackedWidget, QTabWidget, QTabBar,
     QHeaderView, QProgressBar, QTextEdit, QFileDialog, QSlider, QSpinBox, QScrollArea, QGroupBox,
     QSplashScreen, QSizePolicy, QComboBox, QDialog, QCheckBox, QFormLayout, QMessageBox, QAbstractItemView,
-    QCompleter, QTreeWidget, QTreeWidgetItem, QSizeGrip, QStyleOptionComboBox, QStyle, QMenu
+    QCompleter, QTreeWidget, QTreeWidgetItem, QSizeGrip, QStyleOptionComboBox, QStyle, QMenu, QToolTip
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QMimeData, QPoint, QRect
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QMimeData, QPoint, QRect, QEvent
 from PySide6.QtGui import (
     QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QDrag, QPainter, QPen, QBrush,
-    QGuiApplication, QLinearGradient, QRadialGradient, QConicalGradient, QGradient
+    QGuiApplication, QLinearGradient, QRadialGradient, QConicalGradient, QGradient, QCursor
 )
+
+# ----------------------------------------------------------------------
+# Instant ToolTip Event Filter (0ms Delay on Mouse Hover)
+# ----------------------------------------------------------------------
+class InstantToolTipFilter(QObject):
+    """Global event filter that causes tooltips to display INSTANTLY (0ms delay) on mouse hover."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._active_widget = None
+        self._active_tip = None
+
+    def eventFilter(self, obj, event):
+        et = event.type()
+
+        # Immediate ToolTip display on Enter or ToolTip event
+        if et == QEvent.Type.Enter or et == QEvent.Type.ToolTip:
+            if isinstance(obj, QWidget):
+                tip = obj.toolTip()
+                if tip:
+                    self._active_widget = obj
+                    self._active_tip = tip
+                    QToolTip.showText(QCursor.pos(), tip, obj)
+                    if et == QEvent.Type.ToolTip:
+                        return True  # Suppress default Qt 700ms delayed tooltip timer
+        elif et == QEvent.Type.Leave:
+            if self._active_widget == obj:
+                self._active_widget = None
+                self._active_tip = None
+                QToolTip.hideText()
+        elif et == QEvent.Type.MouseMove:
+            if isinstance(obj, QWidget):
+                # Item-based widgets (QTableWidget, QListWidget, QTreeWidget, QComboBox)
+                if hasattr(obj, 'itemAt'):
+                    pos = event.pos() if hasattr(event, 'pos') else QPoint(0, 0)
+                    item = obj.itemAt(pos)
+                    if item and hasattr(item, 'toolTip'):
+                        itip = item.toolTip()
+                        if itip and itip != self._active_tip:
+                            self._active_widget = obj
+                            self._active_tip = itip
+                            QToolTip.showText(QCursor.pos(), itip, obj)
+                elif obj != self._active_widget and hasattr(obj, 'toolTip'):
+                    tip = obj.toolTip()
+                    if tip and tip != self._active_tip:
+                        self._active_widget = obj
+                        self._active_tip = tip
+                        QToolTip.showText(QCursor.pos(), tip, obj)
+
+        return super().eventFilter(obj, event)
 
 # ----------------------------------------------------------------------
 # PK / PvP Alert Red Box Overlay Window around Game Client
@@ -3796,6 +3845,540 @@ class ReagentTrendChartWidget(QWidget):
 
 
 # ----------------------------------------------------------------------
+# PK Combat Analytics & Target Intelligence Chart Widget and Dialog
+# ----------------------------------------------------------------------
+class PKGraphChartWidget(QWidget):
+    """
+    Custom QPainter dark-mode chart widget for visualizing Player Kills (PKs).
+    Supports 3 modes:
+    - 'Hourly Distribution': 24 bars (00:00 to 23:00) showing PK count by hour of day
+    - 'Day of Week': 7 bars (Mon to Sun) showing PK count by day
+    - 'Top PK Targets': Horizontal/Vertical bars for top target player victims
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(220)
+        self.history_records = []
+        self.target_filter = "All PK Targets"
+        self.timeframe_filter = "All Time"
+        self.chart_mode = "Hourly Distribution"
+        self.hover_idx = -1
+        self.setMouseTracking(True)
+
+    def set_data(self, history_records, target_filter="All PK Targets", timeframe_filter="All Time", chart_mode="Hourly Distribution"):
+        self.history_records = history_records or []
+        self.target_filter = target_filter or "All PK Targets"
+        self.timeframe_filter = timeframe_filter or "All Time"
+        self.chart_mode = chart_mode or "Hourly Distribution"
+        self.hover_idx = -1
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        pos = event.position().toPoint() if hasattr(event, 'globalPosition') else event.pos()
+        w = self.width()
+        m_left = 50
+        m_right = 20
+        plot_w = w - m_left - m_right
+        series = self._get_data_series()
+        if series and plot_w > 0:
+            bar_w = plot_w / len(series)
+            if pos.x() >= m_left and pos.x() <= w - m_right:
+                idx = int((pos.x() - m_left) / bar_w)
+                if 0 <= idx < len(series):
+                    if self.hover_idx != idx:
+                        self.hover_idx = idx
+                        self.update()
+                    return
+        if self.hover_idx != -1:
+            self.hover_idx = -1
+            self.update()
+
+    def leaveEvent(self, event):
+        if self.hover_idx != -1:
+            self.hover_idx = -1
+            self.update()
+
+    def _filter_records(self):
+        from datetime import datetime, timedelta
+        filtered = []
+        now = datetime.now()
+        tf = self.timeframe_filter
+        tf_cutoff = None
+        if tf == "Today":
+            tf_cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif tf == "Last 7 Days":
+            tf_cutoff = now - timedelta(days=7)
+        elif tf == "Last 30 Days":
+            tf_cutoff = now - timedelta(days=30)
+
+        t_filter = (self.target_filter or "All PK Targets").strip().lower()
+
+        for rec in self.history_records:
+            if not isinstance(rec, dict):
+                continue
+            victim = rec.get("victim", "").strip()
+            if t_filter not in ["all pk targets", "all targets", "all", ""] and victim.lower() != t_filter:
+                continue
+
+            ts_str = rec.get("timestamp", "")
+            if tf_cutoff and ts_str:
+                try:
+                    d_part = ts_str.split(" ")[0]
+                    rec_dt = datetime.strptime(d_part, "%Y-%m-%d")
+                    if rec_dt < tf_cutoff:
+                        continue
+                except Exception:
+                    pass
+            filtered.append(rec)
+        return filtered
+
+    def _get_data_series(self):
+        records = self._filter_records()
+        series = []
+
+        if self.chart_mode == "Hourly Distribution":
+            counts = [0] * 24
+            for r in records:
+                try:
+                    h = int(r.get("hour", 0))
+                    if 0 <= h < 24:
+                        counts[h] += 1
+                except Exception:
+                    pass
+            for h in range(24):
+                lbl = f"{h:02d}" if h % 2 == 0 else ""
+                series.append((lbl, counts[h], f"{h:02d}:00 - {h:02d}:59 ({counts[h]} PK Kills)"))
+
+        elif self.chart_mode == "Day of Week":
+            days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            short_days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            counts = {d: 0 for d in days}
+            for r in records:
+                dow = r.get("day_of_week", "")
+                if dow in counts:
+                    counts[dow] += 1
+                else:
+                    ts_str = r.get("timestamp", "")
+                    if ts_str:
+                        try:
+                            from datetime import datetime
+                            d_obj = datetime.strptime(ts_str.split(" ")[0], "%Y-%m-%d")
+                            day_name = d_obj.strftime("%A")
+                            if day_name in counts:
+                                counts[day_name] += 1
+                        except Exception:
+                            pass
+            for idx, d_full in enumerate(days):
+                series.append((short_days[idx], counts[d_full], f"{d_full}: {counts[d_full]} PKs"))
+
+        elif self.chart_mode == "Top PK Targets":
+            t_map = {}
+            for r in records:
+                vic = r.get("victim", "Unknown").title()
+                t_map[vic] = t_map.get(vic, 0) + 1
+            sorted_t = sorted(t_map.items(), key=lambda x: x[1], reverse=True)[:10]
+            if not sorted_t:
+                sorted_t = [("No Targets", 0)]
+            for vic, cnt in sorted_t:
+                disp = vic if len(vic) <= 10 else vic[:8] + ".."
+                series.append((disp, cnt, f"{vic}: {cnt} PK Victories"))
+
+        return series
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        bg_brush = QBrush(QColor("#030712"))
+        border_pen = QPen(QColor("#1e293b"), 1)
+        painter.setBrush(bg_brush)
+        painter.setPen(border_pen)
+        painter.drawRoundedRect(0, 0, w, h, 6, 6)
+
+        m_left = 50
+        m_right = 20
+        m_top = 28
+        m_bottom = 32
+
+        plot_w = w - m_left - m_right
+        plot_h = h - m_top - m_bottom
+
+        if plot_w <= 20 or plot_h <= 20:
+            return
+
+        series = self._get_data_series()
+        total_kills = sum(s[1] for s in series)
+        if not series or total_kills == 0:
+            painter.setPen(QPen(QColor("#64748b")))
+            painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            painter.drawText(0, 0, w, h, Qt.AlignCenter, "No Player Kills Recorded in this Timeframe")
+            return
+
+        max_v = max([s[1] for s in series] + [5])
+
+        grid_pen = QPen(QColor("#1e293b"), 1, Qt.DashLine)
+        text_pen = QPen(QColor("#64748b"))
+        axis_font = QFont("Segoe UI", 8, QFont.Bold)
+        painter.setFont(axis_font)
+
+        for step in [0, 0.5, 1.0]:
+            y_pos = int(m_top + plot_h * (1.0 - step))
+            painter.setPen(grid_pen)
+            painter.drawLine(m_left, y_pos, w - m_right, y_pos)
+
+            val_lbl = f"{int(max_v * step)}"
+            painter.setPen(text_pen)
+            painter.drawText(5, y_pos - 6, m_left - 10, 14, Qt.AlignRight | Qt.AlignVCenter, val_lbl)
+
+        col_top = QColor("#c084fc")
+        col_bot = QColor("#581c87")
+
+        num_bars = len(series)
+        group_w = plot_w / num_bars
+        bar_w = max(3, int(group_w * 0.65))
+
+        val_font = QFont("Segoe UI", 8, QFont.Bold)
+        label_font = QFont("Segoe UI", 8, QFont.Bold)
+
+        peak_v = max([s[1] for s in series])
+
+        for i, (lbl, val, detail) in enumerate(series):
+            cx = int(m_left + i * group_w + group_w / 2)
+            bx = cx - bar_w // 2
+
+            bar_h = int((val / max_v) * plot_h) if max_v > 0 else 0
+            by = int(m_top + plot_h - bar_h)
+
+            is_peak = (val == peak_v and peak_v > 0)
+
+            if bar_h > 0:
+                grad = QLinearGradient(bx, by, bx, by + bar_h)
+                if i == self.hover_idx:
+                    grad.setColorAt(0, QColor("#e879f9"))
+                    grad.setColorAt(1, QColor("#a855f7"))
+                elif is_peak:
+                    grad.setColorAt(0, QColor("#fbbf24"))
+                    grad.setColorAt(1, QColor("#b45309"))
+                else:
+                    grad.setColorAt(0, col_top)
+                    grad.setColorAt(1, col_bot)
+
+                painter.setBrush(QBrush(grad))
+                painter.setPen(QPen(QColor("#38bdf8") if i == self.hover_idx else (QColor("#fbbf24") if is_peak else col_top), 1))
+                painter.drawRoundedRect(bx, by, bar_w, bar_h, 2, 2)
+
+                if bar_h > 12 or i == self.hover_idx or is_peak:
+                    painter.setPen(QPen(QColor("#ffffff") if is_peak else QColor("#e2e8f0")))
+                    painter.setFont(val_font)
+                    painter.drawText(cx - 20, max(m_top - 18, by - 16), 40, 14, Qt.AlignCenter, f"{val}")
+            else:
+                painter.setBrush(QBrush(QColor("#1e293b")))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(cx - 1, int(m_top + plot_h - 2), 3, 3)
+
+            if lbl:
+                painter.setPen(QPen(QColor("#38bdf8") if i == self.hover_idx else QColor("#94a3b8")))
+                painter.setFont(label_font)
+                painter.drawText(cx - 20, int(h - m_bottom + 6), 40, 18, Qt.AlignCenter, lbl)
+
+            if i == self.hover_idx:
+                painter.setPen(QPen(QColor("#38bdf8"), 1, Qt.DotLine))
+                painter.drawLine(cx, m_top, cx, h - m_bottom)
+
+                painter.setBrush(QBrush(QColor("#0f172a")))
+                painter.setPen(QPen(QColor("#38bdf8"), 1))
+                painter.drawRoundedRect(w - 220, 4, 210, 20, 4, 4)
+                painter.setPen(QPen(QColor("#38bdf8")))
+                painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+                painter.drawText(w - 220, 4, 210, 20, Qt.AlignCenter, detail)
+
+
+class PKStatsDialog(QDialog):
+    """
+    Modal Dialog providing comprehensive Player Kill (PK) statistics & interactive graphs.
+    """
+    def __init__(self, parent=None, kill_book=None):
+        super().__init__(parent)
+        self.setWindowTitle("⚔️ PK Combat Analytics & Target Intelligence")
+        self.resize(850, 620)
+        self.setMinimumSize(750, 520)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #030712;
+                color: #f8fafc;
+            }
+        """)
+        self.kill_book = kill_book or {}
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        hdr_frame = QFrame()
+        hdr_frame.setStyleSheet("background-color: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 10px;")
+        h_layout = QHBoxLayout(hdr_frame)
+        h_layout.setContentsMargins(10, 6, 10, 6)
+
+        t_box = QVBoxLayout()
+        title_lbl = QLabel("⚔️ Player Kills (PK) Analytics")
+        title_lbl.setStyleSheet("font-size: 15px; font-weight: 800; color: #f8fafc;")
+        sub_lbl = QLabel("Track time-of-day victim activity patterns, rival stats, and kill history.")
+        sub_lbl.setStyleSheet("font-size: 11px; color: #64748b;")
+        t_box.addWidget(title_lbl)
+        t_box.addWidget(sub_lbl)
+        h_layout.addLayout(t_box)
+        h_layout.addStretch()
+
+        self.kpi_total = QLabel("0 PK Victories")
+        self.kpi_total.setStyleSheet("background-color: #581c87; color: #c084fc; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 6px;")
+        h_layout.addWidget(self.kpi_total)
+
+        self.kpi_targets = QLabel("0 Targets")
+        self.kpi_targets.setStyleSheet("background-color: #0c4a6e; color: #38bdf8; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 6px;")
+        h_layout.addWidget(self.kpi_targets)
+
+        self.kpi_peak_hour = QLabel("Peak: --:00")
+        self.kpi_peak_hour.setStyleSheet("background-color: #78350f; color: #fde047; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 6px;")
+        h_layout.addWidget(self.kpi_peak_hour)
+
+        layout.addWidget(hdr_frame)
+
+        ctrl_layout = QHBoxLayout()
+        ctrl_layout.setSpacing(8)
+
+        t_lbl = QLabel("Target:")
+        t_lbl.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 11px;")
+        ctrl_layout.addWidget(t_lbl)
+
+        self.target_combo = QComboBox()
+        self.target_combo.addItem("All PK Targets")
+        self.target_combo.setMinimumWidth(130)
+        ctrl_layout.addWidget(self.target_combo)
+
+        m_lbl = QLabel("Chart View:")
+        m_lbl.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 11px;")
+        ctrl_layout.addWidget(m_lbl)
+
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["Hourly Distribution", "Day of Week", "Top PK Targets"])
+        self.mode_combo.setMinimumWidth(150)
+        ctrl_layout.addWidget(self.mode_combo)
+
+        tf_lbl = QLabel("Timeframe:")
+        tf_lbl.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 11px;")
+        ctrl_layout.addWidget(tf_lbl)
+
+        self.timeframe_combo = QComboBox()
+        self.timeframe_combo.addItems(["All Time", "Last 30 Days", "Last 7 Days", "Today"])
+        self.timeframe_combo.setMinimumWidth(110)
+        ctrl_layout.addWidget(self.timeframe_combo)
+
+        ctrl_layout.addStretch()
+
+        self.demo_btn = QPushButton("➕ Demo Kills")
+        self.demo_btn.setProperty("class", "WebBtnSecondary")
+        self.demo_btn.setStyleSheet("padding: 2px 8px; font-size: 10px;")
+        self.demo_btn.setToolTip("Populate sample PK kills for testing statistics & graphs")
+        self.demo_btn.clicked.connect(self.add_demo_pk_data)
+        ctrl_layout.addWidget(self.demo_btn)
+
+        layout.addLayout(ctrl_layout)
+
+        combo_style = """
+            QComboBox {
+                background-color: #0f172a;
+                color: #f8fafc;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 3px 8px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background-color: #0f172a;
+                color: #f8fafc;
+                selection-background-color: #1e293b;
+            }
+        """
+        self.target_combo.setStyleSheet(combo_style)
+        self.mode_combo.setStyleSheet(combo_style)
+        self.timeframe_combo.setStyleSheet(combo_style)
+
+        self.chart_widget = PKGraphChartWidget()
+        layout.addWidget(self.chart_widget)
+
+        lbl_hist = QLabel("📜 RECENT PLAYER KILL HISTORY LOG")
+        lbl_hist.setStyleSheet("font-size: 11px; font-weight: 800; color: #c084fc; letter-spacing: 0.8px; margin-top: 4px;")
+        layout.addWidget(lbl_hist)
+
+        self.hist_table = QTableWidget(0, 5)
+        self.hist_table.verticalHeader().setVisible(False)
+        self.hist_table.setHorizontalHeaderLabels(["TARGET / VICTIM", "DATE & TIME", "DAY", "HOUR", "LOCATION"])
+        self.hist_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.hist_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.hist_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.hist_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.hist_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.hist_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #030712;
+                color: #f8fafc;
+                border: 1px solid #1e293b;
+                border-radius: 6px;
+                gridline-color: #0f172a;
+            }
+            QHeaderView::section {
+                background-color: #0f172a;
+                color: #94a3b8;
+                font-size: 10px;
+                font-weight: 800;
+                padding: 4px;
+                border: 1px solid #1e293b;
+            }
+            QTableWidget::item { padding: 2px 4px; font-size: 11px; }
+            QTableWidget::item:selected { background-color: #1e293b; color: #c084fc; }
+        """)
+        self.hist_table.setMaximumHeight(160)
+        layout.addWidget(self.hist_table)
+
+        self.target_combo.currentIndexChanged.connect(self.refresh_ui)
+        self.mode_combo.currentIndexChanged.connect(self.refresh_ui)
+        self.timeframe_combo.currentIndexChanged.connect(self.refresh_ui)
+
+        self.populate_targets()
+        self.refresh_ui()
+
+    def populate_targets(self):
+        self.target_combo.blockSignals(True)
+        self.target_combo.clear()
+        self.target_combo.addItem("All PK Targets")
+        
+        history = self.kill_book.get("player_kills_history", []) if isinstance(self.kill_book, dict) else []
+        targets = set()
+        for r in history:
+            if isinstance(r, dict) and r.get("victim"):
+                targets.add(r["victim"].title())
+        
+        plys = self.kill_book.get("players", {}) if isinstance(self.kill_book, dict) else {}
+        for p in plys.keys():
+            targets.add(p.title())
+
+        for t in sorted(list(targets)):
+            self.target_combo.addItem(t)
+        self.target_combo.blockSignals(False)
+
+    def refresh_ui(self):
+        history = self.kill_book.get("player_kills_history", []) if isinstance(self.kill_book, dict) else []
+        plys = self.kill_book.get("players", {}) if isinstance(self.kill_book, dict) else {}
+
+        if not history and plys:
+            history = []
+            from datetime import datetime
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now_d = datetime.now().strftime("%Y-%m-%d")
+            for victim, count in plys.items():
+                for _ in range(count):
+                    history.append({
+                        "victim": victim,
+                        "timestamp": now_str,
+                        "date": now_d,
+                        "time": "12:00:00",
+                        "hour": 12,
+                        "day_of_week": "Wednesday",
+                        "room": "Recorded History"
+                    })
+            if isinstance(self.kill_book, dict):
+                self.kill_book["player_kills_history"] = history
+
+        target = self.target_combo.currentText()
+        mode = self.mode_combo.currentText()
+        timeframe = self.timeframe_combo.currentText()
+
+        self.chart_widget.set_data(history, target_filter=target, timeframe_filter=timeframe, chart_mode=mode)
+
+        filtered_recs = self.chart_widget._filter_records()
+        total_pks = len(filtered_recs)
+        unique_targets = len(set(r.get("victim", "").lower() for r in filtered_recs if r.get("victim")))
+
+        hours_count = [0] * 24
+        for r in filtered_recs:
+            try:
+                h = int(r.get("hour", 0))
+                if 0 <= h < 24:
+                    hours_count[h] += 1
+            except Exception:
+                pass
+        max_h = hours_count.index(max(hours_count)) if max(hours_count) > 0 else -1
+        peak_str = f"Peak: {max_h:02d}:00" if max_h != -1 else "Peak: --:00"
+
+        self.kpi_total.setText(f"{total_pks} PK Victories")
+        self.kpi_targets.setText(f"{unique_targets} Targets")
+        self.kpi_peak_hour.setText(peak_str)
+
+        self.hist_table.setRowCount(0)
+        sorted_recs = sorted(filtered_recs, key=lambda x: x.get("timestamp", ""), reverse=True)
+
+        for r in sorted_recs:
+            row = self.hist_table.rowCount()
+            self.hist_table.insertRow(row)
+
+            v_item = QTableWidgetItem(r.get("victim", "Unknown").title())
+            ts_item = QTableWidgetItem(r.get("timestamp", r.get("date", "--")))
+            d_item = QTableWidgetItem(r.get("day_of_week", "--"))
+            h_item = QTableWidgetItem(f"{r.get('hour', 0):02d}:00")
+            r_item = QTableWidgetItem(r.get("room", "Unknown"))
+
+            self.hist_table.setItem(row, 0, v_item)
+            self.hist_table.setItem(row, 1, ts_item)
+            self.hist_table.setItem(row, 2, d_item)
+            self.hist_table.setItem(row, 3, h_item)
+            self.hist_table.setItem(row, 4, r_item)
+
+    def add_demo_pk_data(self):
+        import random
+        from datetime import datetime, timedelta
+
+        if "player_kills_history" not in self.kill_book or not isinstance(self.kill_book["player_kills_history"], list):
+            self.kill_book["player_kills_history"] = []
+
+        sample_victims = ["Psychochild", "Dusk", "Kafai", "Elu", "Morpheus", "ShadowStalker"]
+        sample_rooms = ["Marion Town Square", "Barloque Bank", "Tos Arena", "Jorvik Forest", "Cor Noth Guild"]
+
+        now = datetime.now()
+        for i in range(25):
+            days_ago = random.randint(0, 14)
+            hour_val = random.choice([14, 15, 19, 20, 21, 21, 22, 22, 23])
+            minute_val = random.randint(0, 59)
+            dt = now - timedelta(days=days_ago)
+            dt = dt.replace(hour=hour_val, minute=minute_val)
+
+            victim = random.choice(sample_victims)
+            rec = {
+                "victim": victim,
+                "timestamp": dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "date": dt.strftime("%Y-%m-%d"),
+                "time": dt.strftime("%H:%M:%S"),
+                "hour": hour_val,
+                "day_of_week": dt.strftime("%A"),
+                "room": random.choice(sample_rooms)
+            }
+            self.kill_book["player_kills_history"].append(rec)
+
+            if "players" not in self.kill_book or not isinstance(self.kill_book["players"], dict):
+                self.kill_book["players"] = {}
+            self.kill_book["players"][victim] = self.kill_book["players"].get(victim, 0) + 1
+
+        self.populate_targets()
+        self.refresh_ui()
+
+
+# ----------------------------------------------------------------------
 # PySide6 Splash Screen & Status Overlay
 # ----------------------------------------------------------------------
 class M59SplashScreen(QWidget):
@@ -3982,6 +4565,17 @@ QWidget {
     color: #f8fafc;
 }
 
+/* Tooltips - Universal Styled Tooltips for Mouse Over */
+QToolTip {
+    background-color: #020617;
+    color: #38bdf8;
+    border: 1px solid #0284c7;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
 /* Sidebar Navigation */
 #SidebarWidget {
     background-color: #0f172a;
@@ -4001,6 +4595,13 @@ QWidget {
     font-weight: 500;
 }
 
+QListWidget, QListView {
+    background-color: #030712;
+    color: #f8fafc;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+}
+
 QListWidget#NavList {
     background-color: transparent;
     border: none;
@@ -4008,20 +4609,25 @@ QListWidget#NavList {
     font-weight: 600;
 }
 
-QListWidget#NavList::item {
-    padding: 6px 10px;
-    border-radius: 6px;
+QListWidget::item, QListView::item {
+    padding: 0px;
+    margin: 0px;
     color: #cbd5e1;
-    margin-bottom: 2px;
+    border-radius: 4px;
     border: 1px solid transparent;
 }
 
-QListWidget#NavList::item:hover {
-    background-color: #1e293b;
-    color: #f8fafc;
+QListWidget#NavList::item {
+    padding: 6px 10px;
+    margin-bottom: 2px;
 }
 
-QListWidget#NavList::item:selected {
+QListWidget::item:hover, QListView::item:hover {
+    background-color: #1e293b;
+    color: #38bdf8;
+}
+
+QListWidget::item:selected, QListView::item:selected {
     background-color: #1e293b;
     color: #f8fafc;
     border: 1px solid #334155;
@@ -4042,6 +4648,33 @@ QListWidget#NavList::item:selected {
 }
 
 /* Buttons */
+QPushButton {
+    background-color: #1e293b;
+    color: #f8fafc;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background-color: #334155;
+    color: #38bdf8;
+    border-color: #38bdf8;
+}
+
+QPushButton:pressed {
+    background-color: #0f172a;
+    color: #38bdf8;
+}
+
+QPushButton:disabled {
+    background-color: #0f172a;
+    color: #475569;
+    border-color: #1e293b;
+}
+
 QPushButton.WebBtnPrimary {
     background-color: #3b82f6;
     color: #ffffff;
@@ -4054,6 +4687,7 @@ QPushButton.WebBtnPrimary {
 
 QPushButton.WebBtnPrimary:hover {
     background-color: #2563eb;
+    color: #ffffff;
 }
 
 QPushButton.WebBtnSecondary {
@@ -4068,6 +4702,21 @@ QPushButton.WebBtnSecondary {
 
 QPushButton.WebBtnSecondary:hover {
     background-color: #475569;
+    color: #f8fafc;
+}
+
+QToolButton {
+    background-color: transparent;
+    color: #f8fafc;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 4px;
+}
+
+QToolButton:hover {
+    background-color: #1e293b;
+    color: #38bdf8;
+    border-color: #334155;
 }
 
 /* Inputs & Dropdowns */
@@ -4080,8 +4729,12 @@ QLineEdit {
     font-size: 13px;
 }
 
+QLineEdit:hover {
+    border: 1px solid #475569;
+}
+
 QLineEdit:focus {
-    border: 1px solid #3b82f6;
+    border: 1px solid #38bdf8;
 }
 
 QComboBox {
@@ -4092,6 +4745,11 @@ QComboBox {
     padding: 6px 10px;
     font-size: 12px;
     min-height: 20px;
+}
+
+QComboBox:hover {
+    border: 1px solid #38bdf8;
+    color: #f8fafc;
 }
 
 QComboBox:focus, QComboBox:on {
@@ -4126,6 +4784,120 @@ QComboBox QAbstractItemView::item {
 QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected {
     background-color: #2563eb;
     color: #ffffff;
+}
+
+/* Tables & Data Grids */
+QTableWidget, QTableView {
+    background-color: #030712;
+    color: #f8fafc;
+    gridline-color: #1e293b;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+}
+
+QTableWidget::item, QTableView::item {
+    padding: 4px 8px;
+    color: #f8fafc;
+    background-color: transparent;
+}
+
+QTableWidget::item:hover, QTableView::item:hover {
+    background-color: #1e293b;
+    color: #38bdf8;
+}
+
+QTableWidget::item:selected, QTableView::item:selected {
+    background-color: #334155;
+    color: #ffffff;
+}
+
+QHeaderView::section {
+    background-color: #0f172a;
+    color: #94a3b8;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 6px 8px;
+    border: 1px solid #1e293b;
+}
+
+QHeaderView::section:hover {
+    background-color: #1e293b;
+    color: #38bdf8;
+}
+
+/* Tree Views */
+QTreeWidget, QTreeView {
+    background-color: #030712;
+    color: #f8fafc;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+}
+
+QTreeWidget::item, QTreeView::item {
+    padding: 4px 8px;
+    color: #f8fafc;
+}
+
+QTreeWidget::item:hover, QTreeView::item:hover {
+    background-color: #1e293b;
+    color: #38bdf8;
+}
+
+QTreeWidget::item:selected, QTreeView::item:selected {
+    background-color: #2563eb;
+    color: #ffffff;
+}
+
+/* Menus */
+QMenu {
+    background-color: #0f172a;
+    color: #f8fafc;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 6px 20px 6px 12px;
+    border-radius: 4px;
+    color: #f8fafc;
+}
+
+QMenu::item:selected, QMenu::item:hover {
+    background-color: #2563eb;
+    color: #ffffff;
+}
+
+/* Tab Bar */
+QTabBar::tab {
+    background-color: #0f172a;
+    color: #94a3b8;
+    border: 1px solid #1e293b;
+    padding: 6px 14px;
+    font-weight: 600;
+    font-size: 12px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+}
+
+QTabBar::tab:hover {
+    background-color: #1e293b;
+    color: #38bdf8;
+}
+
+QTabBar::tab:selected {
+    background-color: #1e293b;
+    color: #f8fafc;
+    border-bottom: 2px solid #38bdf8;
+}
+
+/* Checkboxes & Radio Buttons */
+QCheckBox:hover, QRadioButton:hover {
+    color: #38bdf8;
+}
+
+QCheckBox::indicator:hover, QRadioButton::indicator:hover {
+    border-color: #38bdf8;
 }
 
 /* Progress Bars */
@@ -8001,20 +8773,29 @@ class M59CompanionApp(QMainWindow):
         pc_hdr.addWidget(pc_title)
         pc_hdr.addStretch()
 
+        self.kb_pk_stats_btn = QPushButton("📊 PK Stats & Graph")
+        self.kb_pk_stats_btn.setProperty("class", "WebBtnSecondary")
+        self.kb_pk_stats_btn.setStyleSheet("padding: 2px 8px; font-size: 10px; color: #c084fc; font-weight: bold; background-color: #3b0764; border: 1px solid #7e22ce;")
+        self.kb_pk_stats_btn.setToolTip("Open PK Analytics Popup with Time-of-Day Kills Graph & Target Intelligence")
+        self.kb_pk_stats_btn.clicked.connect(lambda: self.show_pk_stats_dialog())
+        pc_hdr.addWidget(self.kb_pk_stats_btn)
+
         self.kb_players_search = QLineEdit()
         self.kb_players_search.setPlaceholderText("Filter players...")
-        self.kb_players_search.setFixedWidth(160)
+        self.kb_players_search.setFixedWidth(140)
         self.kb_players_search.textChanged.connect(self.update_killbook_ui)
         pc_hdr.addWidget(self.kb_players_search)
         pc_layout.addLayout(pc_hdr)
 
-        self.kb_players_table = QTableWidget(0, 4)
+        self.kb_players_table = QTableWidget(0, 5)
         self.kb_players_table.verticalHeader().setVisible(False)
-        self.kb_players_table.setHorizontalHeaderLabels(["PLAYER NAME", "ALL-TIME", "SESSION", "STATUS"])
+        self.kb_players_table.setHorizontalHeaderLabels(["PLAYER NAME", "ALL-TIME", "SESSION", "LAST KILLED", "STATUS"])
         self.kb_players_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.kb_players_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.kb_players_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.kb_players_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.kb_players_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.kb_players_table.doubleClicked.connect(self.on_player_table_double_clicked)
         pc_layout.addWidget(self.kb_players_table)
 
         kb_splitter.addWidget(p_card)
@@ -8265,6 +9046,10 @@ class M59CompanionApp(QMainWindow):
         player_names = sorted(list(set(all_plys.keys()) | set(session_plys.keys())))
         total_p_count = 0
 
+        # Retrieve player kill history
+        kill_book_data = getattr(self.combat_monitor, 'kill_book', {})
+        pk_history = kill_book_data.get("player_kills_history", []) if isinstance(kill_book_data, dict) else []
+
         for name in player_names:
             at = all_plys.get(name, 0)
             se = session_plys.get(name, 0)
@@ -8273,6 +9058,13 @@ class M59CompanionApp(QMainWindow):
             if p_filter and p_filter not in name.lower():
                 continue
 
+            last_killed_ts = "--"
+            if isinstance(pk_history, list):
+                for rec in reversed(pk_history):
+                    if isinstance(rec, dict) and rec.get("victim", "").lower() == name.lower():
+                        last_killed_ts = rec.get("timestamp", rec.get("date", "--"))
+                        break
+
             row = self.kb_players_table.rowCount()
             self.kb_players_table.insertRow(row)
 
@@ -8280,14 +9072,38 @@ class M59CompanionApp(QMainWindow):
             self.kb_players_table.setItem(row, 0, QTableWidgetItem(display_name))
             self.kb_players_table.setItem(row, 1, QTableWidgetItem(str(at)))
             self.kb_players_table.setItem(row, 2, QTableWidgetItem(f"+{se}" if se > 0 else "0"))
+            self.kb_players_table.setItem(row, 3, QTableWidgetItem(last_killed_ts))
 
             status_str = "⚔️ PK Defeated" if se > 0 else "Logged"
-            self.kb_players_table.setItem(row, 3, QTableWidgetItem(status_str))
+            self.kb_players_table.setItem(row, 4, QTableWidgetItem(status_str))
 
         # Update Badges
         self.kb_monsters_badge.setText(f"{total_m_count} Monsters Slain")
         self.kb_players_badge.setText(f"{total_p_count} Players Defeated")
         self.kb_total_badge.setText(f"{total_m_count + total_p_count} Total Victories")
+
+    def show_pk_stats_dialog(self, target_player=None):
+        """Displays the PK Combat Analytics & Target Intelligence Popup Dialog."""
+        try:
+            kill_book = getattr(self.combat_monitor, 'kill_book', {})
+            dlg = PKStatsDialog(self, kill_book=kill_book)
+            if target_player and isinstance(target_player, str):
+                idx = dlg.target_combo.findText(target_player.title())
+                if idx != -1:
+                    dlg.target_combo.setCurrentIndex(idx)
+            dlg.exec()
+        except Exception as ex:
+            print(f"[M59-PK] Error showing PK stats dialog: {ex}", flush=True)
+
+    def on_player_table_double_clicked(self, index):
+        """Opens PK stats dialog pre-filtered to the double-clicked player."""
+        if not index.isValid():
+            return
+        row = index.row()
+        item = self.kb_players_table.item(row, 0)
+        if item:
+            p_name = item.text().strip()
+            self.show_pk_stats_dialog(target_player=p_name)
 
     # ==================================================================
     # INVENTORY SCRAPER & METRICS CALCULATIONS ENGINE
@@ -8511,31 +9327,27 @@ class M59CompanionApp(QMainWindow):
         self.prog_search_input.textChanged.connect(lambda: self.update_progression_ui())
         ctrl_bar.addWidget(self.prog_search_input)
 
-        # Intellect Selector (Auto-populated from Character Tab Dance)
+        # Intellect Display Badge (Auto-populated from Character Tab Dance)
         int_lbl = QLabel("Intellect:")
         int_lbl.setStyleSheet("color: #94a3b8; font-weight: 700; font-size: 10px;")
         int_lbl.setToolTip("Character Intellect (automatically pulled from Character Stats / Tab Dance)")
         ctrl_bar.addWidget(int_lbl)
 
-        self.prog_intellect_spin = QSpinBox()
-        self.prog_intellect_spin.setRange(1, 50)
-        self.prog_intellect_spin.setValue(25)
-        self.prog_intellect_spin.setFixedWidth(50)
-        self.prog_intellect_spin.setToolTip("Current Character Intellect (pulled from Tab Dance, or adjust manually)")
-        self.prog_intellect_spin.setStyleSheet("""
-            QSpinBox {
+        self.prog_intellect_val_lbl = QLabel("25")
+        self.prog_intellect_val_lbl.setToolTip("Current Character Intellect (pulled automatically from Tab Dance)")
+        self.prog_intellect_val_lbl.setStyleSheet("""
+            QLabel {
                 background-color: #0f172a;
                 color: #38bdf8;
                 border: 1px solid #334155;
                 border-radius: 4px;
-                padding: 1px 3px;
+                padding: 1px 8px;
                 font-weight: bold;
-                font-size: 10px;
+                font-size: 11px;
                 min-height: 20px;
             }
         """)
-        self.prog_intellect_spin.valueChanged.connect(self.on_intellect_spin_changed)
-        ctrl_bar.addWidget(self.prog_intellect_spin)
+        ctrl_bar.addWidget(self.prog_intellect_val_lbl)
 
         self.prog_expand_btn = QPushButton("Expand All")
         self.prog_expand_btn.setProperty("class", "WebBtnSecondary")
@@ -8549,15 +9361,33 @@ class M59CompanionApp(QMainWindow):
         self.prog_collapse_btn.clicked.connect(lambda: self.full_prog_tree.collapseAll())
         ctrl_bar.addWidget(self.prog_collapse_btn)
 
-        self.prog_clear_btn = QPushButton("🧹 Clear")
-        self.prog_clear_btn.setProperty("class", "WebBtnSecondary")
-        self.prog_clear_btn.setStyleSheet("padding: 2px 6px; font-size: 10px; min-height: 22px;")
-        self.prog_clear_btn.setToolTip("Clear knowledge cache")
-        self.prog_clear_btn.clicked.connect(self.clear_knowledge_cache)
-        ctrl_bar.addWidget(self.prog_clear_btn)
+        self.prog_formula_btn = QPushButton("📐 Show Formula")
+        self.prog_formula_btn.setProperty("class", "WebBtnSecondary")
+        self.prog_formula_btn.setStyleSheet("padding: 2px 8px; font-size: 10px; min-height: 22px; color: #38bdf8;")
+        self.prog_formula_btn.setToolTip("Toggle view of progression goal calculation formula")
+        ctrl_bar.addWidget(self.prog_formula_btn)
 
         ctrl_bar.addStretch()
         page_layout.addLayout(ctrl_bar)
+
+        # Sleek Formula Card (Hidden by default)
+        self.prog_formula_box = QFrame()
+        self.prog_formula_box.setVisible(False)
+        self.prog_formula_box.setStyleSheet("background-color: #020617; border: 1px solid #1e293b; border-radius: 6px; padding: 4px 8px; margin-top: 2px; margin-bottom: 2px;")
+        f_layout = QHBoxLayout(self.prog_formula_box)
+        f_layout.setContentsMargins(6, 3, 6, 3)
+        self.prog_formula_lbl = QLabel("Goal % Sum = (iPoints × 7) + 185 - (Intellect × 2.8)   (Range: 75% - 297%)")
+        self.prog_formula_lbl.setStyleSheet("color: #38bdf8; font-size: 11px; font-family: 'Consolas', monospace; font-weight: 600;")
+        f_layout.addWidget(self.prog_formula_lbl)
+        f_layout.addStretch()
+        page_layout.addWidget(self.prog_formula_box)
+
+        def _toggle_formula():
+            vis = not self.prog_formula_box.isVisible()
+            self.prog_formula_box.setVisible(vis)
+            self.prog_formula_btn.setText("📐 Hide Formula" if vis else "📐 Show Formula")
+
+        self.prog_formula_btn.clicked.connect(_toggle_formula)
 
         # Main QTreeWidget for Full Progression Page
         self.full_prog_tree = QTreeWidget()
@@ -8966,22 +9796,8 @@ class M59CompanionApp(QMainWindow):
             for k, val in self.attributes.items():
                 if k in getattr(self, 'attr_labels', {}):
                     self.attr_labels[k].setText(str(val))
-            if hasattr(self, 'prog_intellect_spin') and self.prog_intellect_spin and self.attributes.get("Intellect") not in (None, "--", ""):
-                try:
-                    ival = int(self.attributes["Intellect"])
-                    self.prog_intellect_spin.blockSignals(True)
-                    self.prog_intellect_spin.setValue(ival)
-                    self.prog_intellect_spin.blockSignals(False)
-                except Exception:
-                    pass
-
-    def on_intellect_spin_changed(self, val):
-        """Called when user manually modifies the progression intellect spinbox."""
-        self.attributes["Intellect"] = val
-        if "Intellect" in getattr(self, 'attr_labels', {}):
-            self.attr_labels["Intellect"].setText(str(val))
-        self.save_attributes_cache()
-        self.update_progression_ui()
+            if hasattr(self, 'prog_intellect_val_lbl') and self.prog_intellect_val_lbl and self.attributes.get("Intellect") not in (None, "--", ""):
+                self.prog_intellect_val_lbl.setText(str(self.attributes["Intellect"]))
 
     def update_progression_ui(self, knowledge=None):
         """Calculates and refreshes the progression tree widgets using the current character's intellect pulled from tab dance."""
@@ -8998,15 +9814,17 @@ class M59CompanionApp(QMainWindow):
         if char_int not in (None, "--", ""):
             try:
                 intellect = int(char_int)
-                if hasattr(self, 'prog_intellect_spin') and self.prog_intellect_spin:
-                    if self.prog_intellect_spin.value() != intellect:
-                        self.prog_intellect_spin.blockSignals(True)
-                        self.prog_intellect_spin.setValue(intellect)
-                        self.prog_intellect_spin.blockSignals(False)
             except Exception:
                 intellect = 25
-        elif hasattr(self, 'prog_intellect_spin') and self.prog_intellect_spin:
-            intellect = self.prog_intellect_spin.value()
+
+        if hasattr(self, 'prog_intellect_val_lbl') and self.prog_intellect_val_lbl:
+            self.prog_intellect_val_lbl.setText(str(intellect))
+
+        if hasattr(self, 'prog_formula_lbl') and self.prog_formula_lbl:
+            int_cost = round(intellect * 2.8, 1)
+            self.prog_formula_lbl.setText(
+                f"Goal % Sum = (iPoints × 7) + 185 - ({intellect} × 2.8)   |   Intellect Discount: -{int_cost}%   (Range: 75% - 297%)"
+            )
 
         try:
             results_list = self.calculator.calculate_progression(self.knowledge_cache, intellect)
@@ -10526,14 +11344,6 @@ class M59CompanionApp(QMainWindow):
         self.save_attributes_cache()
 
         if "Intellect" in stats:
-            try:
-                int_val = int(stats["Intellect"])
-                if hasattr(self, 'prog_intellect_spin') and self.prog_intellect_spin:
-                    self.prog_intellect_spin.blockSignals(True)
-                    self.prog_intellect_spin.setValue(int_val)
-                    self.prog_intellect_spin.blockSignals(False)
-            except Exception:
-                pass
             self.update_progression_ui()
 
         if "Might" in stats:
@@ -10652,7 +11462,7 @@ class M59CompanionApp(QMainWindow):
 
             item_widget = QWidget()
             item_layout = QHBoxLayout(item_widget)
-            item_layout.setContentsMargins(6, 1, 6, 1)
+            item_layout.setContentsMargins(4, 2, 4, 2)
             item_layout.setSpacing(4)
 
             p_prefix = "⚪ " if is_offline else ""
@@ -10712,7 +11522,7 @@ class M59CompanionApp(QMainWindow):
                 item_layout.addWidget(dm_btn)
 
             list_item = QListWidgetItem()
-            list_item.setSizeHint(QSize(0, max(22, fs + 6)))
+            list_item.setSizeHint(QSize(0, max(24, fs + 8)))
             list_item.setData(Qt.UserRole, name)
             dst_list.addItem(list_item)
             dst_list.setItemWidget(list_item, item_widget)
@@ -11512,7 +12322,11 @@ class M59CompanionApp(QMainWindow):
             return
 
         # 2. Check CombatMonitor for Kills / PK Alerts
-        kill = self.combat_monitor.process_line(msg_text)
+        kill = self.combat_monitor.process_line(
+            msg_text,
+            msg_ts=msg_ts,
+            room_name=getattr(self, 'current_room_name', 'Unknown Location')
+        )
         if kill:
             if kill.get("type") == "PK_ALERT":
                 if not is_historical and getattr(self, 'comms_mode', 'live') == 'live':
@@ -12231,6 +13045,11 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setStyleSheet(FLUID_WEB_QSS)
+
+    # Global Instant ToolTip Filter (0ms delay on mouse hover)
+    self_instant_filter = InstantToolTipFilter(app)
+    app.installEventFilter(self_instant_filter)
 
     # Set Window / App Icon
     icon_path = resource_path(os.path.join("imgs", "m59comp.ico"))

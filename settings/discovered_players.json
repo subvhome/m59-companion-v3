@@ -73,7 +73,7 @@
   },
   "ktinos": {
     "name": "Ktinos",
-    "last_status": "INNOCENT"
+    "last_status": "OUTLAW"
   },
   "carregador001": {
     "name": "Carregador001",
@@ -270,5 +270,77 @@
   "acrano umbraferris": {
     "name": "Acrano Umbraferris",
     "last_status": "OUTLAW"
+  },
+  "astra nox": {
+    "name": "Astra Nox",
+    "last_status": "INNOCENT"
+  },
+  "hell": {
+    "name": "Hell",
+    "last_status": "INNOCENT"
+  },
+  "sylphie": {
+    "name": "Sylphie",
+    "last_status": "INNOCENT"
+  },
+  "moonshade": {
+    "name": "Moonshade",
+    "last_status": "INNOCENT"
+  },
+  "janosch": {
+    "name": "Janosch",
+    "last_status": "INNOCENT"
+  },
+  "lauranna": {
+    "name": "Lauranna",
+    "last_status": "INNOCENT"
+  },
+  "moldrock": {
+    "name": "Moldrock",
+    "last_status": "INNOCENT"
+  },
+  "pkers downfall": {
+    "name": "Pkers Downfall",
+    "last_status": "INNOCENT"
+  },
+  "vulthuroyl": {
+    "name": "Vulthuroyl",
+    "last_status": "INNOCENT"
+  },
+  "cottage cheese like discharge": {
+    "name": "Cottage Cheese like Discharge",
+    "last_status": "INNOCENT"
+  },
+  "femto": {
+    "name": "Femto",
+    "last_status": "INNOCENT"
+  },
+  "llght": {
+    "name": "Llght",
+    "last_status": "INNOCENT"
+  },
+  "rodastyr": {
+    "name": "Rodastyr",
+    "last_status": "INNOCENT"
+  },
+  "allison hell": {
+    "name": "Allison Hell",
+    "last_status": "INNOCENT"
+  },
+  "acrano": {
+    "name": "Acrano",
+    "last_status": "INNOCENT"
+  },
+  "odst": {
+    "name": "ODST",
+    "last_status": "INNOCENT"
+  },
+  "mauhur": {
+    "name": "mauhur",
+    "last_status": "INNOCENT"
+  },
+  "ominous villein": {
+    "name": "Ominous Villein",
+    "last_status": "INNOCENT"
   }
 }
