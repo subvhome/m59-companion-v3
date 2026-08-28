@@ -77,12 +77,21 @@ except ImportError:
         class QObject: pass
 
 def resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller."""
+    """Get absolute path to resource, checking data/, settings/, or base folder."""
     try:
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+    
+    direct = os.path.join(base_path, relative_path)
+    if os.path.exists(direct):
+        return direct
+    fname = os.path.basename(relative_path)
+    for folder in ["data", "settings", ""]:
+        p = os.path.join(base_path, folder, fname) if folder else os.path.join(base_path, fname)
+        if os.path.exists(p):
+            return p
+    return direct
 
 def pil_to_qpixmap(pil_img):
     """Converts a PIL RGBA Image to a PySide6 QPixmap."""

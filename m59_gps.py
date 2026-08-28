@@ -6,12 +6,16 @@ import logging
 import heapq
 import math
 from datetime import datetime
+from m59_utils import resource_path
 
 logger = logging.getLogger("dashboard")
 
 class GPSManager:
-    def __init__(self, dataset_path="settings/meridian_rooms_dataset.json"):
-        self.dataset_path = dataset_path
+    def __init__(self, dataset_path=None):
+        if dataset_path is None:
+            self.dataset_path = resource_path("meridian_rooms_dataset.json")
+        else:
+            self.dataset_path = resource_path(dataset_path)
         self.dataset = self.load_dataset()
         self.last_room = None
         self.transition_start_time = 0

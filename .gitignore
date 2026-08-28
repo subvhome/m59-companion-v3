@@ -1,55 +1,43 @@
-.codegraph/
+# ==============================================================================
+# Application Runtime Settings, Character Logs, & Dynamic Data
+# ==============================================================================
+# All user-specific runtime settings, logs, character states, and user databases
+settings/*
+!settings/.gitkeep
+
+# Runtime logs
 logs/
-prev-code/
-__pycache__/
-settings/*_vault_*.json
-settings/*_dms.json
-settings/*_knowledge*.json
-settings/*_reagents*.json
-settings/*_bank.json
-settings/*_chat.log
-settings/*_kills*
-debugscripts/
-*.spec
-build/
-m59_companion_locks/
-dev_pipeline.py
-.lock
-MISSION.md
-python
-sync.ffs_db
-wholist-final.py
-chat_research_tool-v3.py
-debug_chat_raw.py
-monsters.htm
-test_version_trigger.py
-wholist-discover.py
-wholist-final.py
-wholist-smart.py
-debugscripts/
-*.pcapng
-*.txt
 *.log
-*.tmp
-navrecap.md
-SESSION_RESUME.md
-complex_room_files.txt
-inv_hunt.txt
-wholist-perfect.py
-blakston.pal
-extract_roo.py
-extract_rooms.py
-Follow
-inventory_reader.py
-inventory_weight.py
-m59.pal
-metadata.json
-patch2.py
-.env.example
-package.json
-package-lock.json
-vite.config.ts
-tsconfig.json
-node_modules/
+
+# Cache & Lock Files
+*.lock
+.lock
+m59_companion_locks/
+sync.ffs_db
+
+# ==============================================================================
+# Build Artifacts & Binaries
+# ==============================================================================
+build/
 dist/
-release_promoter.py
+*.exe
+*.spec
+
+# ==============================================================================
+# Python & Environment Artifacts
+# ==============================================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pcapng
+.env*
+!.env.example
+
+# ==============================================================================
+# IDEs & System Temp Files
+# ==============================================================================
+.vscode/
+.idea/
+.DS_Store
+*.tmp
+*.bak

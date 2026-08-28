@@ -2,22 +2,15 @@ import os
 import json
 import sys
 from m59_logging import setup_logging, get_logger
+from m59_utils import resource_path
 
 setup_logging(debug_enabled=True)
 prog_logger = get_logger("progression")
 
-def resource_path(relative_path):
-    """ Get absolute path to resource, works for dev and for PyInstaller """
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
-
 class SchoolCalculator:
     def __init__(self, data_path=None, config_path=None):
         if data_path is None:
-            data_path = resource_path("settings/m59_data.json")
+            data_path = resource_path("m59_data.json")
         if config_path is None:
             config_path = resource_path("settings/config.json")
             

@@ -5,6 +5,7 @@ import glob
 import shutil
 import subprocess
 import getpass
+from m59_utils import resource_path
 
 def detect_installation():
     """Detects Meridian 59 installation, returns (rooms_dir, map_file, is_running)."""
@@ -154,7 +155,7 @@ def generate_map(map_file, unique_rooms, debug=False, preserve_annotations=False
     if existing_annotations is None: existing_annotations = {}
     # Load dataset
     import json
-    dataset_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'settings', 'meridian_rooms_dataset.json')
+    dataset_path = resource_path("meridian_rooms_dataset.json")
     room_annotations = {}
     if os.path.exists(dataset_path):
         try:

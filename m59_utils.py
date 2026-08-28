@@ -1,9 +1,14 @@
 import os
 import sys
 import re
-import win32gui
-import win32process
-import win32con
+try:
+    import win32gui
+    import win32process
+    import win32con
+except ImportError:
+    win32gui = None
+    win32process = None
+    win32con = None
 import logging
 import json
 import shutil
@@ -43,13 +48,34 @@ def migrate_settings():
                         logger.error(f"MIGRATION ERROR: Failed to move {f}: {e}")
 
 def resource_path(relative_path):
-    """ Get absolute path to resource, works for dev and for PyInstaller """
+    """ Get absolute path to resource, checking data/, settings/, or base folder """
     try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+
+    direct_path = os.path.join(base_path, relative_path)
+    if os.path.exists(direct_path):
+        return direct_path
+
+    fname = os.path.basename(relative_path)
+
+    # Try data/ folder first for static application datasets
+    data_path = os.path.join(base_path, "data", fname)
+    if os.path.exists(data_path):
+        return data_path
+
+    # Try settings/ folder second for legacy/user settings
+    settings_path = os.path.join(base_path, "settings", fname)
+    if os.path.exists(settings_path):
+        return settings_path
+
+    # Try root folder third
+    root_path = os.path.join(base_path, fname)
+    if os.path.exists(root_path):
+        return root_path
+
+    return direct_path
 
 def get_safe_name(name):
     """Sanitizes character names for file paths and persistence."""
