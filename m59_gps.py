@@ -17,6 +17,8 @@ class GPSManager:
         else:
             self.dataset_path = resource_path(dataset_path)
         self.dataset = self.load_dataset()
+        self.travel_times_file = os.path.join("settings", "travel_times.json")
+        self.load_travel_times()
         self.last_room = None
         self.transition_start_time = 0
         
@@ -42,13 +44,58 @@ class GPSManager:
             logger.error(f"GPS: World dataset NOT FOUND at {self.dataset_path}")
         return {}
 
+    def load_travel_times(self):
+        """Loads custom learned travel times from settings/travel_times.json."""
+        import shutil
+        old_data_tt = os.path.join("data", "travel_times.json")
+        old_root_tt = "travel_times.json"
+        
+        if not os.path.exists(self.travel_times_file):
+            os.makedirs("settings", exist_ok=True)
+            if os.path.exists(old_data_tt):
+                try:
+                    shutil.move(old_data_tt, self.travel_times_file)
+                    logger.info(f"GPS MIGRATION: Moved {old_data_tt} -> {self.travel_times_file}")
+                except Exception as e:
+                    logger.error(f"GPS MIGRATION ERROR: {e}")
+            elif os.path.exists(old_root_tt):
+                try:
+                    shutil.move(old_root_tt, self.travel_times_file)
+                    logger.info(f"GPS MIGRATION: Moved {old_root_tt} -> {self.travel_times_file}")
+                except Exception as e:
+                    logger.error(f"GPS MIGRATION ERROR: {e}")
+
+        if os.path.exists(self.travel_times_file):
+            try:
+                with open(self.travel_times_file, "r") as f:
+                    tt_map = json.load(f)
+                    applied = 0
+                    for rid, info in self.dataset.items():
+                        for exit_info in info.get('exits', []):
+                            key = f"{rid}->{exit_info.get('to_rid')}"
+                            if key in tt_map:
+                                exit_info['travel_time'] = tt_map[key]
+                                applied += 1
+                    logger.info(f"GPS: Applied {applied} learned travel times from {self.travel_times_file}")
+            except Exception as e:
+                logger.error(f"GPS: Failed to load travel times: {e}")
+
     def save_dataset(self):
-        """Saves the world dataset, including learned travel times."""
+        """Saves learned travel times to settings/travel_times.json."""
         try:
-            with open(self.dataset_path, "w") as f:
-                json.dump(self.dataset, f, indent=4)
+            os.makedirs("settings", exist_ok=True)
+            tt_map = {}
+            for rid, info in self.dataset.items():
+                for exit_info in info.get('exits', []):
+                    tt = exit_info.get('travel_time')
+                    if tt is not None:
+                        key = f"{rid}->{exit_info.get('to_rid')}"
+                        tt_map[key] = tt
+            with open(self.travel_times_file, "w") as f:
+                json.dump(tt_map, f, indent=4)
+            logger.info(f"GPS: Saved {len(tt_map)} learned travel times to {self.travel_times_file}")
         except Exception as e:
-            logger.error(f"GPS: Failed to save dataset: {e}")
+            logger.error(f"GPS: Failed to save travel times: {e}")
 
     def get_room_options(self):
         """Returns a list of all unique room names with 'Nearby' hints for duplicates."""

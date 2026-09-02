@@ -85,7 +85,7 @@ from m59_news_globe import (
     NewsGlobeDatabase, NewsSyncEngine,
     NID_ANNOUNCEMENTS, NID_TOS_HALL, NID_ADVENTURE, NID_JUSTICAR, NID_GAME, NID_EVENT_SCHEDULE,
     NEWSGROUP_NAMES, NEWSGROUP_DESCRIPTIONS, LOCATIONS_TABLE,
-    get_globes_for_room_name, news_logger, format_hex
+    get_globes_for_room_name, news_logger
 )
 
 # ----------------------------------------------------------------------
@@ -2883,11 +2883,6 @@ class M59CompanionApp(QMainWindow):
         except Exception as ex:
             print(f"[M59-TOAST] Error showing toast notification: {ex}")
 
-    def show_toast_notification(self, message, category="info"):
-        """Displays a non-disruptive toast notification for news/mail/system events."""
-        title = "News Globe & Mail"
-        self.show_group_toast_notification(title, message, icon_type="login" if category == "info" else "pk")
-
     def on_who_list_context_menu(self, pos, target_widget=None):
         """Right-click context menu handler for Who's Online and Offline list items."""
         src_widget = target_widget if target_widget is not None else self.who_list_widget
@@ -5195,9 +5190,6 @@ class M59CompanionApp(QMainWindow):
     # ==================================================================
     def on_news_engine_event(self, event_type, data):
         """Callback handler for autonomous news engine events."""
-        QTimer.singleShot(0, lambda: self._handle_news_engine_event_main_thread(event_type, data))
-
-    def _handle_news_engine_event_main_thread(self, event_type, data):
         if event_type == "room_changed":
             room_name = data.get("room_name", "Unknown Location")
             globes = data.get("globes", [])
@@ -5286,71 +5278,6 @@ class M59CompanionApp(QMainWindow):
         top_row.addWidget(self.news_mail_check_btn)
 
         hc_layout.addLayout(top_row)
-
-        # Globe Selector & Animated Auto-Fetch Row
-        globe_select_bar = QFrame()
-        globe_select_bar.setStyleSheet("""
-            QFrame {
-                background-color: #0b0f19;
-                border: 1px solid #1e293b;
-                border-radius: 8px;
-            }
-        """)
-        gs_layout = QHBoxLayout(globe_select_bar)
-        gs_layout.setContentsMargins(10, 6, 10, 6)
-        gs_layout.setSpacing(12)
-
-        gs_lbl = QLabel("🔮 Globe Target:")
-        gs_lbl.setStyleSheet("font-size: 12px; font-weight: 700; color: #38bdf8;")
-        gs_layout.addWidget(gs_lbl)
-
-        self.news_globe_combo = QComboBox()
-        self.news_globe_combo.setStyleSheet("""
-            QComboBox {
-                background-color: #0f172a;
-                border: 1px solid #334155;
-                border-radius: 6px;
-                padding: 6px 12px;
-                color: #f8fafc;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 20px;
-                border-left: 1px solid #334155;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #0f172a;
-                color: #f8fafc;
-                selection-background-color: #1e293b;
-                selection-color: #38bdf8;
-                border: 1px solid #334155;
-            }
-        """)
-
-        # Populate combo box with LOCATIONS_TABLE options
-        self.news_globe_combo.addItem("📍 Auto-Detect Current Room Globe", None)
-        for loc in LOCATIONS_TABLE:
-            prefix = "🏨" if loc["nid"] == 9 else ("🏛️" if loc["nid"] == 20 else "📜")
-            label = f"{prefix} {loc['name']} [NID {loc['nid']}]"
-            self.news_globe_combo.addItem(label, loc)
-
-        self.news_globe_combo.currentIndexChanged.connect(self.on_manual_globe_selected)
-        gs_layout.addWidget(self.news_globe_combo, 1)
-
-        self.news_auto_fetch_btn = QPushButton("⚡ Select & Auto-Fetch")
-        self.news_auto_fetch_btn.setProperty("class", "WebBtnPrimary")
-        self.news_auto_fetch_btn.setToolTip("Selects this globe location and automatically fetches all missing article bodies into local database.")
-        self.news_auto_fetch_btn.clicked.connect(lambda: self.on_manual_globe_selected(self.news_globe_combo.currentIndex(), force_sync=True))
-        gs_layout.addWidget(self.news_auto_fetch_btn)
-
-        self.news_globe_pulsing_indicator = QLabel("● GLOBE READY")
-        self.news_globe_pulsing_indicator.setStyleSheet("font-size: 11px; font-weight: 800; color: #34d399; background: #064e3b; border: 1px solid #059669; border-radius: 12px; padding: 4px 10px;")
-        gs_layout.addWidget(self.news_globe_pulsing_indicator)
-
-        hc_layout.addWidget(globe_select_bar)
 
         # Proximity Status Bar
         prox_bar = QFrame()
@@ -5892,67 +5819,15 @@ class M59CompanionApp(QMainWindow):
             match = (q in author) or (q in title)
             table.setRowHidden(row, not match)
 
-    def on_manual_globe_selected(self, index, force_sync=False):
-        """Triggered when user selects a globe location from the dropdown or clicks Auto-Fetch."""
-        if not hasattr(self, 'news_globe_combo'):
-            return
-
-        selected_loc = self.news_globe_combo.itemData(index)
-
-        if hasattr(self, 'news_globe_pulsing_indicator'):
-            self.news_globe_pulsing_indicator.setText("⚡ SYNCING GLOBE...")
-            self.news_globe_pulsing_indicator.setStyleSheet("font-size: 11px; font-weight: 800; color: #38bdf8; background: #0c4a6e; border: 1px solid #0284c7; border-radius: 12px; padding: 4px 10px;")
-            QTimer.singleShot(2200, self._reset_globe_pulsing_indicator)
-
-        if selected_loc is None:
-            cur_room = getattr(self, 'current_room_name', 'Unknown Location')
-            self.update_news_globe_location_ui(cur_room)
-            if force_sync:
-                self.trigger_globe_sync()
-            return
-
-        nid = selected_loc["nid"]
-        loc_name = selected_loc["name"]
-
-        # Set accessible globes on news engine
-        if hasattr(self, 'news_engine') and self.news_engine:
-            self.news_engine.accessible_globes = [selected_loc]
-            self.news_engine.newsgroup_id = nid
-
-        if hasattr(self, 'news_room_loc_lbl'):
-            self.news_room_loc_lbl.setText(f"📍 Globe Location: {loc_name}")
-        if hasattr(self, 'news_proximity_badge'):
-            self.news_proximity_badge.setText(f"🟢 Target Globe Selected: {loc_name} [NID {nid}]")
-            self.news_proximity_badge.setStyleSheet("font-size: 11px; font-weight: 700; color: #34d399;")
-
-        self.focus_newsgroup_tab(nid)
-        self.trigger_globe_sync()
-
-        if hasattr(self, 'news_db') and hasattr(self, 'news_engine') and self.news_engine:
-            missing = self.news_db.get_missing_body_article_ids(nid)
-            if missing:
-                self.news_engine.confirm_first_time_sync(nid)
-                self.show_toast_notification(f"📥 Automatically downloading {len(missing)} missing message bodies for {loc_name}...", category="info")
-
-    def _reset_globe_pulsing_indicator(self):
-        if hasattr(self, 'news_globe_pulsing_indicator'):
-            self.news_globe_pulsing_indicator.setText("● GLOBE READY")
-            self.news_globe_pulsing_indicator.setStyleSheet("font-size: 11px; font-weight: 800; color: #34d399; background: #064e3b; border: 1px solid #059669; border-radius: 12px; padding: 4px 10px;")
-
     def trigger_globe_sync(self):
-        """Triggers news header scan for current room or manually selected globe."""
+        """Manually triggers news header scan for current room globes."""
         if hasattr(self, 'news_engine') and self.news_engine:
-            globes = getattr(self.news_engine, 'accessible_globes', [])
+            self.news_engine.trigger_sync_for_accessible_globes()
+            globes = self.news_engine.accessible_globes
             if globes:
-                self.news_engine.trigger_sync_for_accessible_globes()
-                self.show_toast_notification(f"🔄 Requested news headers for {len(globes)} target globe(s)...", category="info")
-            elif hasattr(self, 'selected_news_nid') and self.selected_news_nid and self.selected_news_nid > 0:
-                nid = self.selected_news_nid
-                self.news_engine._call_frida_export("nativeRequestArticles", nid)
-                ng_name = NEWSGROUP_NAMES.get(nid, f"NID {nid}")
-                self.show_toast_notification(f"🔄 Requested news headers for {ng_name}...", category="info")
+                self.show_toast_notification(f"🔄 Requested news headers for {len(globes)} globe(s)...", category="info")
             else:
-                self.show_toast_notification("⚪ Select a Globe Location from the dropdown above to auto-sync.", category="info")
+                self.show_toast_notification("⚪ Outside globe proximity. Move to an Inn or Hall.", category="info")
 
     def reply_to_selected_article_for_nid(self, nid):
         if nid in getattr(self, 'newsgroup_widgets', {}):
@@ -6105,16 +5980,9 @@ class M59CompanionApp(QMainWindow):
             return
         hex_str = format_hex(packet_bytes)
         news_logger.info(f"[PACKET-INJECT] Transmitting {len(packet_bytes)} bytes -> {hex_str}")
-        if hasattr(self, 'news_engine') and self.news_engine:
+        if hasattr(self, 'frida_script') and self.frida_script:
             try:
-                self.news_engine.inject_packet(packet_bytes)
-            except Exception as e:
-                news_logger.error(f"Frida packet injection exception: {e}")
-        elif hasattr(self, 'frida_script') and self.frida_script:
-            try:
-                exp = getattr(self.frida_script, "exports_sync", None) or getattr(self.frida_script, "exports", None)
-                if exp and hasattr(exp, 'inject_packet'):
-                    exp.inject_packet(list(packet_bytes))
+                self.frida_script.exports.inject_packet(list(packet_bytes))
             except Exception as e:
                 news_logger.error(f"Frida packet injection exception: {e}")
 
@@ -8945,7 +8813,7 @@ class M59CompanionApp(QMainWindow):
 
         rid = None
         if hasattr(self, 'gps_manager') and self.gps_manager:
-            rid = self.gps_manager.resolve_name_to_rid(room_name)
+            rid, _ = self.gps_manager.find_room_by_name(room_name)
 
         if hasattr(self, 'news_engine') and self.news_engine:
             self.news_engine.on_room_changed(room_name, rid=rid)

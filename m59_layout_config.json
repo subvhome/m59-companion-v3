@@ -1,0 +1,55 @@
+{
+  "dock_panel_width": 340,
+  "is_desktop_docked": false,
+  "dashboard_grid": [
+    {
+      "title": "CHARACTER IDENTITY & OVERVIEW",
+      "span": 6,
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "GPS NAVIGATION",
+      "span": 6,
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "VAULT MANAGEMENT",
+      "span": 6,
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "SCHOOL PROGRESSION",
+      "span": 6,
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "SESSION KILLS (COMBAT)",
+      "span": 6,
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "SESSION IMPROVES (SKILLS & SPELLS)",
+      "span": 6,
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "CARRIED ITEMS LEDGER",
+      "span": 6,
+      "width": null,
+      "height": null
+    },
+    {
+      "title": "UW NODE MANA SOLVER",
+      "span": 6,
+      "width": null,
+      "height": null
+    }
+  ],
+  "dock_grid": []
+}
