@@ -24,7 +24,7 @@ def migrate_settings():
         
     dynamic_user_files = [
         "config.json", "gui_settings.json", "m59_filters.json", "m59_data.json",
-        "travel_times.json", "m59_news_globe.db", "m59_vault.json"
+        "travel_times.json", "m59_vault.json"
     ]
 
     for loc in old_locations:
