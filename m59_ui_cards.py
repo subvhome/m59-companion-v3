@@ -14,15 +14,30 @@ import os
 import time
 import math
 
-from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QFrame, QSizePolicy, QMenu, QToolTip, QScrollArea
-)
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QPoint, QRect, QEvent, QSize, QMimeData
-from PySide6.QtGui import (
-    QFont, QIcon, QColor, QPixmap, QImage, QPainter, QPen, QBrush,
-    QLinearGradient, QRadialGradient, QCursor, QDrag
-)
+try:
+    from PySide6.QtWidgets import (
+        QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
+        QFrame, QSizePolicy, QMenu, QToolTip, QScrollArea
+    )
+    from PySide6.QtCore import Qt, QTimer, Signal, QObject, QPoint, QRect, QEvent, QSize, QMimeData
+    from PySide6.QtGui import (
+        QFont, QIcon, QColor, QPixmap, QImage, QPainter, QPen, QBrush,
+        QLinearGradient, QRadialGradient, QCursor, QDrag
+    )
+except ImportError:
+    class _DummyQt:
+        PointingHandCursor = None
+        Horizontal = None
+        WindowContextHelpButtonHint = 0
+        def __getattr__(self, name):
+            return 0
+    QApplication = QWidget = QVBoxLayout = QHBoxLayout = QGridLayout = QLabel = QPushButton = object
+    QFrame = QSizePolicy = QMenu = QToolTip = QScrollArea = object
+    Qt = _DummyQt()
+    QTimer = QObject = QPoint = QRect = QEvent = QSize = QMimeData = object
+    Signal = lambda *a, **k: None
+    QFont = QIcon = QColor = QPixmap = QImage = QPainter = QPen = QBrush = object
+    QLinearGradient = QRadialGradient = QCursor = QDrag = object
 
 from m59_utils import resource_path
 

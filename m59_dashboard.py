@@ -99,6 +99,17 @@ from m59_gps import GPSManager
 from m59_calculator import SchoolCalculator
 from m59_spells import SpellManager
 from m59_uw_node import UWNodeSolverWidget
+from m59_globe_news import GlobeNewsWidget
+try:
+    from m59_auto_news_archiver import set_news_logging_enabled, is_news_logging_enabled
+except ImportError:
+    try:
+        from m59_globe_news import set_news_logging_enabled, is_news_logging_enabled
+    except ImportError:
+        def set_news_logging_enabled(enabled: bool):
+            pass
+        def is_news_logging_enabled() -> bool:
+            return False
 import m59_updater
 from m59_updater import get_installed_version, check_for_updates, check_all_releases, show_qt_update_dialog
 import keyboard
@@ -268,6 +279,8 @@ class M59CompanionApp(QMainWindow):
         self.console_debug_enabled = loaded_gui.get("console_debug_enabled", True)
         self.file_debug_enabled = loaded_gui.get("file_debug_enabled", True)
         self.progression_log_enabled = loaded_gui.get("progression_log_enabled", True)
+        self.news_logging_enabled = loaded_gui.get("news_logging_enabled", False)
+        set_news_logging_enabled(self.news_logging_enabled)
         setup_logging(
             debug_enabled=self.console_debug_enabled,
             console_output=self.console_output_enabled,
@@ -391,6 +404,7 @@ class M59CompanionApp(QMainWindow):
         self.nav_list.addItem("  Vault Storage")
         self.nav_list.addItem("  Kill Book")
         self.nav_list.addItem("  UW Node Solver")
+        self.nav_list.addItem("  Globe News")
         self.nav_list.addItem("  Settings")
         self.nav_list.currentRowChanged.connect(self.switch_section)
         sidebar_layout.addWidget(self.nav_list, 1)
@@ -511,7 +525,15 @@ class M59CompanionApp(QMainWindow):
         self.page_uwnode = UWNodeSolverWidget()
         self.stacked_widget.addWidget(self.page_uwnode)
 
-        # Section 9: Settings Preferences Page
+        # Section 9: Globe News Reader Page
+        self.page_globenews = GlobeNewsWidget()
+        self.page_globenews.signal_unread_badge_updated.connect(self.update_globe_news_nav_badge)
+        self.page_globenews.signal_toast_requested.connect(
+            lambda title, msg, icon: self.show_group_toast_notification(title, msg, icon_type=icon)
+        )
+        self.stacked_widget.addWidget(self.page_globenews)
+
+        # Section 10: Settings Preferences Page
         self.page_settings = self.build_settings_page()
         self.stacked_widget.addWidget(self.page_settings)
 
@@ -1415,6 +1437,21 @@ class M59CompanionApp(QMainWindow):
             self.update_reagents_ui()
         elif index == 6:
             self.load_kill_book()
+        elif index == 8:
+            if hasattr(self, 'page_globenews'):
+                self.page_globenews.load_articles_from_db()
+
+    def update_globe_news_nav_badge(self, unread_count: int = 0):
+        """Updates unread badge counter in sidebar navigation list for Globe News."""
+        try:
+            item = self.nav_list.item(8)
+            if item:
+                if unread_count > 0:
+                    item.setText(f"  Globe News ({unread_count})")
+                else:
+                    item.setText("  Globe News")
+        except Exception:
+            pass
 
     # ==================================================================
     # SECTION 1: DASHBOARD PAGE (Main)
@@ -3085,12 +3122,15 @@ class M59CompanionApp(QMainWindow):
         self.console_debug_enabled = self.dbg_debug_level_chk.isChecked() if hasattr(self, 'dbg_debug_level_chk') else getattr(self, 'console_debug_enabled', True)
         self.file_debug_enabled = self.dbg_file_chk.isChecked() if hasattr(self, 'dbg_file_chk') else getattr(self, 'file_debug_enabled', True)
         self.progression_log_enabled = self.dbg_prog_chk.isChecked() if hasattr(self, 'dbg_prog_chk') else getattr(self, 'progression_log_enabled', True)
+        self.news_logging_enabled = self.dbg_news_chk.isChecked() if hasattr(self, 'dbg_news_chk') else getattr(self, 'news_logging_enabled', False)
+        set_news_logging_enabled(self.news_logging_enabled)
 
         s = {
             "console_output_enabled": self.console_output_enabled,
             "console_debug_enabled": self.console_debug_enabled,
             "file_debug_enabled": self.file_debug_enabled,
             "progression_log_enabled": self.progression_log_enabled,
+            "news_logging_enabled": self.news_logging_enabled,
         }
         self.save_gui_settings(s)
         setup_logging(
@@ -5708,6 +5748,15 @@ class M59CompanionApp(QMainWindow):
         f_desc.setStyleSheet("font-size: 11px; color: #64748b; margin-left: 22px;")
         dbg_card_layout.addWidget(f_desc)
 
+        # Checkbox 5: News Archiver Wire Output
+        self.dbg_news_chk = QCheckBox("Enable News Archiver Wire Logging (stdout)")
+        self.dbg_news_chk.setChecked(getattr(self, 'news_logging_enabled', False))
+        self.dbg_news_chk.setStyleSheet("color: #f8fafc; font-weight: 700; font-size: 13px;")
+        dbg_card_layout.addWidget(self.dbg_news_chk)
+        n_desc = QLabel("  Streams live news wire packet traces and raw opcode transactions to terminal stdout.")
+        n_desc.setStyleSheet("font-size: 11px; color: #64748b; margin-left: 22px;")
+        dbg_card_layout.addWidget(n_desc)
+
         # State change connectors
         def on_debug_config_changed():
             self.save_debug_settings()
@@ -5715,6 +5764,7 @@ class M59CompanionApp(QMainWindow):
         self.dbg_debug_level_chk.stateChanged.connect(on_debug_config_changed)
         self.dbg_prog_chk.stateChanged.connect(on_debug_config_changed)
         self.dbg_file_chk.stateChanged.connect(on_debug_config_changed)
+        self.dbg_news_chk.stateChanged.connect(on_debug_config_changed)
 
         # Debug Actions Row
         dbg_btn_row = QHBoxLayout()
@@ -6087,6 +6137,13 @@ class M59CompanionApp(QMainWindow):
         except Exception:
             pass
 
+        # Notify Globe News Widget
+        if hasattr(self, 'page_globenews') and self.page_globenews:
+            try:
+                self.page_globenews.on_game_connected(pid, self.main_hwnd)
+            except Exception as e:
+                print(f"[M59-NEWS] Error notifying GlobeNews of game attachment: {e}", flush=True)
+
         # Reset initial sync state flags for fresh connection
         self._initial_sync_done = False
         self._initial_sync_started = False
@@ -6260,6 +6317,13 @@ class M59CompanionApp(QMainWindow):
             self.wholist_monitor = None
 
         self.update_inventory_ui(0, 0, 0.0, 0.0, 1700, [])
+
+        # Notify Globe News Widget
+        if hasattr(self, 'page_globenews') and self.page_globenews:
+            try:
+                self.page_globenews.on_game_disconnected()
+            except Exception:
+                pass
 
         self.show_splash_overlay("searching", "↻ SCANNING FOR GAME PROCESS", "Please launch Meridian 59 (meridian.exe) to continue...")
 
@@ -7992,6 +8056,13 @@ class M59CompanionApp(QMainWindow):
             self.dock_gps_loc_lbl.setText(f"📍 {room_name}")
 
         self.update_pvp_status_ui(room_name)
+
+        # Notify Globe News Widget of room change for auto-globe detection
+        if hasattr(self, 'page_globenews') and self.page_globenews:
+            try:
+                self.page_globenews.on_room_changed(room_name)
+            except Exception:
+                pass
 
         rid = None
         if hasattr(self, 'gps_manager') and self.gps_manager:

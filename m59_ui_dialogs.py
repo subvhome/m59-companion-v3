@@ -27,17 +27,34 @@ except Exception:
     win32con = None
     win32process = None
 
-from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QTableWidget, QTableWidgetItem, QFrame, QHeaderView, QTextEdit,
-    QDialog, QCheckBox, QAbstractItemView, QMessageBox, QMenu, QSplashScreen,
-    QFormLayout, QComboBox, QGroupBox
-)
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QPoint, QRect, QEvent, QSize
-from PySide6.QtGui import (
-    QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QPainter, QPen, QBrush,
-    QLinearGradient, QCursor, QGuiApplication
-)
+try:
+    from PySide6.QtWidgets import (
+        QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
+        QTableWidget, QTableWidgetItem, QFrame, QHeaderView, QTextEdit,
+        QDialog, QCheckBox, QAbstractItemView, QMessageBox, QMenu, QSplashScreen,
+        QFormLayout, QComboBox, QGroupBox, QProgressBar
+    )
+    from PySide6.QtCore import Qt, QTimer, Signal, QObject, QPoint, QRect, QEvent, QSize
+    from PySide6.QtGui import (
+        QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QPainter, QPen, QBrush,
+        QLinearGradient, QCursor, QGuiApplication
+    )
+except ImportError:
+    class _DummyQt:
+        PointingHandCursor = None
+        Horizontal = None
+        WindowContextHelpButtonHint = 0
+        def __getattr__(self, name):
+            return 0
+    QApplication = QWidget = QVBoxLayout = QHBoxLayout = QLabel = QPushButton = QLineEdit = object
+    QTableWidget = QTableWidgetItem = QFrame = QHeaderView = QTextEdit = object
+    QDialog = QCheckBox = QAbstractItemView = QMessageBox = QMenu = QSplashScreen = object
+    QFormLayout = QComboBox = QGroupBox = QProgressBar = object
+    Qt = _DummyQt()
+    QTimer = QObject = QPoint = QRect = QEvent = QSize = object
+    Signal = lambda *a, **k: None
+    QFont = QIcon = QColor = QTextCursor = QPixmap = QImage = QPainter = QPen = QBrush = object
+    QLinearGradient = QCursor = QGuiApplication = object
 
 from m59_utils import resource_path
 from m59_ui_theme import FLUID_WEB_QSS
@@ -1278,3 +1295,284 @@ class M59StandaloneDockWindow(QWidget):
     def closeEvent(self, event):
         self.undock_desktop()
         event.accept()
+
+
+class M59FirstTimeSyncDialog(QDialog):
+    """
+    Modern modal dialog shown when a News Globe is first scanned and no messages
+    are currently archived in SQLite for that board.
+    """
+    def __init__(self, newsgroup_name: str, total_count: int, room_name: str = "", parent: QWidget = None):
+        super().__init__(parent)
+        self.newsgroup_name = newsgroup_name
+        self.total_count = total_count
+        self.room_name = room_name or "Unknown Chamber"
+        self.setWindowTitle("🔮 News Globe Discovered")
+        self.setFixedSize(500, 340)
+        self.setModal(True)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.init_ui()
+
+    def init_ui(self):
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #0b1322;
+                border: 1px solid #1e293b;
+                border-radius: 8px;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(14)
+
+        # 1. Header Card with Globe Icon
+        hdr_layout = QHBoxLayout()
+        hdr_layout.setSpacing(14)
+
+        globe_icon = QLabel("🔮")
+        globe_icon.setStyleSheet("font-size: 32px; background: transparent;")
+        hdr_layout.addWidget(globe_icon)
+
+        hdr_text_layout = QVBoxLayout()
+        hdr_text_layout.setSpacing(2)
+
+        title_lbl = QLabel("News Globe Detected!")
+        title_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc;")
+        hdr_text_layout.addWidget(title_lbl)
+
+        clean_ng = self.newsgroup_name.replace("_", " ")
+        sub_lbl = QLabel(f"Board: <span style='color: #38bdf8; font-weight: 700;'>{clean_ng}</span>  •  Room: <span style='color: #94a3b8;'>{self.room_name}</span>")
+        sub_lbl.setStyleSheet("font-size: 11px; color: #64748b;")
+        hdr_text_layout.addWidget(sub_lbl)
+
+        hdr_layout.addLayout(hdr_text_layout, 1)
+        layout.addLayout(hdr_layout)
+
+        # 2. Main Description Card
+        desc_frame = QFrame()
+        desc_frame.setStyleSheet("""
+            QFrame {
+                background-color: #0f1a30;
+                border: 1px solid #1e293b;
+                border-radius: 6px;
+                padding: 12px;
+            }
+        """)
+        desc_layout = QVBoxLayout(desc_frame)
+        desc_layout.setContentsMargins(12, 10, 12, 10)
+        desc_layout.setSpacing(6)
+
+        msg_lbl = QLabel(
+            f"This is your first time encountering this news globe.<br>"
+            f"There are <b style='color: #38bdf8;'>{self.total_count} articles</b> available in the public catalog.<br><br>"
+            f"Would you like to archive and download all message bodies to your local SQLite database for instant offline searching and reading?"
+        )
+        msg_lbl.setWordWrap(True)
+        msg_lbl.setStyleSheet("font-size: 12px; color: #cbd5e1; line-height: 1.4;")
+        desc_layout.addWidget(msg_lbl)
+        layout.addWidget(desc_frame)
+
+        # 3. Prominent Warning Box
+        warn_frame = QFrame()
+        warn_frame.setStyleSheet("""
+            QFrame {
+                background-color: #2a1608;
+                border: 1px solid #d97706;
+                border-radius: 6px;
+            }
+        """)
+        warn_layout = QHBoxLayout(warn_frame)
+        warn_layout.setContentsMargins(12, 8, 12, 8)
+        warn_layout.setSpacing(10)
+
+        warn_icon = QLabel("⚠️")
+        warn_icon.setStyleSheet("font-size: 16px; background: transparent;")
+        warn_layout.addWidget(warn_icon)
+
+        warn_txt = QLabel("<b>Warning:</b> Please do not leave this room mid-download. Leaving before completion may disrupt packet synchronization.")
+        warn_txt.setWordWrap(True)
+        warn_txt.setStyleSheet("font-size: 11px; color: #fbbf24;")
+        warn_layout.addWidget(warn_txt, 1)
+        layout.addWidget(warn_frame)
+
+        layout.addStretch(1)
+
+        # 4. Buttons Action Row
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        btn_dismiss = QPushButton("✖ Later / Dismiss")
+        btn_dismiss.setCursor(Qt.PointingHandCursor)
+        btn_dismiss.setFixedHeight(34)
+        btn_dismiss.setStyleSheet("""
+            QPushButton {
+                background-color: #1e293b;
+                color: #94a3b8;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 6px 14px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #334155;
+                color: #f8fafc;
+            }
+        """)
+        btn_dismiss.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_dismiss)
+
+        btn_layout.addStretch(1)
+
+        btn_download = QPushButton(f"📥 Download Archive ({self.total_count} Messages)")
+        btn_download.setCursor(Qt.PointingHandCursor)
+        btn_download.setDefault(True)
+        btn_download.setFixedHeight(34)
+        btn_download.setStyleSheet("""
+            QPushButton {
+                background-color: #0284c7;
+                color: #ffffff;
+                border: 1px solid #38bdf8;
+                border-radius: 4px;
+                padding: 6px 18px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #0369a1;
+            }
+        """)
+        btn_download.clicked.connect(self.accept)
+        btn_layout.addWidget(btn_download)
+
+        layout.addLayout(btn_layout)
+
+
+class M59GlobeDownloadProgressDialog(QDialog):
+    """
+    Non-blocking modal progress dialog that shows N of N message download progress
+    with a progress bar, current article subject, and chamber warning.
+    """
+    signal_cancel = Signal()
+
+    def __init__(self, newsgroup_name: str, total_count: int, parent: QWidget = None):
+        super().__init__(parent)
+        self.newsgroup_name = newsgroup_name
+        self.total_count = max(1, total_count)
+        self.setWindowTitle("📥 Archiving Globe Messages")
+        self.setFixedSize(480, 240)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.init_ui()
+
+    def init_ui(self):
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #0b1322;
+                border: 1px solid #1e293b;
+                border-radius: 8px;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(12)
+
+        # Header Title
+        clean_ng = self.newsgroup_name.replace("_", " ")
+        self.lbl_title = QLabel(f"📥 Archiving {clean_ng}")
+        self.lbl_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #f8fafc;")
+        layout.addWidget(self.lbl_title)
+
+        # Progress Status Line
+        self.lbl_status = QLabel(f"Downloading message 0 of {self.total_count} (0%)...")
+        self.lbl_status.setStyleSheet("font-size: 12px; font-weight: 600; color: #38bdf8;")
+        layout.addWidget(self.lbl_status)
+
+        # Progress Bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, self.total_count)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFixedHeight(18)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #070d18;
+                border: 1px solid #1e293b;
+                border-radius: 4px;
+                text-align: center;
+                color: #ffffff;
+                font-size: 10px;
+                font-weight: 700;
+            }
+            QProgressBar::chunk {
+                background-color: #0284c7;
+                border-radius: 3px;
+            }
+        """)
+        layout.addWidget(self.progress_bar)
+
+        # Article Subject Preview
+        self.lbl_subject = QLabel("Preparing packet requests...")
+        self.lbl_subject.setWordWrap(True)
+        self.lbl_subject.setStyleSheet("font-size: 11px; color: #94a3b8; font-style: italic;")
+        layout.addWidget(self.lbl_subject)
+
+        # Room Stay Warning
+        warn_layout = QHBoxLayout()
+        warn_layout.setSpacing(6)
+        warn_ico = QLabel("⚠️")
+        warn_ico.setStyleSheet("font-size: 12px; background: transparent;")
+        warn_layout.addWidget(warn_ico)
+
+        warn_msg = QLabel("Do not leave the room while download is in progress.")
+        warn_msg.setStyleSheet("font-size: 10px; color: #fbbf24; font-weight: 600;")
+        warn_layout.addWidget(warn_msg, 1)
+        layout.addLayout(warn_layout)
+
+        layout.addStretch(1)
+
+        # Action Button Row
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch(1)
+
+        self.btn_close = QPushButton("Background Sync")
+        self.btn_close.setCursor(Qt.PointingHandCursor)
+        self.btn_close.setFixedHeight(28)
+        self.btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #1e293b;
+                color: #cbd5e1;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 4px 14px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #334155;
+                color: #ffffff;
+            }
+        """)
+        self.btn_close.clicked.connect(self.hide)
+        btn_layout.addWidget(self.btn_close)
+
+        layout.addLayout(btn_layout)
+
+    def update_progress(self, current: int, total: int, subject: str = "", percent: int = 0):
+        self.total_count = max(1, total)
+        self.progress_bar.setMaximum(self.total_count)
+        self.progress_bar.setValue(min(current, self.total_count))
+        self.lbl_status.setText(f"Downloading message {current} of {self.total_count} ({percent}%)...")
+        if subject:
+            self.lbl_subject.setText(f"Article: \"{subject[:55]}...\"" if len(subject) > 55 else f"Article: \"{subject}\"")
+
+    def mark_completed(self, total: int):
+        self.progress_bar.setValue(total)
+        self.lbl_status.setText(f"✅ Complete! {total} messages archived to SQLite.")
+        self.lbl_status.setStyleSheet("font-size: 12px; font-weight: 700; color: #10b981;")
+        self.lbl_subject.setText("All messages synchronized successfully.")
+        self.btn_close.setText("Done")
+        self.btn_close.clicked.disconnect()
+        self.btn_close.clicked.connect(self.accept)
+

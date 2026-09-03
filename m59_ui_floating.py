@@ -32,16 +32,32 @@ except Exception:
     win32con = None
     win32process = None
 
-from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QFrame, QTextEdit, QComboBox, QDialog, QAbstractItemView, QMenu,
-    QToolTip, QStyleOptionComboBox, QStyle, QSizeGrip
-)
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QPoint, QRect, QEvent, QSize
-from PySide6.QtGui import (
-    QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QPainter, QPen, QBrush,
-    QLinearGradient, QCursor, QGuiApplication
-)
+try:
+    from PySide6.QtWidgets import (
+        QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
+        QFrame, QTextEdit, QComboBox, QDialog, QAbstractItemView, QMenu,
+        QToolTip, QStyleOptionComboBox, QStyle, QSizeGrip
+    )
+    from PySide6.QtCore import Qt, QTimer, Signal, QObject, QPoint, QRect, QEvent, QSize
+    from PySide6.QtGui import (
+        QFont, QIcon, QColor, QTextCursor, QPixmap, QImage, QPainter, QPen, QBrush,
+        QLinearGradient, QCursor, QGuiApplication
+    )
+except ImportError:
+    class _DummyQt:
+        PointingHandCursor = None
+        Horizontal = None
+        WindowContextHelpButtonHint = 0
+        def __getattr__(self, name):
+            return 0
+    QApplication = QWidget = QVBoxLayout = QHBoxLayout = QLabel = QPushButton = QLineEdit = object
+    QFrame = QTextEdit = QComboBox = QDialog = QAbstractItemView = QMenu = object
+    QToolTip = QStyleOptionComboBox = QStyle = QSizeGrip = object
+    Qt = _DummyQt()
+    QTimer = QObject = QPoint = QRect = QEvent = QSize = object
+    Signal = lambda *a, **k: None
+    QFont = QIcon = QColor = QTextCursor = QPixmap = QImage = QPainter = QPen = QBrush = object
+    QLinearGradient = QCursor = QGuiApplication = object
 
 from m59_utils import GAME_EXE, get_safe_name, find_game_hwnd, resource_path
 try:
@@ -83,7 +99,25 @@ class InstantToolTipFilter(QObject):
                     pos = event.pos() if hasattr(event, 'pos') else QPoint(0, 0)
                     item = obj.itemAt(pos)
                     if item and hasattr(item, 'toolTip'):
-                        itip = item.toolTip()
+                        try:
+                            if type(item).__name__ == "QTreeWidgetItem":
+                                col = 0
+                                if hasattr(obj, 'columnAt'):
+                                    c = obj.columnAt(pos.x())
+                                    if c >= 0:
+                                        col = c
+                                itip = item.toolTip(col)
+                            else:
+                                itip = item.toolTip()
+                        except Exception:
+                            try:
+                                itip = item.toolTip(0)
+                            except Exception:
+                                try:
+                                    itip = item.toolTip()
+                                except Exception:
+                                    itip = ""
+
                         if itip and itip != self._active_tip:
                             self._active_widget = obj
                             self._active_tip = itip
@@ -1873,6 +1907,10 @@ class M59ToastNotification(QWidget):
             border_color = "#c084fc"
             badge_bg = "#6b21a8"
             icon_str = "💬"
+        elif icon_type in ("news", "globe"):
+            border_color = "#a855f7"
+            badge_bg = "#581c87"
+            icon_str = "🔮"
 
         container = QFrame(self)
         container.setObjectName("ToastContainer")
